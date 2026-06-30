@@ -1,0 +1,2384 @@
+/* ============================================================
+   病棟移送管理ダッシュボード - メインスタイル
+   ============================================================ */
+
+/* ---------- CSS変数 ---------- */
+:root {
+  --clr-bg: linear-gradient(135deg, #f0f4f8 0%, #d5e6f5 100%);
+  --clr-surface: rgba(255, 255, 255, 0.72);
+  --clr-border: rgba(255, 255, 255, 0.45);
+  --clr-text: #1a202c;
+  --clr-text-muted: #64748b;
+  --clr-primary: #3b82f6;
+  --clr-primary-dark: #2563eb;
+  --clr-header-bg: rgba(30, 58, 95, 0.85);
+  --border-header: none;
+
+  /* 状態カラー - グラス調と調和する半透明カラー */
+  --clr-in-bed: rgba(248, 250, 252, 0.55);
+  --clr-in-bed-border: rgba(203, 213, 225, 0.55);
+  --clr-depart-reg: rgba(219, 234, 254, 0.65);
+  --clr-depart-reg-border: #3b82f6;
+  --clr-depart-reg-text: #1e40af;
+  --clr-moving: rgba(219, 234, 254, 0.75);
+  --clr-moving-border: #2563eb;
+  --clr-arrived: rgba(224, 242, 254, 0.7);
+  --clr-arrived-border: #0284c7;
+  --clr-in-exam: rgba(254, 252, 232, 0.7);
+  --clr-in-exam-border: #ca8a04;
+  --clr-in-exam-text: #713f12;
+  --clr-nearly-done: rgba(255, 247, 237, 0.7);
+  --clr-nearly-done-border: #ea580c;
+  --clr-nearly-done-text: #7c2d12;
+  --clr-pickup: rgba(254, 226, 226, 0.72);
+  --clr-pickup-border: #dc2626;
+  --clr-pickup-text: #7f1d1d;
+  --clr-returned: rgba(240, 253, 244, 0.7);
+  --clr-returned-border: #16a34a;
+  --clr-returned-text: #14532d;
+  --clr-cancelled: rgba(241, 245, 249, 0.6);
+  --clr-cancelled-border: #64748b;
+  --clr-cancelled-text: #475569;
+
+  --shadow-sm: 0 4px 6px -1px rgba(0,0,0,0.04), 0 2px 4px -1px rgba(0,0,0,0.02);
+  --shadow-md: 0 10px 20px -3px rgba(0,0,0,0.07), 0 4px 8px -2px rgba(0,0,0,0.03);
+  --shadow-lg: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+  --radius: 10px;
+  --radius-lg: 16px;
+  --transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* カードサイズデフォルト (medium) */
+  --bed-card-min-h: 55px;
+  --bed-card-pad: 4px 6px;
+  --bed-card-num-sz: 14px;
+  --bed-card-info-sz: 9px;
+}
+
+/* フォントスタイル切り替えクラス */
+body.font-standard {
+  font-family: 'Noto Sans JP', 'BIZ UDPGothic', 'Yu Gothic UI', 'Yu Gothic', 'Meiryo', sans-serif !important;
+}
+body.font-bold {
+  font-weight: 700 !important;
+  color: #000000 !important;
+}
+body.font-bold button,
+body.font-bold select,
+body.font-bold input,
+body.font-bold span,
+body.font-bold div {
+  font-weight: 700 !important;
+}
+
+/* カードサイズ切り替えクラス */
+body.size-large {
+  --bed-card-min-h: 70px;
+  --bed-card-pad: 8px 10px;
+  --bed-card-num-sz: 17px;
+  --bed-card-info-sz: 11px;
+}
+body.size-small {
+  --bed-card-min-h: 46px;
+  --bed-card-pad: 2px 4px;
+  --bed-card-num-sz: 12px;
+  --bed-card-info-sz: 8px;
+}
+
+/* ---------- リセット ---------- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: 'BIZ UDPGothic', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', 'Meiryo', sans-serif;
+  background: var(--clr-bg);
+  background-attachment: fixed;
+  color: var(--clr-text);
+  font-size: 14px;
+  line-height: 1.5;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+button { cursor: pointer; font-family: inherit; }
+select, input { font-family: inherit; }
+
+/* ---------- ヘッダー ---------- */
+#app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--clr-header-bg);
+  color: #fff;
+  padding: 0 16px;
+  height: 56px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow-md);
+  border-bottom: var(--border-header);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.header-left { display: flex; align-items: center; gap: 24px; }
+.app-logo { display: flex; align-items: center; gap: 8px; }
+.app-logo i { font-size: 20px; color: #60a5fa; }
+.app-title { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.page-tabs { display: flex; gap: 4px; }
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,.65);
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.tab-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+.tab-btn.active { background: rgba(255,255,255,.2); color: #fff; font-weight: 700; }
+/* ナビバッジ（迎え要件数） */
+.nav-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; border-radius: 9px;
+  background: #ef4444; color: #fff; font-size: 11px; font-weight: 700;
+  padding: 0 4px; margin-left: 6px; line-height: 1;
+  animation: badge-pulse 1.5s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .8; transform: scale(1.1); }
+}
+
+.header-right { display: flex; align-items: center; gap: 12px; }
+.clock-display, .bed-timer, .priority-time {
+  font-family: 'Roboto Mono', Consolas, 'BIZ UDGothic', 'Yu Gothic UI', 'Meiryo', monospace !important;
+  font-variant-numeric: tabular-nums;
+}
+.clock-display { font-size: 15px; font-weight: 600; min-width: 80px; text-align: right; }
+.ward-selector { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.ward-selector select {
+  background: rgba(255,255,255,.15);
+  border: 1px solid rgba(255,255,255,.25);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.ward-selector select option {
+  color: #1a202c;
+  background-color: #ffffff;
+}
+.btn-icon {
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #fff;
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: var(--transition);
+}
+.btn-icon:hover { background: rgba(255,255,255,.25); }
+
+/* ---------- ページ管理 ---------- */
+#app-main { padding: 16px; min-height: calc(100vh - 56px); }
+.page { display: none; }
+.page.active { display: block; }
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.page-header h1 { font-size: 18px; font-weight: 700; }
+
+/* ---------- サマリーバー ---------- */
+#summary-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.summary-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  flex: 1;
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition);
+}
+.summary-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.summary-card.alert { border-color: #dc2626; background: #fff5f5; }
+.summary-card.warning { border-color: #d97706; background: #fffbeb; }
+.summary-card.danger { border-color: #b91c1c; background: #fee2e2; }
+.summary-icon {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: #eff6ff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  color: #3b82f6;
+}
+.summary-card.alert .summary-icon { background: #fee2e2; color: #dc2626; }
+.summary-card.warning .summary-icon { background: #fef3c7; color: #d97706; }
+.summary-card.danger .summary-icon { background: #fecaca; color: #b91c1c; }
+.summary-value { font-size: 28px; font-weight: 800; line-height: 1; }
+.summary-label { font-size: 12px; color: var(--clr-text-muted); margin-top: 2px; }
+
+/* ---------- ダッシュボードレイアウト ---------- */
+#dashboard-content {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* ---------- パネル共通 ---------- */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+.panel-header h2 {
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel-header h2 i { color: #3b82f6; }
+.panel-sub { font-size: 11px; color: var(--clr-text-muted); }
+
+/* ---------- 病床マップ ---------- */
+#bed-map-area {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.legend {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.legend-item {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+  border: 1px solid;
+}
+.legend-item.in-bed { background: var(--clr-in-bed); border-color: var(--clr-in-bed-border); color: #4a5568; }
+.legend-item.depart-registered { background: var(--clr-depart-reg); border-color: var(--clr-depart-reg-border); color: var(--clr-depart-reg-text); }
+.legend-item.moving { background: var(--clr-moving); border-color: var(--clr-moving-border); color: #1d4ed8; }
+.legend-item.arrived { background: var(--clr-arrived); border-color: var(--clr-arrived-border); color: #0369a1; }
+.legend-item.in-exam { background: var(--clr-in-exam); border-color: var(--clr-in-exam-border); color: var(--clr-in-exam-text); }
+.legend-item.nearly-done { background: var(--clr-nearly-done); border-color: var(--clr-nearly-done-border); color: var(--clr-nearly-done-text); }
+.legend-item.pickup-required { background: var(--clr-pickup); border-color: var(--clr-pickup-border); color: var(--clr-pickup-text); }
+.legend-item.returned { background: var(--clr-returned); border-color: var(--clr-returned-border); color: var(--clr-returned-text); }
+
+#bed-map-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+/* 病床カード */
+.bed-card {
+  border: 2px solid var(--clr-in-bed-border);
+  border-radius: var(--radius);
+  padding: var(--bed-card-pad);
+  background: var(--clr-in-bed);
+  cursor: pointer;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.25s ease, background-color 0.25s ease;
+  position: relative;
+  min-height: var(--bed-card-min-h);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bed-card:hover {
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06), 0 0 0 2px var(--clr-primary);
+  transform: translateY(-2px) scale(1.02);
+}
+.bed-number {
+  font-size: var(--bed-card-num-sz);
+  font-weight: 800;
+  line-height: 1;
+}
+.bed-status-badge {
+  font-size: var(--bed-card-info-sz);
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 8px;
+  display: inline-block;
+  width: fit-content;
+}
+.bed-exam-info {
+  font-size: var(--bed-card-info-sz);
+  color: var(--clr-text-muted);
+  line-height: 1.2;
+}
+.bed-timer {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.bed-staff-badge {
+  font-size: calc(var(--bed-card-info-sz) - 1px);
+  color: var(--clr-text-muted);
+}
+.bed-pulse-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #dc2626;
+}
+.bed-pulse-dot::after {
+  content: '';
+  position: absolute;
+  top: -4px; left: -4px; right: -4px; bottom: -4px;
+  border-radius: 50%;
+  border: 2px solid #dc2626;
+  animation: ring-pulse 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+  opacity: 0;
+}
+.bed-card.status-NEARLY_DONE .bed-pulse-dot {
+  background: #ea580c;
+}
+.bed-card.status-NEARLY_DONE .bed-pulse-dot::after {
+  border-color: #ea580c;
+}
+@keyframes ring-pulse {
+  0% { transform: scale(0.6); opacity: 0.8; }
+  50% { opacity: 0.4; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+/* 状態別スタイル */
+.bed-card.status-IN_BED { background: var(--clr-in-bed); border-color: var(--clr-in-bed-border); }
+.bed-card.status-DEPART_REGISTERED { background: var(--clr-depart-reg); border-color: var(--clr-depart-reg-border); }
+.bed-card.status-MOVING { background: var(--clr-moving); border-color: var(--clr-moving-border); }
+.bed-card.status-ARRIVED { background: var(--clr-arrived); border-color: var(--clr-arrived-border); }
+.bed-card.status-IN_EXAM { background: var(--clr-in-exam); border-color: var(--clr-in-exam-border); }
+.bed-card.status-NEARLY_DONE { background: var(--clr-nearly-done); border-color: var(--clr-nearly-done-border); }
+.bed-card.status-PICKUP_REQUIRED { background: var(--clr-pickup); border-color: var(--clr-pickup-border); }
+.bed-card.status-RETURNED { background: var(--clr-returned); border-color: var(--clr-returned-border); }
+.bed-card.status-CANCELLED { background: var(--clr-cancelled); border-color: var(--clr-cancelled-border); opacity: .7; }
+
+/* ---------- 優先対応一覧 ---------- */
+#priority-panel {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  overflow-y: auto;
+  max-height: 480px;
+}
+#priority-list { display: flex; flex-direction: column; gap: 8px; }
+.priority-item {
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: var(--transition);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--clr-surface);
+}
+.priority-item:hover { box-shadow: var(--shadow-md); border-color: #3b82f6; }
+.priority-item.priority-pickup { border-color: #dc2626; background: #fff5f5; }
+.priority-item.priority-nearly { border-color: #ea580c; background: #fff7ed; }
+.priority-item.priority-soon { border-color: #d97706; background: #fffbeb; }
+.priority-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.priority-bed-num { font-size: 16px; font-weight: 800; }
+.priority-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.priority-exam-info { font-size: 12px; color: var(--clr-text-muted); }
+.priority-time {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.priority-time.overdue { color: #dc2626; }
+.priority-time.urgent { color: #ea580c; }
+.priority-time.soon { color: #d97706; }
+
+/* ---------- ミニタイムライン ---------- */
+#mini-timeline-area {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+#mini-timeline {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-width: 700px;
+}
+.timeline-bed-label {
+  width: 48px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  flex-shrink: 0;
+}
+.timeline-bar-track {
+  flex: 1;
+  height: 28px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+.timeline-segment {
+  position: absolute;
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* ---------- 検査室画面 ---------- */
+#exam-room-queue {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.exam-queue-card {
+  background: var(--clr-surface);
+  border: 2px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.exam-queue-card.status-ARRIVED { border-color: var(--clr-arrived-border); }
+.exam-queue-card.status-IN_EXAM { border-color: var(--clr-in-exam-border); }
+.exam-queue-card.status-NEARLY_DONE { border-color: var(--clr-nearly-done-border); }
+.exam-queue-card.status-PICKUP_REQUIRED { border-color: var(--clr-pickup-border); }
+.exam-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.exam-card-bed { font-size: 20px; font-weight: 800; }
+.exam-card-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+.exam-card-info { margin-bottom: 12px; }
+.exam-card-info-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--clr-text-muted);
+  margin-bottom: 4px;
+}
+.exam-card-info-row .label { font-weight: 600; color: var(--clr-text); min-width: 70px; }
+.exam-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- ボタン ---------- */
+.btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn:hover { filter: brightness(.92); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn-primary { background: #3b82f6; color: #fff; }
+.btn-success { background: #16a34a; color: #fff; }
+.btn-warning { background: #d97706; color: #fff; }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-info { background: #0284c7; color: #fff; }
+.btn-orange { background: #ea580c; color: #fff; }
+.btn-secondary { background: #64748b; color: #fff; }
+.btn-outline { background: transparent; border: 1px solid #94a3b8; color: var(--clr-text); }
+.btn-outline:hover { background: #f1f5f9; border-color: #64748b; }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+.btn-lg { padding: 10px 20px; font-size: 14px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+
+/* ---------- タイムライン画面 ---------- */
+
+/* A2: フィルタバー */
+#timeline-filter-bar { margin-bottom: 8px; }
+.tl-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tl-filter-label { font-size: 11px; color: var(--clr-text-muted); }
+.tl-filter-chip {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--clr-border);
+  background: var(--clr-surface);
+  color: var(--clr-text-muted);
+  cursor: pointer;
+  transition: all .15s;
+}
+.tl-filter-chip:hover { border-color: var(--clr-primary); color: var(--clr-primary); }
+.tl-filter-chip.active { background: var(--clr-primary); color: #fff; border-color: var(--clr-primary); }
+.tl-filter-count { font-size: 11px; color: var(--clr-text-muted); margin-left: 4px; }
+
+/* A3: コンテキストメニュー */
+.tl-ctx-menu {
+  position: fixed;
+  z-index: 10000;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.16);
+  min-width: 180px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.tl-ctx-header {
+  padding: 8px 14px 6px;
+  font-weight: 700;
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tl-ctx-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #e2e8f0;
+  color: #475569;
+  font-weight: 600;
+}
+.tl-ctx-item {
+  padding: 8px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #1e293b;
+  transition: background .1s;
+}
+.tl-ctx-item:hover { background: #f1f5f9; }
+.tl-ctx-item i { width: 14px; text-align: center; color: #64748b; }
+.tl-ctx-item--danger { color: #dc2626; }
+.tl-ctx-item--danger i { color: #dc2626; }
+.tl-ctx-item--detail { color: #3b82f6; font-size: 12px; }
+.tl-ctx-item--detail i { color: #3b82f6; }
+.tl-ctx-divider { height: 1px; background: #e2e8f0; margin: 3px 0; }
+
+/* 患者ID連携スケジュールのサブトラック行 */
+.tl-row-sched-sub {
+  margin-top: -2px;
+  margin-bottom: 2px;
+}
+.tl-row-sched-sub .tl-row-track {
+  border-top: 1px dashed rgba(124,58,237,0.2);
+  border-radius: 0 0 4px 4px;
+}
+
+/* セクションラベル行 */
+.tl-section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 900px;
+  padding: 6px 0 2px;
+  opacity: .6;
+}
+
+/* C3: スクロール構造 */
+.tl-scroll-wrap {
+  overflow: auto;
+  max-height: calc(100vh - 220px);
+  position: relative;
+}
+.tl-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--clr-surface);
+  border-bottom: 1px solid var(--clr-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 900px;
+  padding: 4px 0 6px;
+}
+.tl-sticky-label {
+  width: 60px;
+  flex-shrink: 0;
+}
+
+#timeline-container {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.timeline-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-width: 900px;
+}
+.tl-label-col { width: 60px; flex-shrink: 0; }
+.tl-time-axis {
+  flex: 1;
+  position: relative;
+  height: 24px;
+}
+.tl-time-mark {
+  position: absolute;
+  font-size: 11.5px;
+  color: var(--clr-text-muted);
+  transform: translateX(-50%);
+}
+.tl-grid {
+  border-top: 1px solid var(--clr-border);
+}
+.tl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #f1f5f9;
+  min-width: 900px;
+  padding: 4px 0;
+}
+.tl-row-label {
+  width: 60px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+  flex-shrink: 0;
+  padding-right: 8px;
+}
+.tl-row-track {
+  flex: 1;
+  height: 32px;
+  position: relative;
+}
+.tl-seg {
+  position: absolute;
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: default;
+  transition: filter .15s;
+}
+.tl-seg:hover { filter: brightness(1.1); }
+.tl-seg.seg-moving { background: #3b82f6; }
+.tl-seg.seg-arrived { background: #0284c7; }
+.tl-seg.seg-in-exam { background: #ca8a04; }
+.tl-seg.seg-nearly-done { background: #ea580c; }
+.tl-seg.seg-pickup { background: #dc2626; }
+.tl-seg.seg-returned { background: #16a34a; }
+.tl-marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #dc2626;
+  z-index: 5;
+  box-shadow: 0 0 8px #dc2626, 0 0 15px rgba(220, 38, 38, 0.5);
+  animation: pulse-glowing-tl 2s infinite alternate;
+}
+.tl-marker::before {
+  content: '▼';
+  position: absolute;
+  top: -14px;
+  left: -5px;
+  font-size: 11px;
+  color: #dc2626;
+}
+/* タイムラインのカスタムマーカー */
+.timeline-now-marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #ef4444;
+  z-index: 5;
+  box-shadow: 0 0 8px #ef4444, 0 0 15px rgba(239, 68, 68, 0.5);
+  animation: pulse-glowing 2s infinite alternate;
+}
+.timeline-pickup-marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #f59e0b;
+  z-index: 4;
+  box-shadow: 0 0 6px #f59e0b;
+  border-style: dashed;
+}
+@keyframes pulse-glowing {
+  0% { box-shadow: 0 0 4px #ef4444, 0 0 8px rgba(239, 68, 68, 0.3); opacity: 0.8; }
+  100% { box-shadow: 0 0 12px #ef4444, 0 0 20px rgba(239, 68, 68, 0.7); opacity: 1; }
+}
+@keyframes pulse-glowing-tl {
+  0% { box-shadow: 0 0 4px #dc2626; opacity: 0.8; }
+  100% { box-shadow: 0 0 12px #dc2626; opacity: 1; }
+}
+
+/* ---- A4: 印刷スタイル ---- */
+@media print {
+  /* タイムライン以外を非表示 */
+  .sidebar, .tab-bar, .page-header .timeline-date, #tl-range-toggle, #tl-print-btn,
+  #timeline-filter-bar, #tl-prev-day, #tl-next-day, #tl-today-btn,
+  #toast-container, #passcode-modal-overlay, .tl-ctx-menu, #tl-popup { display: none !important; }
+
+  /* タイムラインページのみ表示 */
+  .page { display: none !important; }
+  #page-timeline { display: block !important; }
+
+  /* スクロール解除・全幅表示 */
+  body, html { overflow: visible !important; background: #fff; }
+  .tl-scroll-wrap { max-height: none !important; overflow: visible !important; }
+  #timeline-container { box-shadow: none !important; border: none !important; overflow: visible !important; }
+  .tl-sticky-header { position: static !important; border-bottom: 1px solid #ccc; }
+  .tl-scroll-wrap > * { min-width: 100% !important; }
+
+  /* ヘッダ印刷 */
+  .page-header h1 { font-size: 16px; }
+  .page-header { padding: 8px 0; margin-bottom: 8px; border-bottom: 2px solid #334155; }
+
+  /* アニメーション停止 */
+  .tl-marker, .timeline-now-marker, .timeline-pickup-marker { animation: none !important; }
+}
+
+/* ---------- 履歴画面 ---------- */
+#history-content {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr 0.9fr;
+  gap: 16px;
+}
+.history-panel {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  max-height: 600px;
+  overflow-y: auto;
+}
+.history-panel h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.history-panel h3 i { color: #3b82f6; }
+.history-item {
+  border-bottom: 1px solid var(--clr-border);
+  padding: 8px 0;
+  font-size: 12px;
+}
+.history-item:last-child { border-bottom: none; }
+.history-time { font-size: 10px; color: var(--clr-text-muted); margin-bottom: 2px; }
+.history-main { font-weight: 600; }
+.history-sub { color: var(--clr-text-muted); font-size: 11px; }
+
+/* ---------- モーダル ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.modal-overlay.hidden { display: none; }
+.modal {
+  background: var(--clr-surface);
+  border-radius: var(--radius-lg);
+  width: 560px;
+  max-width: 96vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp .2s ease;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--clr-border);
+}
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { transform: translateY(24px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--clr-border);
+  position: sticky;
+  top: 0;
+  background: var(--clr-surface);
+  z-index: 1;
+}
+.modal-header h2 { font-size: 17px; font-weight: 700; }
+.modal-close-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--clr-text-muted);
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  transition: var(--transition);
+}
+.modal-close-btn:hover { background: #f1f5f9; color: var(--clr-text); }
+.modal-body { padding: 20px; }
+.modal-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--clr-border);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  background: #f8fafc;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  position: sticky;
+  bottom: 0;
+}
+
+/* モーダル内フォーム */
+.form-row {
+  margin-bottom: 14px;
+}
+.form-row label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--clr-text-muted);
+  margin-bottom: 4px;
+}
+.form-row select,
+.form-row input[type="text"],
+.form-row input[type="number"],
+.form-row textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--clr-border);
+  border-radius: 6px;
+  font-size: 13px;
+  transition: var(--transition);
+}
+.form-row select:focus,
+.form-row input:focus,
+.form-row textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+}
+.form-row textarea { min-height: 60px; resize: vertical; }
+.status-display-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+}
+.status-arrow { color: var(--clr-text-muted); font-size: 12px; }
+.modal-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.modal-info-item { font-size: 12px; }
+.modal-info-item .label { color: var(--clr-text-muted); font-size: 11px; }
+.modal-info-item .value { font-weight: 600; }
+
+/* ---------- 通話パネル ---------- */
+.call-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  font-size: 20px;
+  box-shadow: var(--shadow-lg);
+  z-index: 150;
+  transition: var(--transition);
+  display: flex; align-items: center; justify-content: center;
+}
+.call-fab:hover { background: #15803d; transform: scale(1.08); }
+.call-fab.active { background: #dc2626; animation: pulse 1s infinite; }
+.call-panel {
+  position: fixed;
+  bottom: 86px;
+  right: 24px;
+  width: 300px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 150;
+}
+.call-panel.hidden { display: none; }
+.call-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #1e3a5f;
+  color: #fff;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.call-panel-header button { background: none; border: none; color: #fff; font-size: 14px; }
+.call-panel-body { padding: 14px; }
+#call-status-display {
+  text-align: center;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.call-target { font-size: 14px; font-weight: 700; }
+.call-status-text { font-size: 12px; color: var(--clr-text-muted); }
+.call-duration { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; color: #16a34a; }
+.call-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.btn-call { background: #16a34a; color: #fff; width: 100%; justify-content: center; }
+.btn-call:hover { background: #15803d; }
+.call-history-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  margin-bottom: 6px;
+}
+#call-history-mini .call-entry {
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--clr-border);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ---------- ステータスバッジ共通 ---------- */
+.status-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.badge-IN_BED { background: #e2e8f0; color: #4a5568; }
+.badge-DEPART_REGISTERED { background: #dbeafe; color: #1e40af; }
+.badge-MOVING { background: #bfdbfe; color: #1d4ed8; }
+.badge-ARRIVED { background: #e0f2fe; color: #0369a1; }
+.badge-IN_EXAM { background: #fef9c3; color: #713f12; }
+.badge-NEARLY_DONE { background: #ffedd5; color: #7c2d12; }
+.badge-PICKUP_REQUIRED { background: #fee2e2; color: #7f1d1d; }
+.badge-RETURNED { background: #dcfce7; color: #14532d; }
+.badge-CANCELLED { background: #f1f5f9; color: #475569; }
+
+/* ---------- トースト通知 ---------- */
+#toast-container {
+  position: fixed;
+  top: 68px;
+  right: 16px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.toast {
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+  animation: slideInRight .25s ease;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.toast.toast-info { background: #3b82f6; }
+.toast.toast-success { background: #16a34a; }
+.toast.toast-warning { background: #d97706; }
+.toast.toast-danger { background: #dc2626; }
+@keyframes slideInRight {
+  from { transform: translateX(40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOutRight {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(40px); opacity: 0; }
+}
+.toast.hide { animation: slideOutRight .2s ease forwards; }
+
+/* ---------- 空状態 ---------- */
+.empty-state {
+  text-align: center;
+  padding: 32px;
+  color: var(--clr-text-muted);
+}
+.empty-state i { font-size: 32px; margin-bottom: 8px; opacity: .4; }
+.empty-state p { font-size: 13px; }
+
+/* ============================================================
+   検査室 — 全検査室グリッド
+   ============================================================ */
+.examroom-grid-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; font-weight: 600; color: var(--clr-text-muted);
+  margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--clr-border);
+}
+.examroom-grid-pickup-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #fef2f2; color: #dc2626; font-weight: 700;
+  border: 1px solid #fca5a5; border-radius: 4px; padding: 1px 8px; font-size: 12px;
+}
+.examroom-room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+.examroom-card {
+  background: var(--clr-surface); border: 2px solid var(--clr-border);
+  border-radius: 12px; padding: 16px; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, transform .1s;
+  user-select: none;
+}
+.examroom-card:hover  { border-color: #93c5fd; box-shadow: 0 4px 16px rgba(59,130,246,.15); transform: translateY(-2px); }
+.examroom-card:active { transform: translateY(0); }
+.examroom-card--active { border-color: #bfdbfe; background: #eff6ff; }
+.examroom-card--urgent { border-color: #fca5a5; background: #fef2f2; animation: card-urgent-pulse 2s ease-in-out infinite; }
+@keyframes card-urgent-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+  50%       { box-shadow: 0 0 0 4px rgba(239,68,68,.18); }
+}
+.examroom-card-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.examroom-card-icon {
+  width: 36px; height: 36px; border-radius: 8px;
+  background: #e0f2fe; color: #0284c7;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; flex-shrink: 0;
+}
+.examroom-card--urgent .examroom-card-icon { background: #fee2e2; color: #dc2626; }
+.examroom-card--active .examroom-card-icon { background: #dbeafe; color: #2563eb; }
+.examroom-card-info { flex: 1; min-width: 0; }
+.examroom-card-name  { font-size: 14px; font-weight: 800; color: var(--clr-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.examroom-card-floor { font-size: 11px; color: var(--clr-text-muted); margin-top: 1px; }
+.examroom-card-total {
+  min-width: 32px; height: 32px; border-radius: 8px;
+  background: #e2e8f0; color: #64748b;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 900; flex-shrink: 0;
+}
+.examroom-card-total.urgent { background: #dc2626; color: #fff; }
+.examroom-card-total.empty  { background: #f1f5f9; color: #94a3b8; font-size: 14px; }
+.examroom-card-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+.examroom-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+}
+.pill-moving { background: #dbeafe; color: #1d4ed8; }
+.pill-exam   { background: #fef3c7; color: #b45309; }
+.pill-pickup { background: #fef2f2; color: #dc2626; }
+.examroom-card-empty-note { font-size: 11px; color: #94a3b8; font-style: italic; }
+
+/* 検査室 未選択 空状態（検査室0件時のみ残す） */
+.examroom-empty-select { padding: 48px 32px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.examroom-empty-arrow { font-size: 28px; color: #3b82f6; animation: bounce-up .9s ease-in-out infinite; margin-bottom: 4px; }
+.examroom-empty-icon { font-size: 48px !important; opacity: .18 !important; color: #3b82f6; margin-bottom: 4px; }
+.examroom-empty-title { font-size: 17px !important; font-weight: 700; color: #1e40af !important; opacity: 1 !important; }
+.examroom-empty-hint { font-size: 13px !important; color: #64748b !important; text-align: center; line-height: 1.7; opacity: 1 !important; }
+@keyframes bounce-up {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+/* 病床モーダル — ボタン2グループレイアウト */
+.modal-footer-split { display: flex; justify-content: space-between; align-items: center; width: 100%; flex-wrap: wrap; gap: 8px; }
+.modal-footer-left { display: flex; gap: 8px; align-items: center; }
+.modal-footer-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.modal-btn-cancel { opacity: .75; }
+.modal-btn-cancel:hover { opacity: 1; }
+.modal-btn-call { background: transparent; border: 1px solid #16a34a; color: #16a34a; }
+.modal-btn-call:hover { background: #f0fdf4; }
+
+/* 病床モーダル — 迎え要 警戒色 */
+.modal.status-urgent .modal-header { background: #fef2f2; border-bottom-color: #fca5a5; }
+.modal.status-urgent #modal-title { color: #dc2626; }
+.modal-urgent-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 14px;
+  color: #dc2626; font-weight: 700; font-size: 14px;
+}
+.modal-urgent-bell { animation: bell-shake .6s ease-in-out infinite; font-size: 18px; }
+@keyframes bell-shake {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-15deg); }
+  40% { transform: rotate(15deg); }
+  60% { transform: rotate(-10deg); }
+  80% { transform: rotate(10deg); }
+}
+
+/* ---------- ローディング ---------- */
+.loading-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============================================================
+   電話番号ダイアログ
+   ============================================================ */
+.phone-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.phone-dialog {
+  background: #fff;
+  border-radius: 16px;
+  width: 380px;
+  max-width: 94vw;
+  box-shadow: 0 16px 48px rgba(0,0,0,.25);
+  animation: slideUp .2s ease;
+  overflow: hidden;
+}
+.phone-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1e3a5f;
+  color: #fff;
+  padding: 14px 18px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.phone-dialog-header i { font-size: 18px; color: #60a5fa; }
+.phone-dialog-header span { flex: 1; }
+.phone-dialog-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,.7);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: var(--transition);
+}
+.phone-dialog-close:hover { color: #fff; background: rgba(255,255,255,.15); }
+.phone-dialog-body {
+  padding: 28px 24px 20px;
+  text-align: center;
+}
+.phone-dialog-context {
+  font-size: 12px;
+  color: var(--clr-text-muted);
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+.phone-number-display {
+  font-size: 52px;
+  font-weight: 900;
+  letter-spacing: .12em;
+  color: #1e3a5f;
+  font-variant-numeric: tabular-nums;
+  margin: 8px 0 12px;
+  line-height: 1.1;
+}
+.phone-dial-hint {
+  font-size: 13px;
+  color: #16a34a;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.phone-no-number {
+  padding: 20px;
+  color: #94a3b8;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.phone-no-number i { font-size: 28px; color: #cbd5e0; }
+.phone-dialog-note {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--clr-text-muted);
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.phone-dialog-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 14px 24px;
+  border-top: 1px solid var(--clr-border);
+  background: #f8fafc;
+}
+
+/* ── 電話パネル内リスト ── */
+.call-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.call-room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.call-room-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+  border: 1px solid var(--clr-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: var(--transition);
+  text-align: left;
+  width: 100%;
+}
+.call-room-btn:hover {
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+.call-room-name { font-size: 13px; font-weight: 700; }
+.call-room-phone {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e40af;
+  background: #dbeafe;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.phone-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 10px;
+}
+
+/* ============================================================
+   ODBC設定パネル
+   ============================================================ */
+.odbc-settings-panel {
+  border: 1px solid #bfdbfe; border-radius: 10px; overflow: hidden;
+  background: #f0f7ff;
+}
+.odbc-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid #dbeafe;
+}
+.odbc-section-title {
+  font-size: 12px; font-weight: 700; color: #1e40af; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.odbc-label {
+  font-size: 11px; font-weight: 700; display: block; margin-bottom: 3px; color: #374151;
+}
+.odbc-hint-inline { font-weight: 400; color: #94a3b8; font-size: 10px; }
+.odbc-input {
+  width: 100%; padding: 6px 8px;
+  border: 1px solid #bfdbfe; border-radius: 5px;
+  font-family: inherit; font-size: 12.5px; background: #fff; color: #1e293b;
+}
+.odbc-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.12); }
+.odbc-mono { font-family: 'Roboto Mono', Consolas, monospace !important; font-size: 11.5px !important; }
+select.odbc-input option[disabled] { color: #94a3b8; }
+
+body.theme-dark .odbc-settings-panel { background: rgba(30,58,138,.15); border-color: #1e3a8a; }
+body.theme-dark .odbc-section { border-bottom-color: #1e40af; }
+body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
+
+/* ============================================================
+   設定画面
+   ============================================================ */
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  border-bottom: 2px solid var(--clr-border);
+  padding: 0 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.settings-tab-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--clr-text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: -2px;
+}
+.settings-tabs::-webkit-scrollbar { height: 6px; }
+.settings-tabs::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 999px;
+}
+.settings-tab-btn:hover { color: #3b82f6; }
+.settings-tab-btn.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+  background: none;
+}
+/* 設定タブグループ区切り */
+.stab-sep {
+  display: inline-block; width: 1px; background: var(--clr-border);
+  align-self: stretch; margin: 6px 4px; flex-shrink: 0;
+}
+
+/* タブの種別バッジ */
+.stab-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  line-height: 1.4;
+  vertical-align: middle;
+  margin-left: 3px;
+}
+.stab-badge--global  { background: #dbeafe; color: #1d4ed8; }
+.stab-badge--terminal { background: #d1fae5; color: #065f46; }
+.stab-badge--parent  { background: #fef3c7; color: #92400e; }
+
+/* 設定タブ内バナー */
+.settings-category-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-bottom: 14px;
+  border-left: 4px solid;
+}
+.settings-category-banner--global {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #1e40af;
+}
+.settings-category-banner--terminal {
+  background: #f0fdf4;
+  border-color: #22c55e;
+  color: #166534;
+}
+.settings-category-banner--parent-only {
+  background: #fffbeb;
+  border-color: #f59e0b;
+  color: #78350f;
+}
+.settings-category-banner i { font-size: 14px; flex-shrink: 0; }
+
+.settings-panel {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+}
+.settings-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.settings-panel-header h3 {
+  font-size: 15px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-hint {
+  font-size: 12px;
+  color: var(--clr-text-muted);
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.settings-hint i { color: #0284c7; margin-top: 1px; }
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.settings-table th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  border-bottom: 2px solid var(--clr-border);
+  white-space: nowrap;
+}
+.settings-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.settings-table tr:last-child td { border-bottom: none; }
+.settings-table tr:hover td { background: #f8fafc; }
+.bed-type-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.bed-type-tag.type-normal    { background: #e0f2fe; color: #0369a1; }
+.bed-type-tag.type-isolation { background: #fef9c3; color: #713f12; }
+.bed-type-tag.type-icu       { background: #fee2e2; color: #7f1d1d; }
+
+/* ============================================================
+   病床マップ グリッドエディタ
+   ============================================================ */
+.map-editor-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.map-bed-palette {
+  width: 140px;
+  flex-shrink: 0;
+  background: #f8fafc;
+  border: 1px solid var(--clr-border);
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.palette-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.palette-bed-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background: #fff;
+  border: 1px solid var(--clr-border);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  cursor: grab;
+  font-size: 13px;
+  font-weight: 700;
+  transition: var(--transition);
+  user-select: none;
+}
+.palette-bed-item:hover { background: #eff6ff; border-color: #3b82f6; }
+.palette-bed-item.dragging { opacity: .4; }
+.palette-bed-item i { color: #3b82f6; font-size: 12px; }
+.palette-special { display: flex; flex-direction: column; gap: 4px; }
+.palette-special-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: grab;
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+  transition: var(--transition);
+  border: 1px solid;
+}
+.palette-special-item[data-special="corridor"] { background: #f0fdf4; border-color: #86efac; color: #15803d; }
+.palette-special-item[data-special="wall"]     { background: #f1f5f9; border-color: #94a3b8; color: #475569; }
+.palette-special-item[data-special="clear"]    { background: #fff7ed; border-color: #fca5a5; color: #dc2626; }
+
+.map-editor-wrap {
+  flex: 1;
+  overflow: auto;
+}
+.map-grid-container { display: inline-flex; flex-direction: column; }
+.map-col-labels {
+  display: flex;
+  margin-left: 28px;
+}
+.map-corner-label { width: 0; }
+.map-col-label {
+  width: 72px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  padding-bottom: 4px;
+}
+.map-editor-body { display: flex; }
+.map-row-labels {
+  display: flex;
+  flex-direction: column;
+  width: 28px;
+  flex-shrink: 0;
+}
+.map-row-label {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+}
+.map-editor-grid {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  background: #f0f4f8;
+  border-radius: 8px;
+  border: 1px solid var(--clr-border);
+}
+.map-editor-cell {
+  width: 72px;
+  height: 64px;
+  background: #fff;
+  border: 2px dashed #cbd5e0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  position: relative;
+  cursor: default;
+}
+.map-editor-cell.drag-over {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  border-style: solid;
+}
+.map-editor-cell.has-bed {
+  border-style: solid;
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+.map-editor-cell.is-corridor {
+  background: #f0fdf4;
+  border-color: #86efac;
+  border-style: solid;
+}
+.map-editor-cell.is-wall {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  border-style: solid;
+}
+.map-cell-bed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.map-cell-bed i { color: #3b82f6; font-size: 16px; }
+.map-cell-bed span { font-size: 13px; font-weight: 800; color: #1e40af; }
+.map-cell-room { font-size: 9px; color: #64748b; }
+.map-cell-special {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.map-cell-special.corridor { color: #15803d; }
+.map-cell-special.wall { color: #475569; }
+
+/* ============================================================
+   病床マップ グリッド表示 (ダッシュボード)
+   ============================================================ */
+#bed-map-grid.bed-map-grid-layout {
+  display: grid;
+  gap: 6px;
+}
+#bed-map-grid.bed-map-grid-simple {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+.bed-cell-empty {
+  /* 空セル: 廊下・壁などを表す透明スペース */
+  min-height: 6px;
+}
+
+/* ============================================================
+   既存スタイルへの補足
+   ============================================================ */
+/* 出棟中の病床カードはよりはっきり表示 */
+.bed-card.status-PICKUP_REQUIRED {
+  box-shadow: 0 0 0 3px #dc2626, var(--shadow-sm);
+}
+.bed-card.status-NEARLY_DONE {
+  box-shadow: 0 0 0 2px #ea580c, var(--shadow-sm);
+}
+
+/* サマリーカードのカウント数字 */
+#summary-pickup .summary-value { color: #dc2626; }
+#summary-soon .summary-value { color: #d97706; }
+#summary-delay .summary-value { color: #b91c1c; }
+
+/* 空床のスタイルを薄く */
+.bed-card.status-IN_BED .bed-status-badge { opacity: 0.4; }
+
+/* トグルスイッチ */
+.toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: #cbd5e0; border-radius: 24px; transition: background .2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute; width: 18px; height: 18px;
+  left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: transform .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.toggle-switch input:checked + .toggle-slider { background: #3b82f6; }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+/* 手動登録済みバッジ */
+.bed-manual-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 4px;
+  margin-bottom: 2px;
+}
+
+/* 在室管理モードカードのホバー */
+.admission-mode-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+}
+
+/* 病床マップのタイトル行 */
+.room-separator {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  padding: 4px 8px;
+  background: #f8fafc;
+  border-radius: 4px;
+  border-left: 3px solid #3b82f6;
+}
+
+/* 検査室画面 - アクションボタン群 */
+.exam-card-actions { margin-top: 8px; }
+
+/* プライオリティリストの件数バッジ */
+.panel-badge {
+  background: #dc2626;
+  color: #fff;
+  border-radius: 12px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+/* ============================================================
+   初期設定ウィザード
+   ============================================================ */
+.wiz-modal {
+  max-width: 680px; width: 95vw;
+  box-shadow: var(--shadow-xl);
+}
+.wiz-body { min-height: 260px; font-family: inherit; }
+
+/* ── ステップ進捗バー ── */
+.wiz-progress {
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px 24px 8px; gap: 0;
+}
+.wiz-step-item {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 0 0 auto;
+}
+.wiz-step-circle {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #e2e8f0; color: #94a3b8; font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .2s, color .2s;
+}
+.wiz-step-item.current .wiz-step-circle { background: #3b82f6; color: #fff; }
+.wiz-step-item.done    .wiz-step-circle { background: #10b981; color: #fff; }
+.wiz-step-label {
+  font-size: 10px; color: #94a3b8; font-weight: 600; white-space: nowrap;
+}
+.wiz-step-item.current .wiz-step-label { color: #3b82f6; font-weight: 700; }
+.wiz-step-item.done    .wiz-step-label { color: #10b981; }
+.wiz-step-connector {
+  flex: 1; height: 2px; background: #e2e8f0; min-width: 32px; max-width: 80px; margin-bottom: 16px;
+}
+
+/* ── 共通部品 ── */
+.wiz-step-title { font-size: 15px; font-weight: 800; margin-bottom: 6px; color: var(--clr-text); }
+.wiz-step-desc  { font-size: 12px; color: var(--clr-text-muted); margin-bottom: 16px; line-height: 1.5; }
+.wiz-label      { font-size: 11.5px; font-weight: 700; display: block; margin-bottom: 4px; color: var(--clr-text); }
+.wiz-optional   { font-weight: 400; color: #94a3b8; font-size: 10px; }
+.wiz-input {
+  width: 100%; padding: 6px 10px; border: 1px solid var(--clr-border);
+  border-radius: 6px; font-family: inherit; font-size: 12.5px;
+  background: var(--clr-surface); color: var(--clr-text);
+  transition: border-color .15s;
+}
+.wiz-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.15); }
+.wiz-hint {
+  font-size: 11px; color: #64748b; margin-top: 5px; line-height: 1.5;
+}
+.wiz-hint code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 10.5px; }
+.wiz-callout { display: flex; gap: 8px; align-items: flex-start; border-radius: 7px; padding: 10px 14px; margin-top: 10px; font-size: 12px; }
+.wiz-callout-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.wiz-sub-panel {
+  margin-top: 12px; padding: 14px; background: rgba(0,0,0,.025);
+  border: 1px solid var(--clr-border); border-radius: 8px;
+}
+
+/* ── ラジオカード ── */
+.wiz-radio-group  { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.wiz-radio-card {
+  border: 2px solid var(--clr-border); border-radius: 9px; padding: 11px 14px;
+  display: flex; align-items: flex-start; gap: 12px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.wiz-radio-card input[type=radio] { margin-top: 2px; flex-shrink: 0; }
+.wiz-radio-card.selected { border-color: #3b82f6; background: rgba(59,130,246,.05); }
+.wiz-radio-icon   { font-size: 18px; color: #94a3b8; margin-top: 1px; flex-shrink: 0; }
+.wiz-radio-card.selected .wiz-radio-icon { color: #3b82f6; }
+.wiz-radio-title  { display: block; font-size: 13px; font-weight: 700; color: var(--clr-text); }
+.wiz-radio-desc   { display: block; font-size: 11px; color: var(--clr-text-muted); margin-top: 2px; line-height: 1.4; }
+.wiz-inline-radio { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--clr-text); cursor: pointer; }
+
+/* ── ODBCビルダー ── */
+.wiz-odbc-builder {
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px; margin-bottom: 2px;
+}
+.wiz-odbc-builder-header {
+  font-size: 12.5px; font-weight: 700; color: #1e40af; margin-bottom: 10px;
+}
+.wiz-odbc-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+
+/* ダークモード対応 */
+body.theme-dark .wiz-radio-card { border-color: #334155; }
+body.theme-dark .wiz-radio-card.selected { border-color: #3b82f6; background: rgba(59,130,246,.12); }
+body.theme-dark .wiz-sub-panel { background: rgba(255,255,255,.04); border-color: #334155; }
+body.theme-dark .wiz-odbc-builder { background: rgba(30,58,138,.25); border-color: #1e40af; }
+body.theme-dark .wiz-input { background: #1e293b; border-color: #334155; }
+
+/* ---------- 音量スライダー ---------- */
+#notif-volume {
+  -webkit-appearance: none; appearance: none;
+  height: 8px; border-radius: 4px; outline: none; cursor: pointer;
+  background: linear-gradient(to right, #3b82f6 80%, #e2e8f0 80%);
+}
+#notif-volume::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; border: 2px solid #3b82f6; box-shadow: 0 1px 4px rgba(0,0,0,.18);
+  cursor: pointer;
+}
+#notif-volume::-moz-range-thumb {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; border: 2px solid #3b82f6; box-shadow: 0 1px 4px rgba(0,0,0,.18);
+  cursor: pointer;
+}
+
+/* ---------- レスポンシブ ---------- */
+@media (max-width: 1200px) {
+  #dashboard-content { grid-template-columns: 1fr; }
+  #priority-panel { max-height: 300px; }
+}
+@media (max-width: 900px) {
+  #bed-map-grid { grid-template-columns: repeat(4, 1fr); }
+  #summary-bar { flex-wrap: wrap; }
+  #history-content { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  #bed-map-grid { grid-template-columns: repeat(3, 1fr); }
+  .page-tabs .tab-btn span { display: none; }
+  .app-title { display: none; }
+}
+
+/* ---------- スクロールバー ---------- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ---------- その他ユーティリティ ---------- */
+.text-muted { color: var(--clr-text-muted); }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 10px; }
+.font-bold { font-weight: 700; }
+.flex { display: flex; }
+.items-center { align-items: center; }
+.gap-2 { gap: 8px; }
+.mt-2 { margin-top: 8px; }
+.mb-2 { margin-bottom: 8px; }
+.hidden { display: none !important; }
+.divider { height: 1px; background: var(--clr-border); margin: 12px 0; }
+
+/* ============================================================
+   新規追加：フィルタ用スタイル
+   ============================================================ */
+.filter-btn.active {
+  background: var(--clr-primary) !important;
+  color: #fff !important;
+  border-color: var(--clr-primary) !important;
+  font-weight: 700;
+}
+
+/* 患者名の非表示マスク用スタイル */
+.hide-patient-names .bed-patient-name,
+.hide-patient-names .exam-patient-name {
+  color: transparent !important;
+  position: relative;
+  user-select: none;
+}
+.hide-patient-names .bed-patient-name::after,
+.hide-patient-names .exam-patient-name::after {
+  content: "＊＊＊＊";
+  color: #94a3b8;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  font-weight: normal;
+}
+
+/* タブレット用のレスポンシブ配置調整 */
+@media (max-width: 1024px) {
+  #dashboard-content {
+    grid-template-columns: 1fr !important;
+  }
+  #priority-panel {
+    width: 100% !important;
+  }
+}
+
+/* ============================================================
+   新規追加：テーマ設定＆付箋機能スタイル
+   ============================================================ */
+
+/* --- ダークテーマ (.theme-dark) --- */
+body.theme-dark {
+  --clr-bg: radial-gradient(circle at 50% 50%, #0f172a 0%, #020617 100%);
+  --clr-surface: rgba(30, 41, 59, 0.68);
+  --clr-border: rgba(255, 255, 255, 0.08);
+  --clr-text: #f8fafc;
+  --clr-text-muted: #94a3b8;
+  --clr-primary: #3b82f6;
+  --clr-primary-dark: #60a5fa;
+  --clr-header-bg: rgba(15, 23, 42, 0.75);
+  --border-header: 1px solid rgba(255, 255, 255, 0.08);
+
+  /* ダークテーマ用のステータスカラー - 半透明調整 */
+  --clr-in-bed: rgba(30, 41, 59, 0.5);
+  --clr-in-bed-border: rgba(71, 85, 105, 0.5);
+  --clr-depart-reg: rgba(30, 58, 138, 0.6);
+  --clr-depart-reg-border: #3b82f6;
+  --clr-depart-reg-text: #93c5fd;
+  --clr-moving: rgba(23, 37, 84, 0.6);
+  --clr-moving-border: #2563eb;
+  --clr-arrived: rgba(12, 74, 110, 0.6);
+  --clr-arrived-border: #0284c7;
+  --clr-in-exam: rgba(66, 32, 6, 0.65);
+  --clr-in-exam-border: #ca8a04;
+  --clr-in-exam-text: #fef08a;
+  --clr-nearly-done: rgba(67, 20, 7, 0.65);
+  --clr-nearly-done-border: #ea580c;
+  --clr-nearly-done-text: #fed7aa;
+  --clr-pickup: rgba(69, 10, 10, 0.65);
+  --clr-pickup-border: #dc2626;
+  --clr-pickup-text: #fecaca;
+  --clr-returned: rgba(2, 44, 34, 0.65);
+  --clr-returned-border: #16a34a;
+  --clr-returned-text: #a7f3d0;
+  --clr-cancelled: rgba(30, 41, 59, 0.5);
+  --clr-cancelled-border: #64748b;
+  --clr-cancelled-text: #cbd5e0;
+}
+body.theme-dark input,
+body.theme-dark select,
+body.theme-dark textarea {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+  border-color: #475569 !important;
+}
+body.theme-dark option {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+}
+body.theme-dark .summary-card {
+  background-color: rgba(30, 41, 59, 0.68);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+body.theme-dark .summary-card.alert { border-color: rgba(220, 38, 38, 0.5); background: rgba(69, 10, 10, 0.5); }
+body.theme-dark .summary-card.warning { border-color: rgba(217, 119, 6, 0.5); background: rgba(66, 32, 6, 0.5); }
+body.theme-dark .summary-card.danger { border-color: rgba(185, 28, 28, 0.5); background: rgba(69, 10, 10, 0.5); }
+body.theme-dark .summary-icon { background: #334155; color: #60a5fa; }
+body.theme-dark .modal {
+  background-color: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #334155;
+}
+body.theme-dark .modal-header {
+  border-bottom: 1px solid #334155;
+}
+body.theme-dark .modal-footer {
+  border-top: 1px solid #334155;
+}
+body.theme-dark .history-item {
+  border-bottom: 1px solid #334155;
+  color: #f8fafc;
+}
+body.theme-dark .history-main {
+  color: #f8fafc;
+}
+body.theme-dark #bed-map-filter-bar {
+  background: rgba(30, 41, 59, 0.9) !important;
+  border-color: #475569 !important;
+}
+body.theme-dark #bed-map-filter-bar span {
+  color: #94a3b8 !important;
+}
+
+/* --- メディカルブルーテーマ (.theme-blue) --- */
+body.theme-blue {
+  --clr-bg: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+  --clr-surface: rgba(255, 255, 255, 0.72);
+  --clr-border: rgba(186, 230, 253, 0.6);
+  --clr-text: #0f172a;
+  --clr-text-muted: #0891b2;
+  --clr-primary: #06b6d4;
+  --clr-primary-dark: #0891b2;
+  --clr-header-bg: rgba(8, 145, 178, 0.82);
+  --border-header: none;
+
+  /* ステータスカラーもブルー基調に調和 - 半透明調整 */
+  --clr-in-bed: rgba(255, 255, 255, 0.5);
+  --clr-in-bed-border: rgba(186, 230, 253, 0.6);
+  --clr-depart-reg: rgba(224, 242, 254, 0.7);
+  --clr-depart-reg-border: #0284c7;
+  --clr-depart-reg-text: #0369a1;
+  --clr-moving: rgba(224, 242, 254, 0.8);
+  --clr-moving-border: #0284c7;
+  --clr-arrived: rgba(204, 251, 241, 0.7);
+  --clr-arrived-border: #0d9488;
+  --clr-in-exam: rgba(254, 252, 232, 0.7);
+  --clr-in-exam-border: #ca8a04;
+  --clr-in-exam-text: #713f12;
+  --clr-nearly-done: rgba(255, 247, 237, 0.7);
+  --clr-nearly-done-border: #ea580c;
+  --clr-nearly-done-text: #7c2d12;
+  --clr-pickup: rgba(254, 226, 226, 0.7);
+  --clr-pickup-border: #dc2626;
+  --clr-pickup-text: #7f1d1d;
+  --clr-returned: rgba(236, 253, 245, 0.7);
+  --clr-returned-border: #059669;
+  --clr-returned-text: #064e3b;
+  --clr-cancelled: rgba(241, 245, 249, 0.65);
+  --clr-cancelled-border: #64748b;
+  --clr-cancelled-text: #475569;
+}
+body.theme-blue #app-header {
+  background: #0891b2;
+}
+
+/* --- 高コントラストテーマ (.theme-high-contrast) --- */
+body.theme-high-contrast {
+  --clr-bg: #000000;
+  --clr-surface: #000000;
+  --clr-border: #ffffff;
+  --clr-text: #ffffff;
+  --clr-text-muted: #ffff00;
+  --clr-primary: #ffff00;
+  --clr-primary-dark: #ffff00;
+  --clr-header-bg: #000000;
+  --border-header: 2px solid #ffffff;
+
+  /* 高コントラスト用のステータスカラー */
+  --clr-in-bed: #000000;
+  --clr-in-bed-border: #ffffff;
+  --clr-depart-reg: #000000;
+  --clr-depart-reg-border: #ffff00;
+  --clr-depart-reg-text: #ffff00;
+  --clr-moving: #000000;
+  --clr-moving-border: #ffff00;
+  --clr-arrived: #000000;
+  --clr-arrived-border: #00ffff;
+  --clr-in-exam: #000000;
+  --clr-in-exam-border: #ffff00;
+  --clr-in-exam-text: #ffff00;
+  --clr-nearly-done: #000000;
+  --clr-nearly-done-border: #ff00ff;
+  --clr-nearly-done-text: #ff00ff;
+  --clr-pickup: #000000;
+  --clr-pickup-border: #ff0000;
+  --clr-pickup-text: #ff0000;
+  --clr-returned: #000000;
+  --clr-returned-border: #00ff00;
+  --clr-returned-text: #00ff00;
+  --clr-cancelled: #000000;
+  --clr-cancelled-border: #ffffff;
+  --clr-cancelled-text: #ffffff;
+}
+body.theme-high-contrast input,
+body.theme-high-contrast select,
+body.theme-high-contrast textarea {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+  border-color: #ffffff !important;
+}
+body.theme-high-contrast option {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+body.theme-high-contrast .summary-card {
+  background-color: #000000;
+  border-color: #ffffff;
+  color: #ffffff;
+}
+body.theme-high-contrast .summary-card.alert,
+body.theme-high-contrast .summary-card.warning,
+body.theme-high-contrast .summary-card.danger {
+  background: #000000;
+}
+body.theme-high-contrast .summary-icon { background: #000000; color: #ffff00; border: 1px solid #ffffff; }
+body.theme-high-contrast .modal {
+  background-color: #000000;
+  color: #ffffff;
+  border: 2px solid #ffffff;
+}
+body.theme-high-contrast .modal-header {
+  border-bottom: 2px solid #ffffff;
+}
+body.theme-high-contrast .modal-footer {
+  border-top: 2px solid #ffffff;
+}
+body.theme-high-contrast .history-item {
+  border-bottom: 1px solid #ffffff;
+  color: #ffffff;
+}
+body.theme-high-contrast .history-main {
+  color: #ffffff;
+}
+body.theme-high-contrast #bed-map-filter-bar {
+  background: #000000 !important;
+  border-color: #ffffff !important;
+}
+body.theme-high-contrast #bed-map-filter-bar span {
+  color: #ffffff !important;
+}
+body.theme-high-contrast .panel-header h2 i { color: #ffff00; }
+body.theme-high-contrast .app-logo i { color: #ffff00; }
+body.theme-high-contrast .btn {
+  border-color: #ffffff !important;
+  color: #ffffff !important;
+  background: #000000 !important;
+}
+body.theme-high-contrast .btn:hover {
+  background: #ffffff !important;
+  color: #000000 !important;
+}
+body.theme-high-contrast .btn-primary {
+  border-color: #ffff00 !important;
+  color: #000000 !important;
+  background: #ffff00 !important;
+  font-weight: 900;
+}
+
+/* ---------- 付箋 (Sticky Note) ---------- */
+.sticky-note-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transform: rotate(-1.5deg);
+  min-height: var(--bed-card-min-h);
+  border-radius: var(--radius);
+}
+.sticky-note-card:hover {
+  transform: scale(1.05) rotate(0deg);
+  z-index: 10;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+.sticky-note-card.color-yellow {
+  background: #fef08a !important;
+  border: 1px solid #facc15 !important;
+  color: #713f12 !important;
+}
+.sticky-note-card.color-pink {
+  background: #fbcfe8 !important;
+  border: 1px solid #f472b6 !important;
+  color: #831843 !important;
+}
+.sticky-note-card.color-blue {
+  background: #bfdbfe !important;
+  border: 1px solid #60a5fa !important;
+  color: #1e3a8a !important;
+}
+.sticky-note-card.color-green {
+  background: #bbf7d0 !important;
+  border: 1px solid #4ade80 !important;
+  color: #14532d !important;
+}
+.sticky-note-card.color-orange {
+  background: #fed7aa !important;
+  border: 1px solid #fb923c !important;
+  color: #7c2d12 !important;
+}
+
+.sticky-note-pin {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.sticky-note-text {
+  font-family: 'Yu Gothic UI', 'Meiryo', 'MS PGothic', sans-serif;
+  font-size: 11px;
+  line-height: 1.3;
+  margin-top: 10px;
+  word-break: break-all;
+  text-align: left;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 空床セルのホバーエフェクト */
+.bed-cell-empty {
+  min-height: var(--bed-card-min-h);
+  border: 2px dashed rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.02);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.bed-cell-empty:hover {
+  background: rgba(59, 130, 246, 0.06);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+.bed-cell-empty .add-memo-btn {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.bed-cell-empty:hover .add-memo-btn {
+  opacity: 1;
+}
+
+.bed-cell-empty.is-corridor:hover,
+.bed-cell-empty.is-wall:hover {
+  background: inherit !important;
+  border-color: inherit !important;
+  cursor: default !important;
+}
+.bed-cell-empty.is-corridor .add-memo-btn,
+.bed-cell-empty.is-wall .add-memo-btn {
+  display: none !important;
+}
+
+
+
+/* ビデオ通話 全画面対応 */
+#webrtc-video-container:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  border: none;
+}
+#webrtc-video-container:fullscreen #webrtc-remote-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* 接続断バナー */
+#connection-lost-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: #dc2626;
+  color: #fff;
+  text-align: center;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  animation: slideDown 0.3s ease;
+}
+#connection-lost-banner i { margin-right: 6px; }
+@keyframes slideDown {
+  from { transform: translateY(-100%); }
+  to   { transform: translateY(0); }
+}
+
+
+.app-version-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.24);
+  background: rgba(255,255,255,0.16);
+  color: rgba(255,255,255,0.92);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}

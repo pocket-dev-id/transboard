@@ -1,0 +1,47 @@
+{
+  "name": "nfc-self-service",
+  "version": "0.1.0",
+  "description": "NFC card self-service enrollment helper for two-factor authentication.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "io.transboard.nfc-self-service",
+    "productName": "NFC Self Service",
+    "directories": {
+      "output": "dist"
+    },
+    "asarUnpack": [
+      "nfc-reader.ps1"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "NFC Self Service"
+    }
+  },
+  "keywords": [
+    "nfc",
+    "self-service",
+    "2fa",
+    "electron"
+  ],
+  "author": "transboard",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.2.0",
+    "electron-builder": "^24.13.3"
+  }
+}

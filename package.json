@@ -1,0 +1,59 @@
+{
+  "name": "transboard",
+  "version": "1.0.9",
+  "description": "TransBoard - Hospital Ward Transfer Management Dashboard",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "npm version patch --no-git-tag-version && electron-builder"
+  },
+  "build": {
+    "appId": "io.transboard.app",
+    "productName": "TransBoard",
+    "directories": {
+      "output": "dist"
+    },
+    "asarUnpack": [
+      "nfc-reader.ps1"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "TransBoard"
+    }
+  },
+  "keywords": [
+    "hospital",
+    "patient-transfer",
+    "ward-management",
+    "electron",
+    "desktop"
+  ],
+  "author": "pocket-dev-id",
+  "license": "MIT",
+  "homepage": "https://pocket-dev-id.github.io/transboard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pocket-dev-id/transboard"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "csv-parser": "^3.0.0"
+  },
+  "devDependencies": {
+    "electron": "^28.2.0",
+    "electron-builder": "^24.13.3"
+  }
+}

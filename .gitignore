@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+
+# Electron builder cache
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# Database (do not commit patient data)
+db.json
+*.db
+
+# NFC reader (if compiled)
+nfc-reader.exe
+
+# Claude Code local settings
+.claude/
+
+# Runtime import archives (may contain patient CSV data)
+import_folder/archive/*.csv
+sample_schedules/**/archive/*.csv

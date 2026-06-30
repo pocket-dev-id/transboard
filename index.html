@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TransBoard</title>
+  <link rel="stylesheet" href="css/local-icons.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- ナビゲーションヘッダー -->
+  <header id="app-header">
+    <div class="header-left">
+      <div class="app-logo">
+        <i class="fas fa-hospital"></i>
+        <span class="app-title">TransBoard</span>
+      </div>
+      <nav class="page-tabs">
+        <button class="tab-btn active" data-page="ward-dashboard">
+          <i class="fas fa-th-large"></i> 病棟ダッシュボード<span id="nav-pickup-badge" class="nav-badge" style="display:none;"></span>
+        </button>
+        <button class="tab-btn" data-page="exam-room">
+          <i class="fas fa-x-ray"></i> 検査室
+        </button>
+        <button class="tab-btn" data-page="timeline">
+          <i class="fas fa-stream"></i> タイムライン
+        </button>
+        <button class="tab-btn" data-page="history">
+          <i class="fas fa-history"></i> 履歴
+        </button>
+        <button class="tab-btn" data-page="settings">
+          <i class="fas fa-cog"></i> 設定
+        </button>
+      </nav>
+    </div>
+    <div class="header-right">
+      <div id="clock" class="clock-display"></div>
+      <div class="zoom-selector" style="display: flex; align-items: center; gap: 6px; font-size: 13px; margin-right: 4px;">
+        <label><i class="fas fa-search-plus"></i> 表示倍率:</label>
+        <select id="zoom-select" style="background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #fff; padding: 4px 6px; border-radius: 6px; font-size: 13px; cursor: pointer; outline: none;">
+          <option value="1.0" style="color: #1a202c;">100% (標準)</option>
+          <option value="1.2" style="color: #1a202c;">120% (中)</option>
+          <option value="1.5" style="color: #1a202c;">150% (大)</option>
+          <option value="2.0" style="color: #1a202c;">200% (極大)</option>
+        </select>
+      </div>
+      <div class="ward-selector">
+        <label>病棟:</label>
+        <select id="ward-select">
+          <option value="ward-1">7階東病棟</option>
+          <option value="ward-2">7階西病棟</option>
+        </select>
+      </div>
+      <button id="btn-fullscreen" class="btn-icon" title="フルスクリーン切替">
+        <i class="fas fa-expand"></i>
+      </button>
+      <button id="btn-refresh" class="btn-icon" title="データ更新">
+        <i class="fas fa-sync-alt"></i>
+      </button>
+      <button id="btn-system-reset" class="btn-icon" title="システムリセット" style="background:rgba(220,38,38,.3);border-color:rgba(220,38,38,.5);">
+        <i class="fas fa-database"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- ページコンテナ -->
+  <main id="app-main">
+
+    <!-- ===== 病棟ダッシュボード ===== -->
+    <section id="page-ward-dashboard" class="page active">
+
+      <!-- 最終更新・取り込み時間情報バー -->
+      <div id="sync-info-bar" style="display: flex; justify-content: space-between; font-size: 11px; color: #718096; margin-bottom: 8px; padding: 0 4px; flex-wrap: wrap; gap: 8px;">
+        <span id="sync-time-display" style="display: none;"><i class="fas fa-sync-alt"></i> 最終同期: --:--:--</span>
+        <span id="import-time-display" style="display: none;"><i class="fas fa-file-import"></i> 最終取り込み: 未取得</span>
+      </div>
+
+      <!-- サマリーバー -->
+      <div id="summary-bar">
+        <div class="summary-card" id="summary-depart">
+          <div class="summary-icon"><i class="fas fa-walking"></i></div>
+          <div class="summary-body">
+            <div class="summary-value" id="cnt-depart">0</div>
+            <div class="summary-label">出棟中</div>
+          </div>
+        </div>
+        <div class="summary-card" id="summary-escort">
+          <div class="summary-icon"><i class="fas fa-user-nurse"></i></div>
+          <div class="summary-body">
+            <div class="summary-value" id="cnt-escort">0</div>
+            <div class="summary-label">付き添い中</div>
+          </div>
+        </div>
+        <div class="summary-card alert" id="summary-pickup">
+          <div class="summary-icon"><i class="fas fa-bell"></i></div>
+          <div class="summary-body">
+            <div class="summary-value" id="cnt-pickup">0</div>
+            <div class="summary-label">迎え要</div>
+          </div>
+        </div>
+        <div class="summary-card warning" id="summary-soon">
+          <div class="summary-icon"><i class="fas fa-clock"></i></div>
+          <div class="summary-body">
+            <div class="summary-value" id="cnt-soon">0</div>
+            <div class="summary-label">15分以内</div>
+          </div>
+        </div>
+        <div class="summary-card danger" id="summary-delay">
+          <div class="summary-icon"><i class="fas fa-exclamation-triangle"></i></div>
+          <div class="summary-body">
+            <div class="summary-value" id="cnt-delay">0</div>
+            <div class="summary-label">遅延</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- メインコンテンツ -->
+      <div id="dashboard-content">
+
+        <!-- 左: 病床マップ -->
+        <div id="bed-map-area">
+          <div class="panel-header">
+            <h2><i class="fas fa-map"></i> 病床マップ</h2>
+            <div class="legend">
+              <span class="legend-item in-bed">在床</span>
+              <span class="legend-item depart-registered">登録済</span>
+              <span class="legend-item moving">移動中</span>
+              <span class="legend-item arrived">到着</span>
+              <span class="legend-item in-exam">検査中</span>
+              <span class="legend-item nearly-done">あと10分</span>
+              <span class="legend-item pickup-required">迎え要</span>
+              <span class="legend-item returned">帰棟済</span>
+            </div>
+          </div>
+          <!-- フィルターボタンバー -->
+          <div id="bed-map-filter-bar" style="display: flex; gap: 6px; margin-bottom: 12px; background: rgba(248, 250, 252, 0.8); padding: 6px; border-radius: 8px; border: 1px solid #e2e8f0; width: 100%; box-sizing: border-box; align-items: center; z-index: 10; position: relative;">
+            <span style="font-size: 11px; font-weight: 800; color: #64748b; margin-right: 6px; margin-left: 4px;"><i class="fas fa-filter"></i> 絞り込み:</span>
+            <button class="btn btn-outline btn-sm filter-btn active" data-filter="all">すべて</button>
+            <button class="btn btn-outline btn-sm filter-btn" data-filter="active_transfer">出棟中</button>
+            <button class="btn btn-outline btn-sm filter-btn" data-filter="pickup">お迎え要</button>
+            <button class="btn btn-outline btn-sm filter-btn" data-filter="empty">空床</button>
+            <button class="btn btn-outline btn-sm filter-btn" data-filter="absent">不在</button>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: #475569; margin-left: auto; cursor: pointer; user-select: none; margin-right: 8px;">
+              <span>備考表示:</span>
+              <select id="sel-remarks-mode" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 11px; font-weight: bold; background: white; cursor: pointer; outline: none;">
+                <option value="icon" selected>ありなし（アイコン）</option>
+                <option value="text">テキストを表示</option>
+                <option value="hide">非表示</option>
+              </select>
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: #475569; cursor: pointer; user-select: none; margin-right: 4px;">
+              <input type="checkbox" id="chk-show-patient-names" style="cursor: pointer; transform: scale(1.1);">
+              <span>患者名を表示</span>
+            </label>
+          </div>
+          <div id="bed-map-grid"></div>
+        </div>
+
+        <!-- 右: 優先対応一覧 -->
+        <div id="priority-panel">
+          <div class="panel-header">
+            <h2><i class="fas fa-list-ul"></i> 優先対応一覧</h2>
+            <span class="panel-sub">迎えが必要な順に表示</span>
+          </div>
+          <div id="priority-list"></div>
+        </div>
+      </div>
+
+      <!-- 下部: タイムライン簡易 -->
+      <div id="mini-timeline-area">
+        <div class="panel-header">
+          <h2><i class="fas fa-stream"></i> タイムライン（本日）</h2>
+          <button class="btn btn-outline btn-sm" id="btn-goto-timeline" style="font-size:11px;padding:3px 10px;">
+            <i class="fas fa-external-link-alt"></i> タイムラインを開く
+          </button>
+        </div>
+        <div id="mini-timeline"></div>
+      </div>
+    </section>
+
+    <!-- ===== 検査室画面 ===== -->
+    <section id="page-exam-room" class="page">
+      <div class="page-header" style="flex-wrap: wrap; gap: 12px;">
+        <h1><i class="fas fa-x-ray"></i> 検査室 進捗管理</h1>
+        <div class="exam-room-selector" style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+          <label>検査室:</label>
+          <select id="exam-room-select">
+            <option value="">-- 選択 --</option>
+          </select>
+          <div id="exam-ic-scan-area" style="display: none; align-items: center; gap: 8px; margin-left: 16px;">
+            <i class="fas fa-id-card" style="color: #4a5568;"></i>
+            <input type="text" id="exam-ic-input" placeholder="患者ICスキャン口 (スキャンで自動遷移)" style="padding: 6px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; width: 250px;">
+          </div>
+        </div>
+        <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #475569; margin-left: auto; cursor: pointer; user-select: none;">
+          <input type="checkbox" id="chk-exam-show-patient-names" style="cursor: pointer; transform: scale(1.1);">
+          <span>患者名を表示</span>
+        </label>
+      </div>
+      <div id="exam-room-summary-container"></div>
+      <div id="exam-room-queue"></div>
+    </section>
+
+    <!-- ===== タイムライン画面 ===== -->
+    <section id="page-timeline" class="page">
+      <div class="page-header">
+        <h1><i class="fas fa-stream"></i> タイムライン</h1>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="timeline-date" style="display:flex;align-items:center;gap:6px;">
+            <button id="tl-prev-day" class="btn btn-outline btn-sm" title="前日" style="padding:4px 10px;"><i class="fas fa-chevron-left"></i></button>
+            <input type="date" id="timeline-date">
+            <button id="tl-next-day" class="btn btn-outline btn-sm" title="翌日" style="padding:4px 10px;"><i class="fas fa-chevron-right"></i></button>
+            <button id="tl-today-btn" class="btn btn-outline btn-sm" style="font-size:12px;padding:4px 12px;">今日</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;border-left:1px solid #e2e8f0;padding-left:10px;">
+            <button id="tl-range-toggle" class="btn btn-outline btn-sm" title="表示範囲を切り替え" style="font-size:11px;padding:4px 10px;">
+              <i class="fas fa-expand-alt"></i> 固定 08-20時
+            </button>
+            <button id="tl-print-btn" class="btn btn-outline btn-sm" title="印刷" style="font-size:11px;padding:4px 10px;" onclick="window.print()">
+              <i class="fas fa-print"></i> 印刷
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="timeline-filter-bar"></div>
+      <div id="timeline-container"></div>
+    </section>
+
+    <!-- ===== 履歴画面 ===== -->
+    <section id="page-history" class="page">
+      <div class="page-header" style="flex-wrap: wrap; gap: 12px; align-items: center; width: 100%;">
+        <h1><i class="fas fa-history"></i> 履歴・監査ログ</h1>
+        <div class="history-filter-bar" style="display: flex; gap: 10px; align-items: center; margin-left: auto; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #4a5568;">
+            <i class="fas fa-search"></i> 検索:
+            <input type="text" id="history-search" placeholder="病床番号/患者名/担当者..." style="padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; width: 180px; outline: none;">
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #4a5568;">
+            <i class="fas fa-filter"></i> 状態:
+            <select id="history-status-filter" style="padding: 6px 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; outline: none; cursor: pointer;">
+              <option value="">-- 全て --</option>
+              <option value="DEPART_REGISTERED">出棟登録済</option>
+              <option value="MOVING">移動中</option>
+              <option value="ARRIVED">到着</option>
+              <option value="IN_EXAM">検査中</option>
+              <option value="NEARLY_DONE">あと10分</option>
+              <option value="PICKUP_REQUIRED">お迎え要</option>
+              <option value="RETURNED">帰棟済</option>
+              <option value="CANCELLED">キャンセル</option>
+            </select>
+          </div>
+          <button class="btn btn-outline" id="btn-export-logs-csv" style="padding: 6px 12px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; height: 33px;">
+            <i class="fas fa-file-csv" style="color: #16a34a; font-size: 14px;"></i> CSV出力
+          </button>
+        </div>
+      </div>
+      <div id="history-content">
+        <div class="history-panel">
+          <h3><i class="fas fa-list"></i> イベント一覧</h3>
+          <div id="event-list"></div>
+        </div>
+        <div class="history-panel">
+          <h3><i class="fas fa-exchange-alt"></i> 状態変更ログ</h3>
+          <div id="status-log-list"></div>
+        </div>
+        <div class="history-panel">
+          <h3><i class="fas fa-phone"></i> 通話履歴</h3>
+          <div id="call-history-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 設定画面 ===== -->
+    <section id="page-settings" class="page">
+      <div class="page-header">
+        <h1><i class="fas fa-cog"></i> システム設定</h1>
+      </div>
+      <div id="settings-content"></div>
+    </section>
+
+  </main>
+
+  <!-- ===== 電話番号パネル (フローティング) ===== -->
+  <div id="call-panel" class="call-panel hidden">
+    <div class="call-panel-header">
+      <span><i class="fas fa-phone"></i> 電話番号一覧</span>
+      <button id="call-panel-close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="call-panel-body" id="call-panel-body">
+      <!-- JS で動的生成 -->
+    </div>
+  </div>
+  <button id="btn-call-toggle" class="call-fab" title="検査室電話番号">
+    <i class="fas fa-phone"></i>
+  </button>
+
+  <!-- ===== 出棟登録・状態更新モーダル ===== -->
+  <div id="bed-modal-overlay" class="modal-overlay hidden">
+    <div id="bed-modal" class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">病床詳細</h2>
+        <button id="modal-close" class="modal-close-btn"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body" id="modal-body">
+        <!-- JS で動的生成 -->
+      </div>
+      <div class="modal-footer" id="modal-footer">
+        <!-- JS で動的生成 -->
+      </div>
+    </div>
+  </div>
+
+
+
+  <!-- ===== 管理者パスコード入力モーダル ===== -->
+  <div id="passcode-modal-overlay" class="modal-overlay hidden" style="z-index: 9999;">
+    <div id="passcode-modal" class="modal" style="max-width: 400px;">
+      <div class="modal-header">
+        <h2 id="passcode-modal-title"><i class="fas fa-lock"></i> 管理者ロック解除</h2>
+        <button id="passcode-modal-close" class="modal-close-btn"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body" id="passcode-modal-body">
+        <div class="form-row">
+          <label style="font-weight: 700; font-size: 13.5px; color: #475569;">設定変更を行うには管理者パスコードを入力してください。</label>
+          <input type="password" id="passcode-input" placeholder="パスコードを入力（初期値: 0000）" style="width:100%; padding:10px 12px; border:1px solid #cbd5e0; border-radius:8px; font-family:inherit; font-size:15px; font-weight:800; text-align:center; letter-spacing: 4px; margin-top:12px; outline:none;" autofocus>
+          <div id="passcode-error-msg" style="color:#dc2626; font-size:11.5px; font-weight:700; margin-top:8px; text-align:center; display:none;">パスコードが正しくありません。</div>
+        </div>
+      </div>
+      <div class="modal-footer" id="passcode-modal-footer" style="display:flex; justify-content:center; gap:12px;">
+        <button class="btn btn-primary" id="btn-passcode-submit" style="padding:10px 24px; font-weight:700;">認証</button>
+        <button class="btn btn-outline" id="btn-passcode-cancel" style="padding:10px 20px;">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 通知トースト ===== -->
+  <div id="toast-container"></div>
+
+  <!-- JS モジュール -->
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/bedmap.js"></script>
+  <script src="js/modal.js"></script>
+
+  <script src="js/wizard.js"></script>
+  <script src="js/priority.js"></script>
+  <script src="js/timeline.js"></script>
+  <script src="js/history.js"></script>
+  <script src="js/examroom.js"></script>
+  <script src="js/call.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

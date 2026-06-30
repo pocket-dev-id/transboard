@@ -1,0 +1,92 @@
+/* Local replacement for the subset of FontAwesome classes used by this app.
+   It avoids CDN access in offline hospital networks. */
+.fas, .far, .fab {
+  display: inline-block;
+  width: 1.15em;
+  min-width: 1.15em;
+  text-align: center;
+  font-family: 'Segoe UI Symbol', 'Yu Gothic UI', 'Meiryo', sans-serif;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+}
+.fas::before, .far::before, .fab::before { content: ''; }
+.fa-spin { animation: local-fa-spin 1s linear infinite; }
+@keyframes local-fa-spin { to { transform: rotate(360deg); } }
+.fa-arrow-right::before { content: "\2192"; }
+.fa-bed::before { content: "\25AD"; }
+.fa-bell::before { content: "\25D6"; }
+.fa-border-none::before { content: "\25A1"; }
+.fa-bullhorn::before { content: "\25B6"; }
+.fa-calendar::before { content: "\25A6"; }
+.fa-check-circle::before { content: "\2713"; }
+.fa-chevron-left::before { content: "\2039"; }
+.fa-chevron-right::before { content: "\203A"; }
+.fa-clock::before { content: "\25F7"; }
+.fa-cog::before { content: "\2699"; }
+.fa-comment-alt::before { content: "\25A4"; }
+.fa-compress::before { content: "\2921"; }
+.fa-database::before { content: "\25C9"; }
+.fa-desktop::before { content: "\25AD"; }
+.fa-edit::before { content: "\270E"; }
+.fa-eraser::before { content: "\232B"; }
+.fa-exchange-alt::before { content: "\21C4"; }
+.fa-exclamation-triangle::before { content: "\26A0"; }
+.fa-expand::before { content: "\2922"; }
+.fa-eye::before { content: "\25C9"; }
+.fa-file-csv::before { content: "CSV"; }
+.fa-file-download::before { content: "\21E9"; }
+.fa-file-import::before { content: "\21E6"; }
+.fa-file-upload::before { content: "\21E7"; }
+.fa-filter::before { content: "\25BD"; }
+.fa-folder-open::before { content: "\25F0"; }
+.fa-hand-pointer::before { content: "\261D"; }
+.fa-history::before { content: "\21BA"; }
+.fa-hospital::before { content: "\271A"; }
+.fa-id-card::before { content: "ID"; }
+.fa-inbox::before { content: "\25A3"; }
+.fa-info-circle::before { content: "i"; }
+.fa-link::before { content: "\221E"; }
+.fa-list::before { content: "\2630"; }
+.fa-list-ul::before { content: "\2630"; }
+.fa-lock::before { content: "\25A0"; }
+.fa-long-arrow-alt-right::before { content: "\27F6"; }
+.fa-magic::before { content: "\2726"; }
+.fa-map::before { content: "\25A7"; }
+.fa-minus::before { content: "\2212"; }
+.fa-network-wired::before { content: "\22C8"; }
+.fa-notes-medical::before { content: "\271A"; }
+.fa-paper-plane::before { content: "\27A4"; }
+.fa-phone::before { content: "\260E"; }
+.fa-phone-alt::before { content: "\260E"; }
+.fa-phone-slash::before { content: "\260E"; }
+.fa-phone-volume::before { content: "\260E"; }
+.fa-plug::before { content: "\26A1"; }
+.fa-plus::before { content: "+"; }
+.fa-project-diagram::before { content: "\22C8"; }
+.fa-redo::before { content: "\21BB"; }
+.fa-save::before { content: "\25A3"; }
+.fa-search::before { content: "\2315"; }
+.fa-search-plus::before { content: "\2315"; }
+.fa-shield-alt::before { content: "\25C8"; }
+.fa-shipping-fast::before { content: "\21E2"; }
+.fa-spinner::before { content: "\25CC"; }
+.fa-square::before { content: "\25A1"; }
+.fa-sticky-note::before { content: "\25A4"; }
+.fa-stream::before { content: "\2630"; }
+.fa-sync::before { content: "\21BB"; }
+.fa-sync-alt::before { content: "\21BB"; }
+.fa-table::before { content: "\25A6"; }
+.fa-th-large::before { content: "\25A6"; }
+.fa-times::before { content: "\00D7"; }
+.fa-times-circle::before { content: "\00D7"; }
+.fa-trash::before { content: "\232B"; }
+.fa-trash-alt::before { content: "\232B"; }
+.fa-undo::before { content: "\21BA"; }
+.fa-user-edit::before { content: "\25C9"; }
+.fa-user-nurse::before { content: "\25C9"; }
+.fa-vial::before { content: "\25C7"; }
+.fa-video::before { content: "\25B6"; }
+.fa-volume-up::before { content: "\25B6"; }
+.fa-walking::before { content: "\2192"; }
+.fa-x-ray::before { content: "X"; }
