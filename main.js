@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, safeStorage, Notification: ElectronNotification } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, safeStorage, Notification: ElectronNotification, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const chokidar = require('chokidar');
@@ -24,6 +24,11 @@ function startNfcWatcher() {
   nfcProcess = spawn('powershell', ['-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
     stdio: ['ignore', 'pipe', 'ignore'],
     windowsHide: true,
+  });
+
+  nfcProcess.on('error', (err) => {
+    console.error('[NFC] PowerShellプロセスの起動に失敗しました:', err.message);
+    nfcProcess = null;
   });
 
   nfcProcess.stdout.on('data', (data) => {
@@ -342,7 +347,13 @@ function writeDB(data) {
 
     const tmpFile = DB_FILE + '.tmp';
     fs.writeFileSync(tmpFile, JSON.stringify(dbClone, null, 2), 'utf8');
-    fs.renameSync(tmpFile, DB_FILE);
+    try {
+      fs.renameSync(tmpFile, DB_FILE);
+    } catch (renameErr) {
+      console.error('[DB] DBファイルのリネームに失敗しました。一時ファイルを削除します:', renameErr);
+      try { fs.unlinkSync(tmpFile); } catch {}
+      throw renameErr;
+    }
   } catch (err) {
     console.error('[DB] データベースの書き込み失敗:', err);
   }
@@ -496,7 +507,7 @@ function setupImportTrigger() {
     currentWatcher.on('add', (filePath) => {
       if (path.extname(filePath).toLowerCase() === '.csv') {
         console.log(`[Watcher] CSV追加検知: ${filePath}`);
-        importCSV(filePath);
+        importCSV(filePath).catch(err => console.error(`[Watcher] CSV取り込みエラー: ${filePath}`, err));
       }
     });
   } else if (schedule.mode === 'interval') {
@@ -572,7 +583,7 @@ function setupScheduleFeedTriggers() {
       });
       watcher.on('add', filePath => {
         if (path.extname(filePath).toLowerCase() === '.csv') {
-          importScheduleFeedCSV(filePath, feed);
+          importScheduleFeedCSV(filePath, feed).catch(err => console.error(`[ScheduleFeed] CSV取り込みエラー: ${filePath}`, err));
         }
       });
       scheduleFeedWatchers.push(watcher);
@@ -1012,10 +1023,10 @@ ipcMain.handle('trigger-manual-import', async () => {
     if (csvFiles.length === 0) {
       return { success: true, count: 0, message: '監視フォルダに未処理のCSVファイルはありません。' };
     }
-    csvFiles.forEach(file => {
+    await Promise.all(csvFiles.map(file => {
       const filePath = path.join(watchPath, file);
-      importCSV(filePath);
-    });
+      return importCSV(filePath).catch(err => console.error(`[Manual Import] CSV取り込みエラー: ${filePath}`, err));
+    }));
     return { success: true, count: csvFiles.length, message: `${csvFiles.length}件のCSVファイルを取り込み開始しました。` };
   } catch (err) {
     console.error('[Manual Import] エラー:', err);
@@ -1470,7 +1481,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
   }
 
   if (method === 'POST') {
-    const data = JSON.parse(bodyStr);
+    let data;
+    try { data = JSON.parse(bodyStr); } catch {
+      return { success: false, message: 'リクエストボディのJSONが不正です' };
+    }
     if (!data.id) {
       data.id = `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     }
@@ -1503,7 +1517,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
 
   if (method === 'PUT' || method === 'PATCH') {
     if (id === 'bulk') {
-      const bulkData = JSON.parse(bodyStr);
+      let bulkData;
+      try { bulkData = JSON.parse(bodyStr); } catch {
+        return { success: false, message: 'リクエストボディのJSONが不正です' };
+      }
       if (!Array.isArray(bulkData)) {
         return { success: false, message: 'Body must be an array for bulk updates' };
       }
@@ -1521,7 +1538,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       return { success: true, count: updatedItems.length, data: updatedItems };
     }
 
-    const data = JSON.parse(bodyStr);
+    let data;
+    try { data = JSON.parse(bodyStr); } catch {
+      return { success: false, message: 'リクエストボディのJSONが不正です' };
+    }
     const index = list.findIndex(x => String(x.id) === String(id));
     if (index === -1) {
       console.warn(`[DB] PATCH Not Found: table=${table}, id=${id}`);
@@ -1553,7 +1573,8 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
   // デバイス管理エンドポイント（DBを使わず親機メモリで処理）
   if (url === 'device/list') return { success: true, devices: getActiveDevices() };
   if (url === 'device/disconnect') {
-    const info = JSON.parse((options && options.body) || '{}');
+    let info;
+    try { info = JSON.parse((options && options.body) || '{}'); } catch { info = {}; }
     delete connectedDevices[info.deviceId];
     return { success: true };
   }
@@ -1611,8 +1632,13 @@ ipcMain.handle('get-startup-setting', () => {
 });
 
 ipcMain.handle('set-startup-setting', (event, { openAtLogin }) => {
-  app.setLoginItemSettings({ openAtLogin: Boolean(openAtLogin) });
-  return { success: true, openAtLogin: Boolean(openAtLogin) };
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(openAtLogin) });
+    return { success: true, openAtLogin: Boolean(openAtLogin) };
+  } catch (err) {
+    console.error('[Startup] スタートアップ設定の変更に失敗しました:', err.message);
+    return { success: false, message: err.message };
+  }
 });
 
 ipcMain.handle('set-nfc-watcher', (event, enabled) => {
@@ -1809,6 +1835,13 @@ function startParentServer() {
 
         res.writeHead(200, { 'Content-Type': contentType });
         const readStream = fs.createReadStream(filePath);
+        readStream.on('error', (err) => {
+          console.error('[Parent Server] ファイル配信エラー:', err.message);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+          }
+          res.end(JSON.stringify({ success: false, message: 'File read error' }));
+        });
         readStream.pipe(res);
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -1837,7 +1870,8 @@ function startParentServer() {
         } else if (cleanUrl.startsWith('device/')) {
           const action = cleanUrl.replace(/^device\//, '').split('?')[0];
           if (action === 'heartbeat' && req.method === 'POST') {
-            const info = JSON.parse(body || '{}');
+            let info;
+            try { info = JSON.parse(body || '{}'); } catch { info = {}; }
             const deviceId = info.deviceId;
             if (deviceId && typeof deviceId === 'string' && deviceId.length < 64) {
               const clientIp = req.socket?.remoteAddress || '';
@@ -1851,7 +1885,8 @@ function startParentServer() {
           } else if (action === 'list' && req.method === 'GET') {
             result = { success: true, devices: getActiveDevices() };
           } else if (action === 'disconnect' && req.method === 'POST') {
-            const info = JSON.parse(body || '{}');
+            let info;
+            try { info = JSON.parse(body || '{}'); } catch { info = {}; }
             delete connectedDevices[info.deviceId];
             result = { success: true };
           } else {
@@ -1871,10 +1906,34 @@ function startParentServer() {
     });
   });
 
+  parentHttpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'アプリが既に起動しています',
+        message: 'アプリは既に起動しています。\nタスクバーまたはタスクトレイをご確認ください。',
+        buttons: ['OK'],
+      }).then(() => app.quit());
+    } else {
+      console.error('[Parent Server] サーバーエラー:', err.message);
+    }
+  });
+
   parentHttpServer.listen(3005, '0.0.0.0', () => {
     console.log('[Parent Server] 共有サーバーが起動しました: http://0.0.0.0:3005');
   });
 }
+
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
 
 app.whenReady().then(() => {
   createWindow();
@@ -1896,7 +1955,13 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch(err => {
+  console.error('[App] 起動中にエラーが発生しました:', err);
+  dialog.showErrorBox('起動エラー', `アプリの起動に失敗しました。\n\n${err.message}`);
+  app.quit();
 });
+
+} // end of gotTheLock else block
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
