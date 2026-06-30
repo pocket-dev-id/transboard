@@ -1063,7 +1063,7 @@ const App = {
     const themeSetting = AppState.systemSettings?.find(s => s.id === 'theme_style');
     const themeStyle = localTheme || (themeSetting ? themeSetting.value : 'light');
 
-    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast');
+    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd');
     document.body.classList.add(`theme-${themeStyle}`);
   },
 };

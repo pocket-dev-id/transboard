@@ -20,8 +20,9 @@
   --clr-depart-reg: rgba(219, 234, 254, 0.65);
   --clr-depart-reg-border: #3b82f6;
   --clr-depart-reg-text: #1e40af;
-  --clr-moving: rgba(219, 234, 254, 0.75);
-  --clr-moving-border: #2563eb;
+  --clr-moving: rgba(237, 233, 254, 0.75);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #5b21b6;
   --clr-arrived: rgba(224, 242, 254, 0.7);
   --clr-arrived-border: #0284c7;
   --clr-in-exam: rgba(254, 252, 232, 0.7);
@@ -276,7 +277,7 @@ select, input { font-family: inherit; }
 }
 .legend-item.in-bed { background: var(--clr-in-bed); border-color: var(--clr-in-bed-border); color: #4a5568; }
 .legend-item.depart-registered { background: var(--clr-depart-reg); border-color: var(--clr-depart-reg-border); color: var(--clr-depart-reg-text); }
-.legend-item.moving { background: var(--clr-moving); border-color: var(--clr-moving-border); color: #1d4ed8; }
+.legend-item.moving { background: var(--clr-moving); border-color: var(--clr-moving-border); color: var(--clr-moving-text, #5b21b6); }
 .legend-item.arrived { background: var(--clr-arrived); border-color: var(--clr-arrived-border); color: #0369a1; }
 .legend-item.in-exam { background: var(--clr-in-exam); border-color: var(--clr-in-exam-border); color: var(--clr-in-exam-text); }
 .legend-item.nearly-done { background: var(--clr-nearly-done); border-color: var(--clr-nearly-done-border); color: var(--clr-nearly-done-text); }
@@ -2013,8 +2014,9 @@ body.theme-dark {
   --clr-depart-reg: rgba(30, 58, 138, 0.6);
   --clr-depart-reg-border: #3b82f6;
   --clr-depart-reg-text: #93c5fd;
-  --clr-moving: rgba(23, 37, 84, 0.6);
-  --clr-moving-border: #2563eb;
+  --clr-moving: rgba(46, 16, 101, 0.6);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #c4b5fd;
   --clr-arrived: rgba(12, 74, 110, 0.6);
   --clr-arrived-border: #0284c7;
   --clr-in-exam: rgba(66, 32, 6, 0.65);
@@ -2078,6 +2080,17 @@ body.theme-dark #bed-map-filter-bar {
 body.theme-dark #bed-map-filter-bar span {
   color: #94a3b8 !important;
 }
+body.theme-dark .tl-ctx-menu {
+  background: #1e293b;
+  border-color: #334155;
+  color: #f8fafc;
+}
+body.theme-dark .tl-ctx-header { color: #94a3b8; }
+body.theme-dark .tl-ctx-badge { background: #334155; color: #cbd5e0; }
+body.theme-dark .tl-ctx-item { color: #e2e8f0; }
+body.theme-dark .tl-ctx-item:hover { background: #334155; }
+body.theme-dark .tl-ctx-item i { color: #94a3b8; }
+body.theme-dark .tl-ctx-divider { background: #334155; }
 
 /* --- メディカルブルーテーマ (.theme-blue) --- */
 body.theme-blue {
@@ -2097,8 +2110,9 @@ body.theme-blue {
   --clr-depart-reg: rgba(224, 242, 254, 0.7);
   --clr-depart-reg-border: #0284c7;
   --clr-depart-reg-text: #0369a1;
-  --clr-moving: rgba(224, 242, 254, 0.8);
-  --clr-moving-border: #0284c7;
+  --clr-moving: rgba(237, 233, 254, 0.8);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #5b21b6;
   --clr-arrived: rgba(204, 251, 241, 0.7);
   --clr-arrived-border: #0d9488;
   --clr-in-exam: rgba(254, 252, 232, 0.7);
@@ -2147,8 +2161,8 @@ body.theme-high-contrast {
   --clr-in-exam-border: #ffff00;
   --clr-in-exam-text: #ffff00;
   --clr-nearly-done: #000000;
-  --clr-nearly-done-border: #ff00ff;
-  --clr-nearly-done-text: #ff00ff;
+  --clr-nearly-done-border: #ff8c00;
+  --clr-nearly-done-text: #ff8c00;
   --clr-pickup: #000000;
   --clr-pickup-border: #ff0000;
   --clr-pickup-text: #ff0000;
@@ -2381,4 +2395,58 @@ body.theme-high-contrast .btn-primary {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
+}
+
+/* --- 色覚サポートテーマ (.theme-cvd) --- */
+/* 赤緑色盲（第1・第2色覚異常）対応: 青・紫・アンバー・ティールの組み合わせ */
+body.theme-cvd {
+  --clr-bg: linear-gradient(135deg, #f0f4f8 0%, #d5e6f5 100%);
+  --clr-surface: rgba(255, 255, 255, 0.85);
+  --clr-border: rgba(200, 215, 230, 0.6);
+  --clr-text: #1a202c;
+  --clr-text-muted: #64748b;
+  --clr-primary: #3b82f6;
+  --clr-primary-dark: #2563eb;
+  --clr-header-bg: rgba(30, 58, 95, 0.85);
+  --border-header: none;
+
+  /* 色覚対応ステータスカラー: 赤↔緑の混同を避けティール/ピンクで代替 */
+  --clr-in-bed: rgba(248, 250, 252, 0.85);
+  --clr-in-bed-border: rgba(148, 163, 184, 0.6);
+  --clr-depart-reg: rgba(219, 234, 254, 0.85);
+  --clr-depart-reg-border: #2563eb;
+  --clr-depart-reg-text: #1e40af;
+  --clr-moving: rgba(237, 233, 254, 0.85);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #5b21b6;
+  --clr-arrived: rgba(207, 250, 254, 0.85);
+  --clr-arrived-border: #0891b2;
+  --clr-in-exam: rgba(255, 251, 235, 0.85);
+  --clr-in-exam-border: #d97706;
+  --clr-in-exam-text: #92400e;
+  --clr-nearly-done: rgba(255, 237, 213, 0.85);
+  --clr-nearly-done-border: #ea580c;
+  --clr-nearly-done-text: #7c2d12;
+  /* PICKUP: ピンク系 (赤との混同なし、緑との区別も明確) */
+  --clr-pickup: rgba(252, 231, 243, 0.85);
+  --clr-pickup-border: #be185d;
+  --clr-pickup-text: #831843;
+  /* RETURNED: ティール系 (緑の代替、赤緑色盲でも識別可) */
+  --clr-returned: rgba(204, 251, 241, 0.85);
+  --clr-returned-border: #0f766e;
+  --clr-returned-text: #134e4a;
+  --clr-cancelled: rgba(241, 245, 249, 0.75);
+  --clr-cancelled-border: #94a3b8;
+  --clr-cancelled-text: #475569;
+}
+
+/* --- アニメーション省略 (prefers-reduced-motion) --- */
+/* てんかん対応環境・視覚過敏ユーザー向け。OSレベルのアニメーション削減設定を尊重する */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
