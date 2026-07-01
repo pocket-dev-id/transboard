@@ -3442,32 +3442,6 @@ const Settings = {
         </div>
       </div>
 
-      <!-- ⑤ ビデオ通話品質 -->
-      <div class="settings-panel" style="margin-top:14px;">
-        <div class="settings-panel-header">
-          <h3><i class="fas fa-video"></i> ビデオ通話品質</h3>
-        </div>
-        <p class="settings-hint"><i class="fas fa-info-circle"></i> この設定はこの端末にのみ適用されます。院内Wi-Fiが不安定な場合は低画質を選択してください。</p>
-        <div id="video-quality-btns" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
-          ${[
-            { key:'low',    icon:'fa-signal', label:'低画質',  sub:'320×240 / 10fps / 200kbps',   col:'#64748b' },
-            { key:'medium', icon:'fa-signal', label:'標準',    sub:'640×480 / 15fps / 500kbps',   col:'#3b82f6' },
-            { key:'high',   icon:'fa-signal', label:'高画質',  sub:'1280×720 / 30fps / 1500kbps', col:'#16a34a' },
-          ].map(p => `
-            <label style="flex:1;min-width:120px;display:flex;flex-direction:column;align-items:center;gap:4px;
-              border:2px solid #e2e8f0;border-radius:8px;padding:10px 8px;cursor:pointer;
-              background:#fafafa;transition:border-color .15s;" class="vq-label" data-key="${p.key}">
-              <input type="radio" name="video-quality" value="${p.key}" style="display:none;">
-              <i class="fas ${p.icon}" style="font-size:18px;color:${p.col};"></i>
-              <span style="font-weight:700;font-size:13px;">${p.label}</span>
-              <span style="font-size:10px;color:#6b7280;">${p.sub}</span>
-            </label>
-          `).join('')}
-        </div>
-        <div style="margin-top:12px;display:flex;justify-content:flex-end;">
-          <button class="btn btn-primary btn-sm" id="btn-save-video-quality"><i class="fas fa-save"></i> 画質を保存</button>
-        </div>
-      </div>
     `;
 
     // ── 音量スライダー ──
@@ -3621,29 +3595,6 @@ const Settings = {
       }
     };
 
-    // ── ビデオ品質 ──
-    const currentVQ = localStorage.getItem('tbs_video_quality') || 'medium';
-    document.querySelectorAll('.vq-label').forEach(lbl => {
-      const key = lbl.dataset.key;
-      if (key === currentVQ) {
-        lbl.querySelector('input').checked = true;
-        lbl.style.borderColor = key === 'low' ? '#64748b' : key === 'medium' ? '#3b82f6' : '#16a34a';
-        lbl.style.background = '#eff6ff';
-      }
-      lbl.addEventListener('click', () => {
-        document.querySelectorAll('.vq-label').forEach(l => { l.style.borderColor = '#e2e8f0'; l.style.background = '#fafafa'; });
-        lbl.style.borderColor = key === 'low' ? '#64748b' : key === 'medium' ? '#3b82f6' : '#16a34a';
-        lbl.style.background = '#eff6ff';
-        lbl.querySelector('input').checked = true;
-      });
-    });
-    document.getElementById('btn-save-video-quality').onclick = () => {
-      const sel = document.querySelector('input[name="video-quality"]:checked');
-      if (!sel) return;
-      localStorage.setItem('tbs_video_quality', sel.value);
-      if (typeof CallPanel !== 'undefined') CallPanel._videoQualityPreset = sel.value;
-      UI.toast(`ビデオ品質を「${{ low:'低画質', medium:'標準', high:'高画質' }[sel.value]}」に設定しました`, 'success');
-    };
   },
 
   // ──────────────────────────────────
@@ -3828,6 +3779,31 @@ const Settings = {
             </label>
             <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
               チェックを外すと、画面間のリアルタイム音声通話が無効になります。簡易定型アナウンス（音声合成）や内線番号表示のみを利用できます。
+            </div>
+
+            <!-- ビデオ通話品質 -->
+            <div style="margin-top:14px; padding-top:14px; border-top:1px dashed #e2e8f0;">
+              <div style="font-size:13px; font-weight:700; color:#2d3748; margin-bottom:4px;"><i class="fas fa-video"></i> ビデオ通話品質</div>
+              <p style="font-size:11px; color:#718096; margin:0 0 10px 0;"><i class="fas fa-info-circle"></i> この設定はこの端末にのみ適用されます。院内Wi-Fiが不安定な場合は低画質を選択してください。</p>
+              <div id="video-quality-btns" style="display:flex;gap:10px;flex-wrap:wrap;">
+                ${[
+                  { key:'low',    icon:'fa-signal', label:'低画質',  sub:'320×240 / 10fps / 200kbps',   col:'#64748b' },
+                  { key:'medium', icon:'fa-signal', label:'標準',    sub:'640×480 / 15fps / 500kbps',   col:'#3b82f6' },
+                  { key:'high',   icon:'fa-signal', label:'高画質',  sub:'1280×720 / 30fps / 1500kbps', col:'#16a34a' },
+                ].map(p => `
+                  <label style="flex:1;min-width:110px;display:flex;flex-direction:column;align-items:center;gap:4px;
+                    border:2px solid #e2e8f0;border-radius:8px;padding:10px 8px;cursor:pointer;
+                    background:#fafafa;transition:border-color .15s;" class="vq-label" data-key="${p.key}">
+                    <input type="radio" name="video-quality" value="${p.key}" style="display:none;">
+                    <i class="fas ${p.icon}" style="font-size:18px;color:${p.col};"></i>
+                    <span style="font-weight:700;font-size:13px;">${p.label}</span>
+                    <span style="font-size:10px;color:#6b7280;">${p.sub}</span>
+                  </label>
+                `).join('')}
+              </div>
+              <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+                <button class="btn btn-primary btn-sm" id="btn-save-video-quality"><i class="fas fa-save"></i> 画質を保存</button>
+              </div>
             </div>
           </div>
 
@@ -4072,6 +4048,30 @@ const Settings = {
       };
     }
 
+    // ── ビデオ品質 ──
+    const currentVQ = localStorage.getItem('tbs_video_quality') || 'medium';
+    document.querySelectorAll('.vq-label').forEach(lbl => {
+      const key = lbl.dataset.key;
+      if (key === currentVQ) {
+        lbl.querySelector('input').checked = true;
+        lbl.style.borderColor = key === 'low' ? '#64748b' : key === 'medium' ? '#3b82f6' : '#16a34a';
+        lbl.style.background = '#eff6ff';
+      }
+      lbl.addEventListener('click', () => {
+        document.querySelectorAll('.vq-label').forEach(l => { l.style.borderColor = '#e2e8f0'; l.style.background = '#fafafa'; });
+        lbl.style.borderColor = key === 'low' ? '#64748b' : key === 'medium' ? '#3b82f6' : '#16a34a';
+        lbl.style.background = '#eff6ff';
+        lbl.querySelector('input').checked = true;
+      });
+    });
+    document.getElementById('btn-save-video-quality').onclick = () => {
+      const sel = document.querySelector('input[name="video-quality"]:checked');
+      if (!sel) return;
+      localStorage.setItem('tbs_video_quality', sel.value);
+      if (typeof CallPanel !== 'undefined') CallPanel._videoQualityPreset = sel.value;
+      UI.toast(`ビデオ品質を「${{ low:'低画質', medium:'標準', high:'高画質' }[sel.value]}」に設定しました`, 'success');
+    };
+
     // 保存ボタンイベント
     const saveNetworkBtn = body.querySelector('#btn-save-network');
     if (saveNetworkBtn) saveNetworkBtn.onclick = async () => {
@@ -4289,26 +4289,51 @@ const Settings = {
 
     const COLORS = ['#7c3aed','#2563eb','#059669','#d97706','#dc2626','#db2777','#0891b2','#4338ca'];
 
+    const schedModeLabel = { realtime: 'リアルタイム監視', interval: '定期実行', time: '時刻指定' };
+
     const listHtml = feeds.length === 0
       ? '<p style="color:#718096;font-size:13px;">スケジュール取り込み設定がありません。「追加」から作成してください。</p>'
-      : feeds.map(f => `
-        <div class="settings-row" style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;">
-          <span style="width:14px;height:14px;border-radius:50%;background:${f.color||'#7c3aed'};flex-shrink:0;"></span>
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:700;font-size:13px;">${f.name || '（名称なし）'}</div>
-            <div style="font-size:11px;color:#718096;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.watch_dir || '（フォルダ未設定）'}</div>
-          </div>
-          <span style="font-size:11px;padding:2px 6px;border-radius:10px;background:${f.is_active?'#dcfce7':'#f1f5f9'};color:${f.is_active?'#16a34a':'#64748b'};">${f.is_active?'有効':'無効'}</span>
-          <button class="btn btn-outline btn-sm sched-feed-import-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;" title="手動取り込み">
-            <i class="fas fa-download"></i>
-          </button>
-          <button class="btn btn-outline btn-sm sched-feed-edit-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;">
-            <i class="fas fa-edit"></i> 編集
-          </button>
-          <button class="btn btn-danger btn-sm sched-feed-del-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;">
-            <i class="fas fa-trash"></i>
-          </button>
-        </div>`).join('');
+      : feeds.map(f => {
+          const mode = schedModeLabel[f.schedule?.mode] || 'リアルタイム監視';
+          const modeDetail = f.schedule?.mode === 'interval'
+            ? `（${f.schedule.intervalMin}分ごと）`
+            : f.schedule?.mode === 'time'
+            ? `（${(f.schedule.times||[]).join(', ')}）`
+            : '';
+          const titleCol = f.mapping?.col_title || '';
+          const dateCol = f.mapping?.col_date || f.mapping?.col_datetime || '';
+          const wardNames = (f.ward_ids?.length > 0)
+            ? f.ward_ids.map(id => AppState.wards?.find(w => w.id === id)?.name || id).join(', ')
+            : '全病棟';
+          return `
+          <div class="settings-row" style="border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;overflow:hidden;">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:${f.color||'#7c3aed'};flex-shrink:0;"></span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;font-size:13px;">${f.name || '（名称なし）'}</div>
+                <div style="font-size:11px;color:#718096;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.watch_dir||''}">
+                  <i class="fas fa-folder" style="margin-right:3px;"></i>${f.watch_dir || '（フォルダ未設定）'}
+                </div>
+              </div>
+              <span style="font-size:11px;padding:2px 6px;border-radius:10px;background:${f.is_active?'#dcfce7':'#f1f5f9'};color:${f.is_active?'#16a34a':'#64748b'};flex-shrink:0;">${f.is_active?'有効':'無効'}</span>
+              <button class="btn btn-outline btn-sm sched-feed-import-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;flex-shrink:0;" title="手動取り込み実行">
+                <i class="fas fa-download"></i>
+              </button>
+              <button class="btn btn-outline btn-sm sched-feed-edit-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;flex-shrink:0;">
+                <i class="fas fa-edit"></i> 編集
+              </button>
+              <button class="btn btn-danger btn-sm sched-feed-del-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;flex-shrink:0;">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+            <div style="display:flex;gap:16px;padding:6px 12px 8px 36px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:11px;color:#64748b;flex-wrap:wrap;">
+              <span><i class="fas fa-clock" style="margin-right:3px;color:#94a3b8;"></i>${mode}${modeDetail}</span>
+              ${dateCol ? `<span><i class="fas fa-calendar-alt" style="margin-right:3px;color:#94a3b8;"></i>日付列: <code>${dateCol}</code></span>` : ''}
+              ${titleCol ? `<span><i class="fas fa-tag" style="margin-right:3px;color:#94a3b8;"></i>タイトル列: <code>${titleCol}</code></span>` : ''}
+              <span><i class="fas fa-hospital" style="margin-right:3px;color:#94a3b8;"></i>${wardNames}</span>
+            </div>
+          </div>`;
+        }).join('');
 
     body.innerHTML = `
       <div class="settings-section">
@@ -4324,107 +4349,147 @@ const Settings = {
       </div>
 
       <!-- フィード編集フォーム（モーダル風） -->
-      <div id="sched-feed-form-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:5000;overflow-y:auto;">
-        <div id="sched-feed-form-box" style="background:#fff;border-radius:12px;padding:24px;max-width:560px;margin:40px auto;box-shadow:0 20px 60px rgba(0,0,0,.2);">
-          <h4 id="sched-feed-form-title" style="margin:0 0 18px;font-size:15px;">スケジュール取り込みの追加</h4>
+      <div id="sched-feed-form-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:5000;overflow-y:auto;">
+        <div id="sched-feed-form-box" style="background:#fff;border-radius:12px;max-width:600px;margin:32px auto 48px;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden;">
 
-          <input type="hidden" id="sched-form-id">
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-            <div>
-              <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">取り込み名 <span style="color:#dc2626;">*</span></label>
-              <input type="text" id="sched-form-name" class="form-input" placeholder="例: 手術スケジュール">
-            </div>
-            <div>
-              <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">表示色</label>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-top:4px;">
-                ${COLORS.map(c => `<span class="sched-color-chip" data-color="${c}" style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;border:2px solid transparent;"></span>`).join('')}
-                <input type="color" id="sched-form-color" value="#7c3aed" style="width:28px;height:28px;border:none;padding:0;cursor:pointer;border-radius:4px;">
-              </div>
-            </div>
+          <!-- ヘッダ -->
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid #e2e8f0;background:#f8fafc;">
+            <h4 id="sched-feed-form-title" style="margin:0;font-size:15px;font-weight:800;">スケジュール取り込みの追加</h4>
+            <button id="sched-feed-form-close-x" style="background:none;border:none;cursor:pointer;font-size:18px;color:#94a3b8;line-height:1;" title="閉じる">&times;</button>
           </div>
 
-          <div style="margin-bottom:12px;">
-            <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">監視フォルダ <span style="color:#dc2626;">*</span></label>
-            <input type="text" id="sched-form-dir" class="form-input" placeholder="C:\\schedules\\surg または \\\\server\\share">
-            <p style="font-size:11px;color:#718096;margin:3px 0 0;">CSV が配置されるフォルダのパスを指定します。UNCパス可。</p>
-          </div>
+          <div style="padding:20px 24px;">
+            <input type="hidden" id="sched-form-id">
 
-          <div style="margin-bottom:12px;">
-            <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px;">取り込みスケジュール</label>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-mode" value="realtime" checked> リアルタイム監視</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-mode" value="interval"> 定期実行</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-mode" value="time"> 時刻指定</label>
+            <!-- ① 基本情報 -->
+            <div style="margin-bottom:18px;">
+              <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">① 基本情報</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div>
+                  <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">取り込み名 <span style="color:#dc2626;">*</span></label>
+                  <input type="text" id="sched-form-name" class="form-input" placeholder="例: 手術スケジュール">
+                </div>
+                <div>
+                  <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">表示色</label>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-top:4px;">
+                    ${COLORS.map(c => `<span class="sched-color-chip" data-color="${c}" style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;border:2px solid transparent;transition:transform .1s;" title="${c}"></span>`).join('')}
+                    <input type="color" id="sched-form-color" value="#7c3aed" style="width:28px;height:28px;border:none;padding:0;cursor:pointer;border-radius:4px;" title="カスタムカラー">
+                  </div>
+                </div>
+              </div>
             </div>
-            <div id="sched-form-interval-row" style="display:none;margin-top:8px;">
-              <input type="number" id="sched-form-interval" class="form-input" value="30" min="1" style="width:80px;display:inline;"> 分ごと
-            </div>
-            <div id="sched-form-times-row" style="display:none;margin-top:8px;">
-              <input type="text" id="sched-form-times" class="form-input" placeholder="07:00,12:00,17:00">
-              <p style="font-size:11px;color:#718096;margin:2px 0 0;">カンマ区切りで時刻を指定（HH:mm）</p>
-            </div>
-          </div>
 
-          <div style="border-top:1px solid #e2e8f0;padding-top:14px;margin-bottom:12px;">
-            <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:8px;">CSVカラムマッピング</label>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-              <div>
-                <label style="font-size:11px;color:#6b7280;display:block;margin-bottom:3px;">日付列（または日時一括列）</label>
-                <input type="text" id="sched-map-date" class="form-input" placeholder="例: 日付 / 検査日時">
+            <!-- ② 監視フォルダ -->
+            <div style="margin-bottom:18px;padding-top:14px;border-top:1px solid #f1f5f9;">
+              <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">② 監視フォルダ</div>
+              <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">フォルダパス <span style="color:#dc2626;">*</span></label>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="sched-form-dir" class="form-input" placeholder="C:\\schedules\\surg または \\\\server\\share" style="flex:1;">
+                <button class="btn btn-outline btn-sm" id="sched-btn-select-folder" style="flex-shrink:0;white-space:nowrap;" title="フォルダを選択">
+                  <i class="fas fa-folder-open"></i> 選択
+                </button>
               </div>
-              <div>
-                <label style="font-size:11px;color:#6b7280;display:block;margin-bottom:3px;">時刻列（任意）</label>
-                <input type="text" id="sched-map-time" class="form-input" placeholder="例: 時刻 / 開始時間">
-              </div>
-              <div>
-                <label style="font-size:11px;color:#6b7280;display:block;margin-bottom:3px;">タイトル・内容列 <span style="color:#dc2626;">*</span></label>
-                <input type="text" id="sched-map-title" class="form-input" placeholder="例: 内容 / 検査名">
-              </div>
-              <div>
-                <label style="font-size:11px;color:#6b7280;display:block;margin-bottom:3px;">ID列（任意）</label>
-                <input type="text" id="sched-map-id" class="form-input" placeholder="例: 患者ID">
-              </div>
-              <div>
-                <label style="font-size:11px;color:#6b7280;display:block;margin-bottom:3px;">所要時間(分)列（任意）</label>
-                <input type="text" id="sched-map-duration" class="form-input" placeholder="例: 所要時間">
-              </div>
+              <p style="font-size:11px;color:#718096;margin:4px 0 0;">CSVが配置されるフォルダのパスを指定します（UNCパス可）。</p>
             </div>
-            <p style="font-size:11px;color:#718096;margin:8px 0 0;">
-              列名はCSVのヘッダ行の文字列と完全一致させてください。<br>
-              日時が1列に入っている場合は「日付列」に入力し、時刻列は空欄にしてください。
-            </p>
-          </div>
 
-          <div style="margin-bottom:16px;">
-            <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px;">取り込み後のファイル処理</label>
-            <div style="display:flex;gap:16px;flex-wrap:wrap;">
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="archive" checked> archiveフォルダへ移動</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="delete"> 削除</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="skip"> そのまま残す</label>
-            </div>
-          </div>
-
-          <div style="margin-bottom:16px;">
-            <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px;">
-              対象病棟 <span style="font-size:10px;color:#6b7280;font-weight:400;">（未選択 = 全病棟に表示）</span>
-            </label>
-            <div id="sched-ward-checks" style="display:flex;flex-wrap:wrap;gap:8px;">
-              ${(AppState.wards || []).map(w => `
-                <label style="display:flex;align-items:center;gap:4px;font-size:12px;background:#f8fafc;padding:4px 8px;border-radius:4px;border:1px solid #e2e8f0;cursor:pointer;">
-                  <input type="checkbox" class="sched-ward-chk" value="${w.id}"> ${w.name}
+            <!-- ③ 取り込みスケジュール -->
+            <div style="margin-bottom:18px;padding-top:14px;border-top:1px solid #f1f5f9;">
+              <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">③ 取り込みタイミング</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                ${[
+                  { val:'realtime', icon:'fa-bolt', label:'リアルタイム監視', desc:'ファイルを検知次第すぐに取り込む' },
+                  { val:'interval', icon:'fa-redo',  label:'定期実行',         desc:'指定した分ごとに取り込む' },
+                  { val:'time',     icon:'fa-clock', label:'時刻指定',         desc:'指定した時刻に取り込む' },
+                ].map(o => `
+                  <label class="sched-mode-card" data-val="${o.val}" style="flex:1;min-width:130px;display:flex;flex-direction:column;gap:3px;
+                    border:2px solid #e2e8f0;border-radius:8px;padding:10px 12px;cursor:pointer;background:#fafafa;transition:border-color .15s;">
+                    <input type="radio" name="sched-form-mode" value="${o.val}" style="display:none;">
+                    <span style="font-size:13px;font-weight:700;"><i class="fas ${o.icon}" style="width:14px;"></i> ${o.label}</span>
+                    <span style="font-size:10px;color:#6b7280;">${o.desc}</span>
+                  </label>
+                `).join('')}
+              </div>
+              <div id="sched-form-interval-row" style="display:none;margin-top:10px;display:none;">
+                <label style="font-size:12px;color:#374151;display:flex;align-items:center;gap:8px;">
+                  <input type="number" id="sched-form-interval" class="form-input" value="30" min="1" style="width:72px;">
+                  分ごとに取り込む
                 </label>
-              `).join('')}
-              ${!(AppState.wards?.length) ? '<span style="font-size:11px;color:#94a3b8;">病棟マスタを先に登録してください</span>' : ''}
+              </div>
+              <div id="sched-form-times-row" style="display:none;margin-top:10px;">
+                <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:4px;">実行時刻（カンマ区切り・HH:mm）</label>
+                <input type="text" id="sched-form-times" class="form-input" placeholder="07:00,12:00,17:00">
+              </div>
+            </div>
+
+            <!-- ④ CSVカラムマッピング -->
+            <div style="margin-bottom:18px;padding-top:14px;border-top:1px solid #f1f5f9;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.06em;text-transform:uppercase;">④ CSVカラムマッピング</div>
+                <button class="btn btn-outline btn-sm" id="sched-btn-load-headers" style="font-size:11px;">
+                  <i class="fas fa-magic"></i> CSVからヘッダを読み込む
+                </button>
+              </div>
+              <div id="sched-headers-hint" style="display:none;margin-bottom:8px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1e40af;"></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">日付列（または日時一括列）</label>
+                  <input type="text" id="sched-map-date" class="form-input sched-map-input" placeholder="例: 日付 / 検査日時" list="sched-headers-list">
+                </div>
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">時刻列 <span style="color:#94a3b8;font-weight:400;">（任意）</span></label>
+                  <input type="text" id="sched-map-time" class="form-input sched-map-input" placeholder="例: 時刻 / 開始時間" list="sched-headers-list">
+                </div>
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">タイトル・内容列 <span style="color:#dc2626;">*</span></label>
+                  <input type="text" id="sched-map-title" class="form-input sched-map-input" placeholder="例: 内容 / 検査名" list="sched-headers-list">
+                </div>
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">ID列 <span style="color:#94a3b8;font-weight:400;">（任意）</span></label>
+                  <input type="text" id="sched-map-id" class="form-input sched-map-input" placeholder="例: 患者ID" list="sched-headers-list">
+                </div>
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">所要時間(分)列 <span style="color:#94a3b8;font-weight:400;">（任意）</span></label>
+                  <input type="text" id="sched-map-duration" class="form-input sched-map-input" placeholder="例: 所要時間" list="sched-headers-list">
+                </div>
+              </div>
+              <datalist id="sched-headers-list"></datalist>
+              <p style="font-size:11px;color:#718096;margin:8px 0 0;">
+                列名はCSVのヘッダ行と完全一致させてください。日時が1列の場合は「日付列」に入力し、時刻列は空欄にしてください。
+              </p>
+            </div>
+
+            <!-- ⑤ ファイル処理・対象病棟・有効/無効 -->
+            <div style="margin-bottom:16px;padding-top:14px;border-top:1px solid #f1f5f9;">
+              <div style="font-size:11px;font-weight:800;color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">⑤ その他の設定</div>
+
+              <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px;">取り込み後のファイル処理</label>
+              <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="archive" checked> archiveフォルダへ移動</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="delete"> 削除</label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="skip"> そのまま残す</label>
+              </div>
+
+              <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px;">
+                対象病棟 <span style="font-size:10px;color:#6b7280;font-weight:400;">（未選択 = 全病棟に表示）</span>
+              </label>
+              <div id="sched-ward-checks" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+                ${(AppState.wards || []).map(w => `
+                  <label style="display:flex;align-items:center;gap:4px;font-size:12px;background:#f8fafc;padding:4px 8px;border-radius:4px;border:1px solid #e2e8f0;cursor:pointer;">
+                    <input type="checkbox" class="sched-ward-chk" value="${w.id}"> ${w.name}
+                  </label>
+                `).join('')}
+                ${!(AppState.wards?.length) ? '<span style="font-size:11px;color:#94a3b8;">病棟マスタを先に登録してください</span>' : ''}
+              </div>
+
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                <input type="checkbox" id="sched-form-active" checked style="width:16px;height:16px;">
+                この設定を有効にする
+              </label>
             </div>
           </div>
 
-          <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" id="sched-form-active" checked style="width:16px;height:16px;">
-            <label for="sched-form-active" style="font-size:13px;cursor:pointer;">この設定を有効にする</label>
-          </div>
-
-          <div style="display:flex;justify-content:flex-end;gap:10px;">
+          <!-- フッタ -->
+          <div style="display:flex;justify-content:flex-end;gap:10px;padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;">
             <button class="btn btn-outline btn-sm" id="sched-feed-form-cancel">キャンセル</button>
             <button class="btn btn-primary btn-sm" id="sched-feed-form-save"><i class="fas fa-save"></i> 保存</button>
           </div>
@@ -4438,20 +4503,73 @@ const Settings = {
     // カラーチップ選択
     body.querySelectorAll('.sched-color-chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        body.querySelectorAll('.sched-color-chip').forEach(c => c.style.border = '2px solid transparent');
+        body.querySelectorAll('.sched-color-chip').forEach(c => { c.style.border = '2px solid transparent'; c.style.transform = ''; });
         chip.style.border = '2px solid #1a202c';
+        chip.style.transform = 'scale(1.25)';
         colorInput.value = chip.dataset.color;
       });
     });
 
-    // スケジュールモード切り替え
-    body.querySelectorAll('input[name="sched-form-mode"]').forEach(r => {
-      r.addEventListener('change', () => {
-        const m = body.querySelector('input[name="sched-form-mode"]:checked').value;
-        body.querySelector('#sched-form-interval-row').style.display = m === 'interval' ? 'block' : 'none';
-        body.querySelector('#sched-form-times-row').style.display = m === 'time' ? 'block' : 'none';
+    // スケジュールモードカード切り替え
+    const updateModeCards = () => {
+      const m = body.querySelector('input[name="sched-form-mode"]:checked')?.value || 'realtime';
+      body.querySelectorAll('.sched-mode-card').forEach(card => {
+        const active = card.dataset.val === m;
+        card.style.borderColor = active ? '#3b82f6' : '#e2e8f0';
+        card.style.background  = active ? '#eff6ff' : '#fafafa';
+      });
+      body.querySelector('#sched-form-interval-row').style.display = m === 'interval' ? 'block' : 'none';
+      body.querySelector('#sched-form-times-row').style.display    = m === 'time'     ? 'block' : 'none';
+    };
+    body.querySelectorAll('.sched-mode-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const radio = card.querySelector('input[type="radio"]');
+        if (radio) { radio.checked = true; updateModeCards(); }
       });
     });
+
+    // フォルダ選択ダイアログ
+    body.querySelector('#sched-btn-select-folder').addEventListener('click', async () => {
+      if (!window.electronAPI?.selectFolder) { UI.toast('フォルダ選択はElectron環境でのみ利用できます', 'warning'); return; }
+      const selected = await window.electronAPI.selectFolder();
+      if (selected) {
+        body.querySelector('#sched-form-dir').value = selected;
+      }
+    });
+
+    // CSVヘッダ読み込み
+    body.querySelector('#sched-btn-load-headers').addEventListener('click', async () => {
+      const dir = body.querySelector('#sched-form-dir').value.trim();
+      if (!dir) { UI.toast('先に監視フォルダを指定してください', 'warning'); return; }
+      if (!window.electronAPI?.readCsvHeaders) { UI.toast('この機能はElectron環境でのみ利用できます', 'warning'); return; }
+      const btn = body.querySelector('#sched-btn-load-headers');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 読み込み中...';
+      try {
+        const result = await window.electronAPI.readCsvHeaders(dir);
+        if (!result.ok) {
+          const msg = result.reason === 'no_csv' ? 'フォルダ内にCSVファイルが見つかりません' : `読み取りエラー: ${result.reason}`;
+          UI.toast(msg, 'warning');
+          return;
+        }
+        const datalist = body.querySelector('#sched-headers-list');
+        datalist.innerHTML = result.headers.map(h => `<option value="${UI.escapeHTML(h)}">`).join('');
+        const hint = body.querySelector('#sched-headers-hint');
+        hint.style.display = 'block';
+        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${result.filename}</strong> のヘッダを読み込みました: ${result.headers.map(h => `<code>${UI.escapeHTML(h)}</code>`).join(' / ')}`;
+      } catch (e) {
+        UI.toast('CSVの読み込みに失敗しました: ' + e.message, 'danger');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-magic"></i> CSVからヘッダを読み込む';
+      }
+    });
+
+    // Escキー・背景クリックで閉じる
+    const closeForm = () => { overlay.style.display = 'none'; };
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeForm(); });
+    this._addEscapeClose(overlay, closeForm);
+    body.querySelector('#sched-feed-form-close-x').addEventListener('click', closeForm);
 
     const openForm = (feed = null) => {
       body.querySelector('#sched-feed-form-title').textContent = feed ? 'スケジュール取り込みの編集' : 'スケジュール取り込みの追加';
@@ -4471,8 +4589,13 @@ const Settings = {
       if (modeRadio) modeRadio.checked = true;
       body.querySelector('#sched-form-interval').value = sched.intervalMin || '30';
       body.querySelector('#sched-form-times').value = (sched.times || []).join(',');
-      body.querySelector('#sched-form-interval-row').style.display = sched.mode === 'interval' ? 'block' : 'none';
-      body.querySelector('#sched-form-times-row').style.display = sched.mode === 'time' ? 'block' : 'none';
+      updateModeCards();
+
+      // ヘッダヒントをリセット
+      const hint = body.querySelector('#sched-headers-hint');
+      if (hint) { hint.style.display = 'none'; hint.innerHTML = ''; }
+      const datalist = body.querySelector('#sched-headers-list');
+      if (datalist) datalist.innerHTML = '';
 
       const m = feed?.mapping || {};
       body.querySelector('#sched-map-date').value = m.col_date || m.col_datetime || '';
@@ -4497,7 +4620,7 @@ const Settings = {
     body.querySelector('#sched-feed-add-btn').addEventListener('click', () => openForm());
 
     // キャンセル
-    body.querySelector('#sched-feed-form-cancel').addEventListener('click', () => { overlay.style.display = 'none'; });
+    body.querySelector('#sched-feed-form-cancel').addEventListener('click', closeForm);
 
     // 保存
     body.querySelector('#sched-feed-form-save').addEventListener('click', async () => {
@@ -4546,7 +4669,7 @@ const Settings = {
         if (window.electronAPI?.reloadScheduleFeedTriggers) {
           await window.electronAPI.reloadScheduleFeedTriggers();
         }
-        overlay.style.display = 'none';
+        closeForm();
         UI.toast('スケジュール取り込み設定を保存しました', 'success');
         this._renderScheduleFeeds(body);
       } catch (e) {
@@ -4635,7 +4758,7 @@ const Settings = {
 
         area.innerHTML = `
           <table class="settings-table" style="margin-top:0; background:#fff;">
-            <thead><tr><th>端末名</th><th>IP</th><th>病棟</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
+            <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
             <tbody>
               ${devices.map(d => {
                 const id = d.deviceId || d.id;
@@ -4646,6 +4769,7 @@ const Settings = {
                   <tr style="opacity:${stale ? '.62' : '1'};">
                     <td><strong>${d.name || id || '-'}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>
                     <td>${d.ip || '-'}</td>
+                    <td style="font-size:11px; color:#4a5568;">${d.hostname || d.hostName || '-'}</td>
                     <td>${AppState.wards?.find(w => w.id === d.wardId)?.name || d.wardId || '-'}</td>
                     <td>${d.page || d.mode || '-'}</td>
                     <td>${seconds === null ? '-' : `${seconds}秒前`}</td>

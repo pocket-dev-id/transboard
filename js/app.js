@@ -729,13 +729,18 @@ const App = {
       return id;
     })();
 
+    let _cachedHostname = null;
+    if (window.electronAPI?.getHostname) {
+      window.electronAPI.getHostname().then(h => { _cachedHostname = h || null; }).catch(() => {});
+    }
+
     const sendHeartbeat = async () => {
       const wardId = AppState.currentWardId || localStorage.getItem('current_ward_id') || '';
-      const name = navigator.userAgent.match(/Windows NT/) ? (location.hostname || 'Windows端末') : (location.hostname || '端末');
       try {
         const res = await API.deviceHeartbeat({
           deviceId,
           name: localStorage.getItem('_device_name') || deviceId,
+          hostname: _cachedHostname || undefined,
           wardId,
           mode: localStorage.getItem('cfg_share_mode') || 'client',
           page: document.querySelector('.tab-btn.active')?.dataset.page || ''

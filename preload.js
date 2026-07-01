@@ -85,6 +85,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ODBC接続先のテーブル/ビュー一覧を取得する
   getOdbcTables: (config) => ipcRenderer.invoke('get-odbc-tables', config),
 
+  // PCのホスト名を取得する
+  getHostname: () => ipcRenderer.invoke('get-hostname'),
+
+  // フォルダ選択ダイアログを開く
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
+
+  // 指定フォルダ内の最初のCSVのヘッダ行を読み取る
+  readCsvHeaders: (folderPath) => ipcRenderer.invoke('read-csv-headers', folderPath),
+
   // スクリーンセイバー・ディスプレイスリープの抑制
   setPowerSave: (prevent) => ipcRenderer.invoke('set-power-save', prevent),
 

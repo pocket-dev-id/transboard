@@ -1591,6 +1591,33 @@ ipcMain.handle('webrtc-request', async (event, { url, options }) => {
 
 // アプリバージョンを返す
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('get-hostname', () => os.hostname());
+
+// フォルダ選択ダイアログ（スケジュール取り込みの監視フォルダ選択用）
+ipcMain.handle('select-folder', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: '監視フォルダを選択',
+  });
+  return canceled ? null : filePaths[0];
+});
+
+// CSVのヘッダ行を読み取る（スケジュール取り込みの列マッピング補助用）
+ipcMain.handle('read-csv-headers', async (event, folderPath) => {
+  try {
+    const files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.csv'));
+    if (files.length === 0) return { ok: false, reason: 'no_csv' };
+    const firstFile = path.join(folderPath, files[0]);
+    const content = fs.readFileSync(firstFile, 'utf-8');
+    const firstLine = content.split(/\r?\n/)[0] || '';
+    // カンマ区切りとタブ区切りを自動判定
+    const sep = firstLine.includes('\t') ? '\t' : ',';
+    const headers = firstLine.split(sep).map(h => h.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+    return { ok: true, headers, filename: files[0] };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+});
 
 // OSデスクトップ通知を表示（メインプロセス経由 — Windowsで確実に動作）
 ipcMain.handle('show-os-notification', (event, { title, body }) => {
