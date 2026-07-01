@@ -83,6 +83,10 @@ const BedModal = {
             patient_name: null, patient_id: null, is_present: false,
             admission_date: null, patient_note: null, manually_registered: false
           });
+          API.writeAuditLog('PATIENT_DISCHARGE', {
+            targetType: 'bed', targetId: bedId,
+            details: { bed_number: bed.bed_number, patient_id: bed.patient_id },
+          });
           await App.loadMasters();
           BedMap.render();
           this.close();
@@ -938,6 +942,10 @@ const PatientRegModal = {
           admission_date: admDate,
           patient_note: note || null,
           manually_registered: true,
+        });
+        API.writeAuditLog(isEdit ? 'PATIENT_UPDATE' : 'PATIENT_REGISTER', {
+          targetType: 'bed', targetId: bedId,
+          details: { patient_id: patId || null },
         });
         await App.loadMasters();
         BedMap.render();

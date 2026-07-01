@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Content Security Policy (セキュリティ #4)
+       script-src 'self' のみ許可。style-src は既存インラインスタイルのため unsafe-inline を維持。
+       connect-src はローカルネットワーク親機への HTTP アクセスを許可。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' http://* https://* ws://* wss://*; media-src 'self';">
   <title>TransBoard</title>
   <link rel="stylesheet" href="css/local-icons.css">
   <link rel="stylesheet" href="css/style.css">
@@ -339,10 +343,12 @@
   <!-- JS モジュール -->
   <script src="js/error.js"></script>
   <script src="js/component.js"></script>
+  <script src="js/perf.js"></script>
   <script src="js/config.js"></script>
   <script src="js/api.js"></script>
   <script src="js/state.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/auth.js"></script>
   <script src="js/bedmap.js"></script>
   <script src="js/modal.js"></script>
 

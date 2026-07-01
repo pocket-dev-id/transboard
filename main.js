@@ -194,6 +194,7 @@ const SEEDS = {
   ],
   transfer_events: [],
   transfer_status_logs: [],
+  audit_logs: [],
   calls: [],
   import_logs: [],
   schedule_feeds: [],
@@ -251,6 +252,10 @@ function readDB() {
     // 後方互換性：新規テーブル・新規設定項目のパッチ
     if (!db.import_logs) {
       db.import_logs = [];
+      hasDuplicates = true;
+    }
+    if (!db.audit_logs) {
+      db.audit_logs = [];
       hasDuplicates = true;
     }
     if (!db.system_settings) {
@@ -424,7 +429,10 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     }
   });
 
@@ -1395,7 +1403,8 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
 const ALLOWED_TABLES = new Set([
   'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs',
   'system_settings', 'transfer_events', 'transfer_status_logs',
-  'calls', 'import_logs', 'schedule_feeds', 'schedule_items'
+  'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
+  'audit_logs',
 ]);
 
 // 共通のデータベース操作処理関数
@@ -1590,6 +1599,9 @@ ipcMain.handle('webrtc-request', async (event, { url, options }) => {
 
 // アプリバージョンを返す
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+// 開発/本番モード判定 (インフラ #4: 環境分離)
+ipcMain.handle('is-dev-mode', () => !app.isPackaged || process.env.NODE_ENV === 'development');
 
 // OSデスクトップ通知を表示（メインプロセス経由 — Windowsで確実に動作）
 ipcMain.handle('show-os-notification', (event, { title, body }) => {

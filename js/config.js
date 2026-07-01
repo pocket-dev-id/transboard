@@ -121,4 +121,23 @@ const CONFIG = {
     ],
     PICKUP_REQUIRED: [],
   },
+
+  // ロール定義 (セキュリティ #5: RBAC基盤)
+  ROLES: {
+    ADMIN:     'admin',
+    NURSE:     'nurse',
+    TRANSPORT: 'transport',
+    READONLY:  'readonly',
+  },
+
+  // パーミッション定義: キー = 操作名, 値 = 許可ロール[]
+  PERMISSIONS: {
+    STATUS_CHANGE:      ['admin', 'nurse', 'transport'],
+    PATIENT_REGISTER:   ['admin', 'nurse'],
+    PATIENT_DISCHARGE:  ['admin', 'nurse'],
+    ESCORT_ASSIGN:      ['admin', 'nurse', 'transport'],
+    SETTINGS_ACCESS:    ['admin'],
+    HISTORY_VIEW:       ['admin', 'nurse'],
+    EXPORT_DATA:        ['admin'],
+  },
 };

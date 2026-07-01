@@ -11,23 +11,73 @@ const WardDashboard = {
   },
 };
 
+// パスコード: SHA-256ハッシュユーティリティ (セキュリティ #3)
+const PasscodeHash = {
+  SALT: 'transboard-passcode-v1',
+  LOCKOUT_MS: 60 * 1000,
+  MAX_ATTEMPTS: 5,
+
+  async hash(raw) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(raw + this.SALT);
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return 'SHA256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  async verify(input, stored) {
+    if (!stored) return !input; // 空パスコード = 認証なし
+    if (stored.startsWith('SHA256:')) {
+      return (await this.hash(input)) === stored;
+    }
+    return input === stored; // レガシー平文の後方互換
+  },
+
+  getRateState() {
+    try { return JSON.parse(localStorage.getItem('_pc_rate') || '{}'); } catch { return {}; }
+  },
+
+  recordAttempt(failed) {
+    const s = this.getRateState();
+    if (failed) {
+      s.attempts = (s.attempts || 0) + 1;
+      s.lastAttempt = Date.now();
+    } else {
+      delete s.attempts;
+      delete s.lastAttempt;
+    }
+    localStorage.setItem('_pc_rate', JSON.stringify(s));
+  },
+
+  isLocked() {
+    const s = this.getRateState();
+    if (!s.attempts || s.attempts < this.MAX_ATTEMPTS) return false;
+    if ((Date.now() - (s.lastAttempt || 0)) > this.LOCKOUT_MS) {
+      localStorage.removeItem('_pc_rate');
+      return false;
+    }
+    return true;
+  },
+
+  remainingLockout() {
+    const s = this.getRateState();
+    return Math.max(0, Math.ceil((this.LOCKOUT_MS - (Date.now() - (s.lastAttempt || 0))) / 1000));
+  },
+};
+
 const PasscodeModal = {
   _onSuccess: null,
 
   open(onSuccess) {
     this._onSuccess = onSuccess;
-    
-    // 入力フォームとエラーメッセージをリセット
+
     const input = document.getElementById('passcode-input');
     if (input) input.value = '';
     const errMsg = document.getElementById('passcode-error-msg');
     if (errMsg) errMsg.style.display = 'none';
-    
-    // モーダルを表示
+
     const overlay = document.getElementById('passcode-modal-overlay');
     if (overlay) overlay.classList.remove('hidden');
-    
-    // 入力欄にフォーカスをあてる
+
     setTimeout(() => {
       if (input) input.focus();
     }, 50);
@@ -67,17 +117,35 @@ const PasscodeModal = {
   async submit() {
     const input = document.getElementById('passcode-input');
     if (!input) return;
-    const inputVal = input.value;
 
+    if (PasscodeHash.isLocked()) {
+      const errMsg = document.getElementById('passcode-error-msg');
+      if (errMsg) {
+        errMsg.textContent = `試行回数超過。あと${PasscodeHash.remainingLockout()}秒後に再試行できます`;
+        errMsg.style.display = 'block';
+      }
+      return;
+    }
+
+    const inputVal = input.value;
     const requiredPasscode = await this.getRequiredPasscode();
 
-    if (inputVal === requiredPasscode) {
+    const ok = await PasscodeHash.verify(inputVal, requiredPasscode);
+    if (ok) {
+      PasscodeHash.recordAttempt(false);
       window.isAdminSession = true;
       this.close();
       if (this._onSuccess) this._onSuccess();
     } else {
+      PasscodeHash.recordAttempt(true);
       const errMsg = document.getElementById('passcode-error-msg');
-      if (errMsg) errMsg.style.display = 'block';
+      if (errMsg) {
+        const remaining = this.MAX_ATTEMPTS - (PasscodeHash.getRateState().attempts || 0);
+        errMsg.textContent = remaining > 0
+          ? `パスコードが違います（残り${remaining}回）`
+          : `試行回数超過。1分間ロックされます`;
+        errMsg.style.display = 'block';
+      }
       input.value = '';
       input.focus();
     }
@@ -105,8 +173,78 @@ const PasscodeModal = {
   }
 };
 
+// 環境識別ユーティリティ (インフラ #4: 環境分離)
+const AppEnv = {
+  _isDev: null,
+
+  async detect() {
+    if (this._isDev !== null) return;
+    try {
+      this._isDev = window.electronAPI?.isDevMode
+        ? await window.electronAPI.isDevMode()
+        : !!(process?.env?.NODE_ENV === 'development');
+    } catch {
+      this._isDev = false;
+    }
+  },
+
+  get isDev() { return this._isDev === true; },
+  get isProd() { return this._isDev === false; },
+};
+
+// 親機サーバー可用性チェック (インフラ #3: 高可用性／縮退モード)
+const ParentServerMonitor = {
+  _degraded: false,
+  _interval: null,
+
+  init() {
+    const mode = localStorage.getItem('cfg_share_mode');
+    if (mode !== 'client') return;
+    this._check();
+    this._interval = setInterval(() => this._check(), 30000);
+  },
+
+  async _check() {
+    const parentIp = localStorage.getItem('cfg_parent_ip');
+    if (!parentIp) return;
+    try {
+      const res = await fetch(`http://${parentIp}:3005/tables/wards`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        if (this._degraded) this._setDegraded(false);
+      } else {
+        this._setDegraded(true);
+      }
+    } catch {
+      this._setDegraded(true);
+    }
+  },
+
+  _setDegraded(degraded) {
+    if (this._degraded === degraded) return;
+    this._degraded = degraded;
+    let banner = document.getElementById('degraded-mode-banner');
+    if (degraded) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'degraded-mode-banner';
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#dc2626;color:#fff;text-align:center;padding:6px 16px;font-size:13px;font-weight:700;';
+        banner.textContent = '⚠ 親機サーバーに接続できません。表示データは最終取得時のキャッシュです。';
+        document.body.prepend(banner);
+      }
+      banner.style.display = '';
+    } else {
+      if (banner) banner.style.display = 'none';
+      UI.toast('親機サーバーへの接続が回復しました', 'success', 3000);
+    }
+  },
+
+  destroy() {
+    if (this._interval) clearInterval(this._interval);
+  },
+};
+
 const App = {
- 
+
   async init() {
     console.log('[App] 初期化開始...');
  
@@ -170,6 +308,12 @@ const App = {
 
     // オフライン状態の監視開始
     OfflineManager.init();
+
+    // 環境検出 (インフラ #4)
+    await AppEnv.detect();
+
+    // 親機サーバー可用性監視 (インフラ #3: 子機モードのみ)
+    ParentServerMonitor.init();
 
     // 管理者セッション認証状態（設定画面の多重プロンプト防止用キャッシュ）
     window.isAdminSession = false;
@@ -929,7 +1073,7 @@ const App = {
           const bed = AppState.getBedById(e.bed_id);
           const bedLabel = bed ? `${bed.bed_number}号床` : '';
           const statusLabel = CONFIG.STATUS_LABEL?.[e.current_status] || e.current_status;
-          const patientName = bed?.patient_name ? `（${bed.patient_name}）` : '';
+          const patientName = bed?.patient_name ? `（${UI.getPatientName(bed.patient_name)}）` : '';
           const toastTypes = {
             RETURNED: 'success', ARRIVED: 'info', IN_EXAM: 'info',
             DEPART_REGISTERED: 'info', MOVING: 'info',
@@ -946,7 +1090,7 @@ const App = {
         const cfg = soundSettings['PICKUP_REQUIRED'];
         if (cfg?.toast !== false) {
           UI.toast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！`, 'danger', 6000);
-          UI.showOsNotification('TransBoard:迎えが必要', `${bed ? bed.bed_number + '号床' : ''}${bed?.patient_name ? '（' + bed.patient_name + '）' : ''}`);
+          UI.showOsNotification('TransBoard:迎えが必要', `${bed ? bed.bed_number + '号床' : ''}${bed?.patient_name ? '（' + UI.getPatientName(bed.patient_name) + '）' : ''}`);
         }
         this._prevNotified.add(`pickup-${e.id}`);
         if (lastStatus === undefined && cfg?.enabled) UI.playNotificationSound(cfg.sound);

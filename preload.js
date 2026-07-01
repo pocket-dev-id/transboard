@@ -70,6 +70,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // アプリバージョン取得
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // 開発/本番モード判定 (インフラ #4)
+  isDevMode: () => ipcRenderer.invoke('is-dev-mode'),
+
   // OSデスクトップ通知（メインプロセス経由）
   showOsNotification: (title, body) => ipcRenderer.invoke('show-os-notification', { title, body }),
 

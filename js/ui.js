@@ -4,6 +4,18 @@
 
 const UI = {
 
+  /* ---------- 患者名マスキング (データ #1) ---------- */
+  isPatientMaskEnabled() {
+    const chk = document.getElementById('chk-show-patient-names');
+    if (chk) return !chk.checked;
+    return localStorage.getItem('cfg_show_patient_names') !== 'true';
+  },
+
+  getPatientName(name) {
+    if (!name) return null;
+    return this.isPatientMaskEnabled() ? '＊＊＊＊' : name;
+  },
+
   /* ---------- 時刻フォーマット ---------- */
   formatTime(ms) {
     if (!ms) return '--:--';

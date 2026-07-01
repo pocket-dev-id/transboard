@@ -3718,9 +3718,9 @@ const Settings = {
             </h4>
             <div class="form-row" style="margin-top:10px;">
               <label style="font-size:12.5px; font-weight:700; color:#4a5568;">管理者パスコード（数字4桁など）</label>
-              <input type="text" id="cfg-admin-passcode" placeholder="例: 0000" style="width:100%; max-width:200px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700;" value="${adminPasscode}">
+              <input type="password" id="cfg-admin-passcode" placeholder="${adminPasscode ? '●●●● (変更する場合のみ入力)' : '例: 0000'}" style="width:100%; max-width:200px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700;">
               <div style="font-size:11px; color:#718096; margin-top:4px;">
-                ※空欄に設定すると、パスコード認証なしで誰でも設定画面を開けるようになります。変更内容はすべての端末で同期されます。
+                ※空欄のまま保存すると現在のパスコードを維持します。パスコードはSHA-256でハッシュ化して保存されます。変更内容はすべての端末で同期されます。
               </div>
             </div>
           </div>
@@ -3898,12 +3898,20 @@ const Settings = {
       const fontStyle = document.getElementById('cfg-font-style').value;
       const bedCardSize = document.getElementById('cfg-bed-card-size').value;
       const themeStyle = document.getElementById('cfg-theme').value;
-      const adminPasscode = document.getElementById('cfg-admin-passcode').value.trim();
+      const adminPasscodeRaw = document.getElementById('cfg-admin-passcode').value.trim();
       const eventRetentionDaysVal = document.getElementById('cfg-event-retention-days')?.value || '0';
 
       if (mode === 'client' && !parentIp) {
         UI.toast('接続先の親機IPアドレスを入力してください', 'warning');
         return;
+      }
+
+      // パスコードをSHA-256でハッシュ化して保存 (セキュリティ #3)
+      let adminPasscode = '';
+      if (adminPasscodeRaw) {
+        adminPasscode = typeof PasscodeHash !== 'undefined'
+          ? await PasscodeHash.hash(adminPasscodeRaw)
+          : adminPasscodeRaw;
       }
 
       // localStorageへ保存（起動時の同期ロードおよび端末個別用）
@@ -3925,7 +3933,7 @@ const Settings = {
           API.patch('system_settings', 'font_style', { value: fontStyle }),
           API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
           API.patch('system_settings', 'theme_style', { value: themeStyle }),
-          API.patch('system_settings', 'admin_passcode', { value: adminPasscode }),
+          ...(adminPasscode ? [API.patch('system_settings', 'admin_passcode', { value: adminPasscode })] : []),
           API.patch('system_settings', 'event_retention_days', { value: eventRetentionDaysVal }),
         ]);
 
@@ -3941,7 +3949,7 @@ const Settings = {
         updateSetting('font_style', fontStyle);
         updateSetting('bed_card_size', bedCardSize);
         updateSetting('theme_style', themeStyle);
-        updateSetting('admin_passcode', adminPasscode);
+        if (adminPasscode) updateSetting('admin_passcode', adminPasscode);
         updateSetting('event_retention_days', eventRetentionDaysVal);
 
         // 即座に変更を適用する

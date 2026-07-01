@@ -231,6 +231,23 @@ const API = {
     return updated;
   },
 
+  /* ---------- 操作監査ログ (データ #2) ---------- */
+  async writeAuditLog(action, { targetType = '', targetId = null, staffId = null, details = {} } = {}) {
+    try {
+      await this.create('audit_logs', {
+        id: `al-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        staff_id: staffId,
+        details: JSON.stringify(details),
+        created_at: Date.now(),
+      });
+    } catch (e) {
+      console.warn('[AuditLog] 書き込み失敗:', e);
+    }
+  },
+
   /* ---------- 状態ログ ---------- */
   async addStatusLog(eventId, fromStatus, toStatus, changedBy = 'user') {
     return this.create('transfer_status_logs', {
