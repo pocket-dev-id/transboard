@@ -73,8 +73,9 @@ const PasscodeModal = {
 
     if (inputVal === requiredPasscode) {
       window.isAdminSession = true;
+      const onSuccess = this._onSuccess;
       this.close();
-      if (this._onSuccess) this._onSuccess();
+      if (onSuccess) onSuccess();
     } else {
       const errMsg = document.getElementById('passcode-error-msg');
       if (errMsg) errMsg.style.display = 'block';
@@ -787,10 +788,12 @@ const App = {
       ]);
       AppState.wards = wards;
       AppState.beds = beds;
+      AppState.allBedTypes = bedTypes.slice().sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
       AppState.bedTypes = bedTypes.filter(t => t.is_active !== false).sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
       AppState.allExamRooms = examRooms;
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
-      AppState.examTypes = examTypes;
+      AppState.allExamTypes = examTypes;
+      AppState.examTypes = examTypes.filter(t => t.is_active !== false);
       AppState.staffs = staffs;
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
@@ -1065,6 +1068,18 @@ const App = {
 
     document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast');
     document.body.classList.add(`theme-${themeStyle}`);
+
+    // 6. スクリーンセイバー・スリープ防止の適用
+    if (window.electronAPI?.setPowerSave) {
+      const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
+      window.electronAPI.setPowerSave(preventSleep);
+    }
+
+    // 7. 最前面表示の適用
+    if (window.electronAPI?.setAlwaysOnTop) {
+      const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
+      window.electronAPI.setAlwaysOnTop(alwaysOnTop);
+    }
   },
 };
 

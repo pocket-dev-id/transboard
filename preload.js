@@ -84,4 +84,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ODBC接続先のテーブル/ビュー一覧を取得する
   getOdbcTables: (config) => ipcRenderer.invoke('get-odbc-tables', config),
+
+  // スクリーンセイバー・ディスプレイスリープの抑制
+  setPowerSave: (prevent) => ipcRenderer.invoke('set-power-save', prevent),
+
+  // ウィンドウを常に最前面に表示する
+  setAlwaysOnTop: (value) => ipcRenderer.invoke('set-always-on-top', value),
 });

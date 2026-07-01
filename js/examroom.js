@@ -9,7 +9,9 @@ const ExamRoom = {
   async render() {
     // 検査室セレクト初期化
     const select = document.getElementById('exam-room-select');
-    if (select && select.options.length <= 1) {
+    if (select) {
+      const prevValue = select.value || AppState.currentExamRoomId || '';
+      select.innerHTML = '<option value=""></option>';
       AppState.examRooms.forEach(r => {
         const opt = document.createElement('option');
         opt.value = r.id;
@@ -21,10 +23,7 @@ const ExamRoom = {
         this._renderQueue();
         this._updateScanInputState();
       };
-    }
-
-    if (AppState.currentExamRoomId) {
-      select.value = AppState.currentExamRoomId;
+      if (prevValue) select.value = prevValue;
     }
 
     // 患者名表示トグルイベントのバインド

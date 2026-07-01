@@ -1540,6 +1540,50 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 }
 .settings-table tr:last-child td { border-bottom: none; }
 .settings-table tr:hover td { background: #f8fafc; }
+.row--inactive { opacity: 0.5; }
+
+/* 独自確認ダイアログ */
+.confirm-dialog-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.5);
+  z-index: 9000;
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.confirm-dialog {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 440px; max-width: 96vw;
+  animation: slideUp .2s ease;
+  overflow: hidden;
+}
+.confirm-dialog-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.confirm-dialog-header i { font-size: 18px; }
+.confirm-dialog-header h3 { font-size: 16px; font-weight: 700; margin: 0; }
+.confirm-dialog-header--danger i { color: #dc2626; }
+.confirm-dialog-header--warning i { color: #d97706; }
+.confirm-dialog-body { padding: 20px; font-size: 13px; line-height: 1.65; color: #374151; }
+.confirm-dialog-detail {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #7f1d1d;
+  font-weight: 600;
+}
+.confirm-dialog-footer {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 14px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
 .bed-type-tag {
   display: inline-block;
   font-size: 10px;

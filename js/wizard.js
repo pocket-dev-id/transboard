@@ -324,7 +324,11 @@ const Wizard = {
     const clientWarning = this.config.share_mode === 'client' ? `
       <div class="wiz-callout wiz-callout-warn">
         <i class="fas fa-exclamation-triangle"></i>
-        <span><strong>子機モード:</strong> 親機PC (${UI.escapeHTML(this.config.parent_ip || '未指定')}) が起動・共有サーバーが動作している必要があります。</span>
+        <div>
+          <strong>子機モード — 設定後に再起動が必要です</strong><br>
+          <span style="font-size:11px; font-weight:400;">親機PC (${UI.escapeHTML(this.config.parent_ip || '未指定')}) が起動・共有サーバーが動作している必要があります。
+          「設定を適用して完了」ボタンを押すと再起動を促す画面に切り替わります。</span>
+        </div>
       </div>` : '';
 
     const demoCheck = this.config.share_mode === 'parent' ? `
@@ -584,13 +588,18 @@ const Wizard = {
 
       UI.toast('初期設定が完了しました！', 'success');
 
+      if (this.config.share_mode === 'client') {
+        // 子機モード: データ接続先が変わるため再起動するまで正常動作しない
+        // loadMasters() を呼ばず、再起動を促す専用画面に切り替える
+        this._showClientRestartScreen();
+        return;
+      }
+
       await App.loadMasters();
       await App.refreshData();
       await App.applySystemVisualSettings();
       WardDashboard.render();
       this.close();
-
-      UI.toast('稼働モード設定を完全に反映するため、アプリの再起動を推奨します。', 'info');
     } catch (err) {
       console.error('[Wizard Finish Error]', err);
       UI.toast('設定の適用に失敗しました: ' + err.message, 'danger');
@@ -599,6 +608,52 @@ const Wizard = {
         finishBtn.innerHTML = '<i class="fas fa-check-circle"></i> 設定を適用して完了';
       }
     }
+  },
+
+  // 子機モード完了後に再起動を促す画面を表示する
+  _showClientRestartScreen() {
+    const overlay = document.getElementById('wizard-modal-overlay');
+    if (!overlay) return;
+
+    overlay.innerHTML = `
+      <div class="modal wiz-modal" style="max-width:480px; text-align:center;">
+        <div class="modal-body" style="padding:40px 32px;">
+          <div style="font-size:48px; margin-bottom:16px; color:#3b82f6;">
+            <i class="fas fa-check-circle" style="color:#16a34a;"></i>
+          </div>
+          <h2 style="font-size:20px; font-weight:800; margin-bottom:8px;">設定が完了しました</h2>
+          <p style="color:#64748b; font-size:13px; line-height:1.7; margin-bottom:24px;">
+            子機モードの設定を保存しました。<br>
+            接続先の親機 (<strong>${UI.escapeHTML(this.config.parent_ip || '未指定')}</strong>) へのデータ接続を有効にするには、アプリを再起動してください。
+          </p>
+          <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px 16px; margin-bottom:24px; font-size:12px; color:#1e40af; text-align:left;">
+            <i class="fas fa-info-circle"></i>
+            <strong>再起動するまでの間</strong>、マスタデータや病床マップが正しく表示されない場合があります。
+            再起動後に自動的に親機から最新データを取得します。
+          </div>
+          <div style="display:flex; gap:12px; justify-content:center;">
+            <button class="btn btn-primary btn-lg" id="wiz-relaunch-btn" style="min-width:160px;">
+              <i class="fas fa-redo"></i> 今すぐ再起動
+            </button>
+            <button class="btn btn-outline" id="wiz-close-btn" style="min-width:120px;">
+              後で再起動
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('wiz-relaunch-btn')?.addEventListener('click', () => {
+      if (window.electronAPI?.relaunchApp) {
+        window.electronAPI.relaunchApp();
+      } else {
+        location.reload();
+      }
+    });
+
+    document.getElementById('wiz-close-btn')?.addEventListener('click', () => {
+      this.close();
+    });
   },
 
   close() {
