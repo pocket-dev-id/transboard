@@ -32,6 +32,20 @@ const CONFIG = {
     CANCELLED: 'キャンセル',
   },
 
+  // 状態アイコン（FontAwesome クラス名）
+  // 色だけでなく形状でも状態を識別できるようにする（色覚・印刷・モノクロ画面への対応）
+  STATUS_ICON: {
+    IN_BED: 'fa-bed',
+    DEPART_REGISTERED: 'fa-door-open',
+    MOVING: 'fa-walking',
+    ARRIVED: 'fa-map-marker-alt',
+    IN_EXAM: 'fa-stethoscope',
+    NEARLY_DONE: 'fa-clock',
+    PICKUP_REQUIRED: 'fa-bell',
+    RETURNED: 'fa-check-circle',
+    CANCELLED: 'fa-times-circle',
+  },
+
   // 状態遷移ルール: key = 現在状態, value = 遷移可能な次状態[]
   STATUS_TRANSITIONS: {
     IN_BED: ['DEPART_REGISTERED'],

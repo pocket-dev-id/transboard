@@ -48,6 +48,28 @@
   --radius-lg: 16px;
   --transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* 共通セマンティックカラー（コード #4: マジックナンバー排除） */
+  --clr-danger: #dc2626;
+  --clr-danger-bg: #fee2e2;
+  --clr-warning: #d97706;
+  --clr-warning-bg: #fef3c7;
+  --clr-success: #16a34a;
+  --clr-success-bg: #dcfce7;
+  --clr-info: #0284c7;
+  --clr-info-bg: #e0f2fe;
+  /* タッチターゲット最小サイズ（UX #5） */
+  --touch-target-min: 44px;
+  /* ステータスバッジ色（UI #3 / #4: CSS変数で一元管理） */
+  --badge-in-bed-bg: #e2e8f0;      --badge-in-bed-text: #4a5568;
+  --badge-depart-bg: #dbeafe;      --badge-depart-text: #1e40af;
+  --badge-moving-bg: #ede9fe;      --badge-moving-text: #5b21b6;
+  --badge-arrived-bg: #e0f2fe;     --badge-arrived-text: #0369a1;
+  --badge-in-exam-bg: #fef9c3;     --badge-in-exam-text: #713f12;
+  --badge-nearly-done-bg: #ffedd5; --badge-nearly-done-text: #7c2d12;
+  --badge-pickup-bg: #fee2e2;      --badge-pickup-text: #7f1d1d;
+  --badge-returned-bg: #dcfce7;    --badge-returned-text: #14532d;
+  --badge-cancelled-bg: #f1f5f9;   --badge-cancelled-text: #475569;
+
   /* カードサイズデフォルト (medium) */
   --bed-card-min-h: 55px;
   --bed-card-pad: 4px 6px;
@@ -81,8 +103,8 @@ body.size-large {
 body.size-small {
   --bed-card-min-h: 46px;
   --bed-card-pad: 2px 4px;
-  --bed-card-num-sz: 12px;
-  --bed-card-info-sz: 8px;
+  --bed-card-num-sz: 13px;
+  --bed-card-info-sz: 10px;
 }
 
 /* ---------- リセット ---------- */
@@ -135,6 +157,7 @@ select, input { font-family: inherit; }
   align-items: center;
   gap: 6px;
   white-space: nowrap;
+  touch-action: manipulation;
 }
 .tab-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
 .tab-btn.active { background: rgba(255,255,255,.2); color: #fff; font-weight: 700; }
@@ -175,9 +198,12 @@ select, input { font-family: inherit; }
   border: 1px solid rgba(255,255,255,.2);
   color: #fff;
   width: 32px; height: 32px;
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
   border-radius: 6px;
   font-size: 14px;
   transition: var(--transition);
+  touch-action: manipulation;
 }
 .btn-icon:hover { background: rgba(255,255,255,.25); }
 
@@ -303,6 +329,7 @@ select, input { font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  touch-action: manipulation;
 }
 .bed-card:hover {
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06), 0 0 0 2px var(--clr-primary);
@@ -526,6 +553,7 @@ select, input { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  touch-action: manipulation;
 }
 .btn:hover { filter: brightness(.92); transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
@@ -800,6 +828,20 @@ select, input { font-family: inherit; }
 
   /* アニメーション停止 */
   .tl-marker, .timeline-now-marker, .timeline-pickup-marker { animation: none !important; }
+
+  /* ベッドカード：ステータス別背景を印刷時も再現 */
+  .bed-card { backdrop-filter: none !important; }
+  .bed-card.status-IN_BED          { background: #f1f5f9 !important; border-color: #94a3b8 !important; }
+  .bed-card.status-DEPART_REGISTERED { background: #dbeafe !important; border-color: #3b82f6 !important; }
+  .bed-card.status-MOVING          { background: #ede9fe !important; border-color: #7c3aed !important; }
+  .bed-card.status-ARRIVED         { background: #e0f2fe !important; border-color: #0284c7 !important; }
+  .bed-card.status-IN_EXAM         { background: #fef9c3 !important; border-color: #ca8a04 !important; }
+  .bed-card.status-NEARLY_DONE     { background: #ffedd5 !important; border-color: #ea580c !important; }
+  .bed-card.status-PICKUP_REQUIRED { background: #fee2e2 !important; border-color: #dc2626 !important; }
+  .bed-card.status-RETURNED        { background: #dcfce7 !important; border-color: #16a34a !important; }
+  .bed-card.status-CANCELLED       { background: #f1f5f9 !important; border-color: #94a3b8 !important; opacity: 1 !important; }
+  .status-badge { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  body { background: #fff !important; }
 }
 
 /* ---------- 履歴画面 ---------- */
@@ -1030,15 +1072,15 @@ select, input { font-family: inherit; }
   padding: 2px 8px;
   border-radius: 10px;
 }
-.badge-IN_BED { background: #e2e8f0; color: #4a5568; }
-.badge-DEPART_REGISTERED { background: #dbeafe; color: #1e40af; }
-.badge-MOVING { background: #bfdbfe; color: #1d4ed8; }
-.badge-ARRIVED { background: #e0f2fe; color: #0369a1; }
-.badge-IN_EXAM { background: #fef9c3; color: #713f12; }
-.badge-NEARLY_DONE { background: #ffedd5; color: #7c2d12; }
-.badge-PICKUP_REQUIRED { background: #fee2e2; color: #7f1d1d; }
-.badge-RETURNED { background: #dcfce7; color: #14532d; }
-.badge-CANCELLED { background: #f1f5f9; color: #475569; }
+.badge-IN_BED          { background: var(--badge-in-bed-bg);      color: var(--badge-in-bed-text); }
+.badge-DEPART_REGISTERED { background: var(--badge-depart-bg);    color: var(--badge-depart-text); }
+.badge-MOVING          { background: var(--badge-moving-bg);       color: var(--badge-moving-text); }
+.badge-ARRIVED         { background: var(--badge-arrived-bg);      color: var(--badge-arrived-text); }
+.badge-IN_EXAM         { background: var(--badge-in-exam-bg);      color: var(--badge-in-exam-text); }
+.badge-NEARLY_DONE     { background: var(--badge-nearly-done-bg);  color: var(--badge-nearly-done-text); }
+.badge-PICKUP_REQUIRED { background: var(--badge-pickup-bg);       color: var(--badge-pickup-text); }
+.badge-RETURNED        { background: var(--badge-returned-bg);     color: var(--badge-returned-text); }
+.badge-CANCELLED       { background: var(--badge-cancelled-bg);    color: var(--badge-cancelled-text); }
 
 /* ---------- トースト通知 ---------- */
 #toast-container {
@@ -1541,6 +1583,31 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 }
 .settings-table tr:last-child td { border-bottom: none; }
 .settings-table tr:hover td { background: #f8fafc; }
+
+/* 設定パネル汎用ヘルパー (UI #3) */
+.settings-section {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 16px;
+}
+.settings-section-title {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: #2d3748;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-note { font-size: 11px; color: #718096; }
+.settings-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 800;
+}
+.settings-badge--shared { background: #f1f5f9; color: #475569; }
+.settings-badge--parent { background: #fee2e2; color: #b91c1c; }
+.settings-badge--device { background: #e0f2fe; color: #0369a1; }
+
 .bed-type-tag {
   display: inline-block;
   font-size: 10px;

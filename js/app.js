@@ -167,7 +167,10 @@ const App = {
  
     // 時計開始
     UI.startClock();
- 
+
+    // オフライン状態の監視開始
+    OfflineManager.init();
+
     // 管理者セッション認証状態（設定画面の多重プロンプト防止用キャッシュ）
     window.isAdminSession = false;
 
@@ -795,6 +798,9 @@ const App = {
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
+
+      // 保持期間設定に基づき古い完了済みイベントを削除（起動時に1回）
+      EventRetentionManager.run().catch(e => console.warn('[App] イベントクリーンアップ失敗:', e));
     } catch (e) {
       console.error('[App] マスタ読み込み失敗:', e);
       UI.toast('マスタデータの読み込みに失敗しました', 'danger');
@@ -1068,8 +1074,88 @@ const App = {
   },
 };
 
+/* ---------- オフライン状態管理 ---------- */
+// navigator.onLine ベースのネットワーク状態監視（UX: オフライン時に書き込み操作を無効化）
+const OfflineManager = {
+  _isOnline: navigator.onLine,
+
+  init() {
+    window.addEventListener('online', () => this._handleOnline());
+    window.addEventListener('offline', () => this._handleOffline());
+    if (!navigator.onLine) this._handleOffline();
+  },
+
+  _handleOnline() {
+    if (this._isOnline) return;
+    this._isOnline = true;
+    this._setWriteOpsDisabled(false);
+    UI.toast('ネットワーク接続が回復しました', 'success', 3000);
+  },
+
+  _handleOffline() {
+    if (!this._isOnline) return;
+    this._isOnline = false;
+    this._setWriteOpsDisabled(true);
+    UI.toast('ネットワーク接続が切断されました。書き込み操作は制限されます。', 'warning', 8000);
+  },
+
+  // 書き込み系ボタンを無効化（読み取り操作はそのまま）
+  _setWriteOpsDisabled(disabled) {
+    const selector = [
+      '.btn-primary', '.btn-danger', '.btn-warning',
+      '.btn-success', '.btn-info', '.btn-orange',
+    ].join(', ');
+    document.querySelectorAll(selector).forEach(btn => {
+      if (disabled) {
+        if (!btn.dataset.preOfflineDisabled) {
+          btn.dataset.preOfflineDisabled = btn.disabled ? 'true' : 'false';
+          btn.disabled = true;
+          btn.title = btn.title || 'オフライン中は操作できません';
+          btn.dataset.offlineDisabled = 'true';
+        }
+      } else if (btn.dataset.offlineDisabled) {
+        btn.disabled = btn.dataset.preOfflineDisabled === 'true';
+        delete btn.dataset.offlineDisabled;
+        delete btn.dataset.preOfflineDisabled;
+        btn.title = btn.title === 'オフライン中は操作できません' ? '' : btn.title;
+      }
+    });
+  },
+
+  get isOnline() { return this._isOnline; },
+};
+
+/* ---------- 古いイベントのクリーンアップ ---------- */
+// 要件定義: event_retention_days 設定に基づき完了済みイベントを自動削除
+const EventRetentionManager = {
+  async run() {
+    const setting = AppState.systemSettings?.find(s => s.id === 'event_retention_days');
+    const days = parseInt(setting?.value || '0', 10);
+    if (!days || days <= 0) return; // 0 = 無期限
+
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const completedStatuses = ['RETURNED', 'CANCELLED'];
+
+    try {
+      const res = await API.getAll('transfer_events');
+      const stale = (res.data || []).filter(e =>
+        completedStatuses.includes(e.current_status) &&
+        (e.created_at || 0) < cutoff
+      );
+
+      if (stale.length === 0) return;
+
+      await Promise.all(stale.map(e => API.remove('transfer_events', e.id)));
+      console.log(`[EventRetention] ${stale.length}件の古いイベントを削除しました（${days}日以前）`);
+    } catch (e) {
+      console.warn('[EventRetention] クリーンアップに失敗しました:', e);
+    }
+  },
+};
+
 // DOM 準備完了後に初期化
 document.addEventListener('DOMContentLoaded', () => {
+  ErrorHandler.init();
   App.init().catch(e => {
     console.error('[App] 起動エラー:', e);
     UI.toast('アプリの起動に失敗しました', 'danger');

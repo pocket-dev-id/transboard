@@ -47,18 +47,30 @@ const UI = {
   },
 
   /* ---------- ステータスバッジ ---------- */
-  statusBadge(status) {
+  // 色だけでなくアイコンでも状態を識別できる（色覚・印刷・モノクロ対応）
+  statusBadge(status, { icon = true } = {}) {
     const label = CONFIG.STATUS_LABEL[status] || status;
-    return `<span class="status-badge badge-${status}">${label}</span>`;
+    const iconClass = icon && CONFIG.STATUS_ICON?.[status];
+    const iconHtml = iconClass ? `<i class="fas ${iconClass}" aria-hidden="true"></i> ` : '';
+    return `<span class="status-badge badge-${status}">${iconHtml}${this.escapeHTML(label)}</span>`;
   },
 
   /* ---------- トースト通知 ---------- */
+  // innerHTML を避け DOM API で構築することでXSS防止
   toast(message, type = 'info', duration = 4000) {
     const container = document.getElementById('toast-container');
-    const el = document.createElement('div');
+    if (!container) return;
     const icons = { info: 'info-circle', success: 'check-circle', warning: 'exclamation-triangle', danger: 'bell' };
+    const el = document.createElement('div');
     el.className = `toast toast-${type}`;
-    el.innerHTML = `<i class="fas fa-${icons[type] || 'info-circle'}"></i> ${message}`;
+    const icon = document.createElement('i');
+    icon.className = `fas fa-${icons[type] || 'info-circle'}`;
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.textContent = message;
+    el.appendChild(icon);
+    el.appendChild(document.createTextNode(' '));
+    el.appendChild(text);
     container.appendChild(el);
     setTimeout(() => {
       el.classList.add('hide');
@@ -87,7 +99,18 @@ const UI = {
 
   showEmpty(containerId, message = 'データがありません') {
     const el = document.getElementById(containerId);
-    if (el) el.innerHTML = `<div class="empty-state"><i class="fas fa-inbox"></i><p>${message}</p></div>`;
+    if (!el) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'empty-state';
+    const icon = document.createElement('i');
+    icon.className = 'fas fa-inbox';
+    icon.setAttribute('aria-hidden', 'true');
+    const p = document.createElement('p');
+    p.textContent = message;
+    wrapper.appendChild(icon);
+    wrapper.appendChild(p);
+    el.innerHTML = '';
+    el.appendChild(wrapper);
   },
 
   /* ---------- タブ切り替え ---------- */

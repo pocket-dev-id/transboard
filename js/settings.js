@@ -3529,6 +3529,9 @@ const Settings = {
     const passcodeSetting = AppState.systemSettings?.find(s => s.id === 'admin_passcode') || { value: '0000' };
     const adminPasscode = passcodeSetting.value;
 
+    const eventRetentionSetting = AppState.systemSettings?.find(s => s.id === 'event_retention_days') || { value: '0' };
+    const eventRetentionDays = eventRetentionSetting.value;
+
     // ローカルIPアドレス一覧を取得する（親機の場合の親切設計）
     let ipListHtml = '<li>IPアドレスの取得中...</li>';
     if (window.electronAPI && window.electronAPI.getLocalIPs) {
@@ -3722,6 +3725,31 @@ const Settings = {
             </div>
           </div>
 
+          <!-- 移送履歴データの保持期間設定 -->
+          <div class="settings-section">
+            <h4 class="settings-section-title">
+              <i class="fas fa-trash-alt"></i> 移送履歴データの自動削除
+              <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
+            </h4>
+            <p class="settings-note" style="margin-bottom:12px;">
+              帰棟済・キャンセル済の移送イベントを、指定した日数より古い場合に起動時に自動削除します。
+              削除されたデータは復元できません。無期限の場合は手動でデータベースを管理してください。
+            </p>
+            <div class="form-row" style="max-width:320px;">
+              <label>完了済みイベントの保持期間</label>
+              <select id="cfg-event-retention-days" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
+                <option value="0"   ${eventRetentionDays === '0'   ? 'selected' : ''}>無期限（自動削除しない）</option>
+                <option value="30"  ${eventRetentionDays === '30'  ? 'selected' : ''}>30日間（約1ヶ月）</option>
+                <option value="90"  ${eventRetentionDays === '90'  ? 'selected' : ''}>90日間（約3ヶ月）</option>
+                <option value="180" ${eventRetentionDays === '180' ? 'selected' : ''}>180日間（約半年）</option>
+                <option value="365" ${eventRetentionDays === '365' ? 'selected' : ''}>365日間（約1年）</option>
+              </select>
+            </div>
+            <button class="btn btn-outline btn-sm" id="btn-run-event-cleanup" style="margin-top:8px; border-color:#ef4444; color:#ef4444;">
+              <i class="fas fa-broom"></i> 今すぐ削除を実行
+            </button>
+          </div>
+
           <!-- データベースの保存先設定 (Desktop専用) -->
           ${window.electronAPI && storageInfo ? `
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
@@ -3871,6 +3899,7 @@ const Settings = {
       const bedCardSize = document.getElementById('cfg-bed-card-size').value;
       const themeStyle = document.getElementById('cfg-theme').value;
       const adminPasscode = document.getElementById('cfg-admin-passcode').value.trim();
+      const eventRetentionDaysVal = document.getElementById('cfg-event-retention-days')?.value || '0';
 
       if (mode === 'client' && !parentIp) {
         UI.toast('接続先の親機IPアドレスを入力してください', 'warning');
@@ -3896,7 +3925,8 @@ const Settings = {
           API.patch('system_settings', 'font_style', { value: fontStyle }),
           API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
           API.patch('system_settings', 'theme_style', { value: themeStyle }),
-          API.patch('system_settings', 'admin_passcode', { value: adminPasscode })
+          API.patch('system_settings', 'admin_passcode', { value: adminPasscode }),
+          API.patch('system_settings', 'event_retention_days', { value: eventRetentionDaysVal }),
         ]);
 
         // AppStateのシステム設定も更新
@@ -3912,6 +3942,7 @@ const Settings = {
         updateSetting('bed_card_size', bedCardSize);
         updateSetting('theme_style', themeStyle);
         updateSetting('admin_passcode', adminPasscode);
+        updateSetting('event_retention_days', eventRetentionDaysVal);
 
         // 即座に変更を適用する
         if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
@@ -3933,6 +3964,29 @@ const Settings = {
         UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
       }
     };
+
+    // 移送履歴データの手動クリーンアップ
+    const runCleanupBtn = document.getElementById('btn-run-event-cleanup');
+    if (runCleanupBtn) {
+      runCleanupBtn.onclick = async () => {
+        const days = parseInt(document.getElementById('cfg-event-retention-days')?.value || '0', 10);
+        const label = days > 0 ? `${days}日以前` : '全期間';
+        if (!days) {
+          UI.toast('保持期間を「無期限」以外に設定してから実行してください', 'warning');
+          return;
+        }
+        if (!confirm(`帰棟済・キャンセル済のイベントのうち${label}のものを削除します。この操作は元に戻せません。続けますか？`)) return;
+        runCleanupBtn.disabled = true;
+        try {
+          await EventRetentionManager.run();
+          UI.toast('古いイベントデータを削除しました', 'success');
+        } catch (e) {
+          UI.toast('削除中にエラーが発生しました: ' + e.message, 'danger');
+        } finally {
+          runCleanupBtn.disabled = false;
+        }
+      };
+    }
 
     // データベースの保存先設定に関するイベント
     const changeDbStorageBtn = document.getElementById('btn-change-db-storage');
