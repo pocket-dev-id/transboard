@@ -1215,6 +1215,105 @@ const App = {
 
     document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd');
     document.body.classList.add(`theme-${themeStyle}`);
+
+    // 6-9. ステータスカスタマイズ設定の適用
+
+    // オリジナル値を初回のみ保存（再呼び出し時に蓄積しないよう必ずリセット）
+    if (!App._origStatusLabels) {
+      App._origStatusLabels = { ...CONFIG.STATUS_LABEL };
+    }
+    if (!App._origActionButtonLabels) {
+      App._origActionButtonLabels = {};
+      Object.entries(CONFIG.ACTION_BUTTONS).forEach(([st, btns]) => {
+        App._origActionButtonLabels[st] = btns.map(b => b.label);
+      });
+      App._origExamRoomActionLabels = {};
+      Object.entries(CONFIG.EXAM_ROOM_ACTIONS).forEach(([st, btns]) => {
+        App._origExamRoomActionLabels[st] = btns.map(b => b.label);
+      });
+    }
+
+    // オリジナル値にリセット
+    Object.assign(CONFIG.STATUS_LABEL, App._origStatusLabels);
+    Object.entries(App._origActionButtonLabels).forEach(([st, labels]) => {
+      labels.forEach((lbl, i) => { if (CONFIG.ACTION_BUTTONS[st]?.[i]) CONFIG.ACTION_BUTTONS[st][i].label = lbl; });
+    });
+    Object.entries(App._origExamRoomActionLabels).forEach(([st, labels]) => {
+      labels.forEach((lbl, i) => { if (CONFIG.EXAM_ROOM_ACTIONS[st]?.[i]) CONFIG.EXAM_ROOM_ACTIONS[st][i].label = lbl; });
+    });
+
+    // #1 ステータス表示名のカスタマイズ
+    const customLabelsSetting = AppState.systemSettings?.find(s => s.id === 'status_custom_labels');
+    let customLabels = {};
+    try { customLabels = JSON.parse(customLabelsSetting?.value || '{}'); } catch (e) {}
+    Object.entries(customLabels).forEach(([sid, lbl]) => {
+      if (lbl && Object.prototype.hasOwnProperty.call(CONFIG.STATUS_LABEL, sid)) CONFIG.STATUS_LABEL[sid] = lbl;
+    });
+
+    // #2 しきい値カスタマイズ
+    const nearlyDoneMinSetting = AppState.systemSettings?.find(s => s.id === 'nearly_done_minutes');
+    const ndMin = parseInt(nearlyDoneMinSetting?.value || '10', 10);
+    if (!isNaN(ndMin) && ndMin > 0 && !customLabels.NEARLY_DONE) {
+      CONFIG.STATUS_LABEL.NEARLY_DONE = `あと${ndMin}分`;
+    }
+    const soonThreshSetting = AppState.systemSettings?.find(s => s.id === 'soon_threshold_min');
+    const stMin = parseInt(soonThreshSetting?.value || '15', 10);
+    if (!isNaN(stMin) && stMin > 0) CONFIG.SOON_THRESHOLD_MIN = stMin;
+
+    // #3 ステータスカラーのカスタマイズ（アクセシブルテーマ優先）
+    const isAccessibleTheme = ['high-contrast', 'cvd'].includes(themeStyle);
+    if (!isAccessibleTheme) {
+      const STATUS_CSS_VARS = {
+        IN_BED:           { card_bg: '--clr-in-bed',        card_border: '--clr-in-bed-border',      badge_bg: '--badge-in-bed-bg',        badge_text: '--badge-in-bed-text' },
+        DEPART_REGISTERED:{ card_bg: '--clr-depart-reg',    card_border: '--clr-depart-reg-border',  card_text: '--clr-depart-reg-text',    badge_bg: '--badge-depart-bg',    badge_text: '--badge-depart-text' },
+        MOVING:           { card_bg: '--clr-moving',        card_border: '--clr-moving-border',      card_text: '--clr-moving-text',        badge_bg: '--badge-moving-bg',    badge_text: '--badge-moving-text' },
+        ARRIVED:          { card_bg: '--clr-arrived',       card_border: '--clr-arrived-border',     badge_bg: '--badge-arrived-bg',        badge_text: '--badge-arrived-text' },
+        IN_EXAM:          { card_bg: '--clr-in-exam',       card_border: '--clr-in-exam-border',     card_text: '--clr-in-exam-text',       badge_bg: '--badge-in-exam-bg',   badge_text: '--badge-in-exam-text' },
+        NEARLY_DONE:      { card_bg: '--clr-nearly-done',   card_border: '--clr-nearly-done-border', card_text: '--clr-nearly-done-text',   badge_bg: '--badge-nearly-done-bg',badge_text: '--badge-nearly-done-text' },
+        PICKUP_REQUIRED:  { card_bg: '--clr-pickup',        card_border: '--clr-pickup-border',      card_text: '--clr-pickup-text',        badge_bg: '--badge-pickup-bg',    badge_text: '--badge-pickup-text' },
+        RETURNED:         { card_bg: '--clr-returned',      card_border: '--clr-returned-border',    card_text: '--clr-returned-text',      badge_bg: '--badge-returned-bg',  badge_text: '--badge-returned-text' },
+        CANCELLED:        { card_bg: '--clr-cancelled',     card_border: '--clr-cancelled-border',   card_text: '--clr-cancelled-text',     badge_bg: '--badge-cancelled-bg', badge_text: '--badge-cancelled-text' },
+      };
+      const colorsSetting = AppState.systemSettings?.find(s => s.id === 'status_colors');
+      if (colorsSetting) {
+        try {
+          const colors = JSON.parse(colorsSetting.value || '{}');
+          const root = document.documentElement;
+          Object.entries(colors).forEach(([sid, colorMap]) => {
+            const vars = STATUS_CSS_VARS[sid];
+            if (!vars || !colorMap) return;
+            if (colorMap.card_bg    && vars.card_bg)    root.style.setProperty(vars.card_bg,    colorMap.card_bg);
+            if (colorMap.card_border && vars.card_border) root.style.setProperty(vars.card_border, colorMap.card_border);
+            if (colorMap.card_text  && vars.card_text)  root.style.setProperty(vars.card_text,  colorMap.card_text);
+            if (colorMap.badge_bg   && vars.badge_bg)   root.style.setProperty(vars.badge_bg,   colorMap.badge_bg);
+            if (colorMap.badge_text && vars.badge_text) root.style.setProperty(vars.badge_text, colorMap.badge_text);
+          });
+        } catch (e) { console.warn('[App] status_colors parse error:', e); }
+      }
+    }
+
+    // #4 アクションボタンラベルのカスタマイズ
+    const actionLabelsSetting = AppState.systemSettings?.find(s => s.id === 'action_button_labels');
+    let actionLabels = {};
+    try { actionLabels = JSON.parse(actionLabelsSetting?.value || '{}'); } catch (e) {}
+    Object.entries(actionLabels).forEach(([key, lbl]) => {
+      if (!lbl) return;
+      const parts = key.split(':');
+      if (parts.length === 2) {
+        const btn = CONFIG.ACTION_BUTTONS[parts[0]]?.find(b => b.toStatus === parts[1]);
+        if (btn) btn.label = lbl;
+      } else if (parts.length === 3 && parts[0] === 'EXAM') {
+        const btn = CONFIG.EXAM_ROOM_ACTIONS[parts[1]]?.find(b => b.toStatus === parts[2]);
+        if (btn) btn.label = lbl;
+      }
+    });
+    // NEARLY_DONEボタンのラベルをしきい値から自動生成（カスタムラベルが未設定の場合）
+    if (!actionLabels['IN_EXAM:NEARLY_DONE'] && !isNaN(ndMin) && ndMin > 0) {
+      const wardBtn = CONFIG.ACTION_BUTTONS.IN_EXAM?.find(b => b.toStatus === 'NEARLY_DONE');
+      if (wardBtn) wardBtn.label = `あと${ndMin}分`;
+      const examBtn = CONFIG.EXAM_ROOM_ACTIONS.IN_EXAM?.find(b => b.toStatus === 'NEARLY_DONE');
+      if (examBtn) examBtn.label = `あと${ndMin}分`;
+    }
   },
 };
 

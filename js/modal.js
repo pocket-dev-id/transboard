@@ -368,7 +368,13 @@ const BedModal = {
 
   _renderActionButtons(event, isManual = false) {
     const status = event.current_status;
-    const actions = CONFIG.ACTION_BUTTONS[status] || [];
+    const hiddenStatuses = (() => {
+      try {
+        const s = AppState.systemSettings?.find(x => x.id === 'hidden_statuses');
+        return JSON.parse(s?.value || '[]');
+      } catch { return []; }
+    })();
+    const actions = (CONFIG.ACTION_BUTTONS[status] || []).filter(a => !hiddenStatuses.includes(a.toStatus));
 
     if (actions.length === 0 && status !== 'RETURNED' && status !== 'CANCELLED') return '';
 

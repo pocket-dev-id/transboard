@@ -190,7 +190,13 @@ const SEEDS = {
     { id: "notification_scan_sound", value: "true" },
     { id: "notification_mute", value: "{\"enabled\":false,\"start\":\"22:00\",\"end\":\"06:00\"}" },
     { id: "notification_import_toast", value: "true" },
-    { id: "notification_os", value: "false" }
+    { id: "notification_os", value: "false" },
+    { id: "status_custom_labels", value: "{}" },
+    { id: "nearly_done_minutes", value: "10" },
+    { id: "soon_threshold_min", value: "15" },
+    { id: "status_colors", value: "{}" },
+    { id: "action_button_labels", value: "{}" },
+    { id: "hidden_statuses", value: "[]" }
   ],
   transfer_events: [],
   transfer_status_logs: [],

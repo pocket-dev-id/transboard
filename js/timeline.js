@@ -83,7 +83,24 @@ const TimelineContextMenu = {
 
   show(event, x, y) {
     const el = this._ensureEl();
-    const nexts = this.NEXT[event.current_status] || [];
+    const hiddenStatuses = (() => {
+      try {
+        const s = AppState.systemSettings?.find(x => x.id === 'hidden_statuses');
+        return JSON.parse(s?.value || '[]');
+      } catch { return []; }
+    })();
+    const actionLabels = (() => {
+      try {
+        const s = AppState.systemSettings?.find(x => x.id === 'action_button_labels');
+        return JSON.parse(s?.value || '{}');
+      } catch { return {}; }
+    })();
+    const nexts = (this.NEXT[event.current_status] || [])
+      .filter(n => !hiddenStatuses.includes(n.to))
+      .map(n => {
+        const customLabel = actionLabels[`${event.current_status}:${n.to}`];
+        return customLabel ? { ...n, label: customLabel } : n;
+      });
     const bed = AppState.getBedById(event.bed_id);
     const bedName = bed ? `${bed.bed_number}号床` : '?';
     const statusLabel = CONFIG.STATUS_LABEL?.[event.current_status] || event.current_status;

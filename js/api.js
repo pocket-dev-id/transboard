@@ -171,9 +171,11 @@ const API = {
     if (statusTimeMap[newStatus]) {
       patch[statusTimeMap[newStatus]] = now;
     }
-    // あと10分の場合、迎え目安を再計算
+    // NEARLY_DONEの場合、設定値に基づいて迎え目安を再計算
     if (newStatus === 'NEARLY_DONE') {
-      patch.estimated_pickup_at = now + 10 * 60 * 1000;
+      const ndSetting = AppState.systemSettings?.find(s => s.id === 'nearly_done_minutes');
+      const ndMin = parseInt(ndSetting?.value || '10', 10);
+      patch.estimated_pickup_at = now + (isNaN(ndMin) || ndMin <= 0 ? 10 : ndMin) * 60 * 1000;
     }
     // ログ用に遷移前のステータスを取得
     let fromStatus = null;
