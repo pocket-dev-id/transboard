@@ -4,6 +4,18 @@
 
 const UI = {
 
+  /* ---------- 患者名マスキング (データ #1) ---------- */
+  isPatientMaskEnabled() {
+    const chk = document.getElementById('chk-show-patient-names');
+    if (chk) return !chk.checked;
+    return localStorage.getItem('cfg_show_patient_names') !== 'true';
+  },
+
+  getPatientName(name) {
+    if (!name) return null;
+    return this.isPatientMaskEnabled() ? '＊＊＊＊' : name;
+  },
+
   /* ---------- 時刻フォーマット ---------- */
   formatTime(ms) {
     if (!ms) return '--:--';
@@ -47,23 +59,118 @@ const UI = {
   },
 
   /* ---------- ステータスバッジ ---------- */
-  statusBadge(status) {
+  // 色だけでなくアイコンでも状態を識別できる（色覚・印刷・モノクロ対応）
+  statusBadge(status, { icon = true } = {}) {
     const label = CONFIG.STATUS_LABEL[status] || status;
-    return `<span class="status-badge badge-${status}">${label}</span>`;
+    const iconClass = icon && CONFIG.STATUS_ICON?.[status];
+    const iconHtml = iconClass ? `<i class="fas ${iconClass}" aria-hidden="true"></i> ` : '';
+    return `<span class="status-badge badge-${status}">${iconHtml}${this.escapeHTML(label)}</span>`;
   },
 
   /* ---------- トースト通知 ---------- */
+  // innerHTML を避け DOM API で構築することでXSS防止
   toast(message, type = 'info', duration = 4000) {
     const container = document.getElementById('toast-container');
-    const el = document.createElement('div');
+    if (!container) return;
     const icons = { info: 'info-circle', success: 'check-circle', warning: 'exclamation-triangle', danger: 'bell' };
+    const el = document.createElement('div');
     el.className = `toast toast-${type}`;
-    el.innerHTML = `<i class="fas fa-${icons[type] || 'info-circle'}"></i> ${message}`;
+    const icon = document.createElement('i');
+    icon.className = `fas fa-${icons[type] || 'info-circle'}`;
+    icon.setAttribute('aria-hidden', 'true');
+    const text = document.createElement('span');
+    text.textContent = message;
+    el.appendChild(icon);
+    el.appendChild(document.createTextNode(' '));
+    el.appendChild(text);
     container.appendChild(el);
     setTimeout(() => {
       el.classList.add('hide');
       setTimeout(() => el.remove(), 250);
     }, duration);
+  },
+
+  /* ---------- 確認ダイアログ（デザイン#5: ネイティブconfirm()の代替） ---------- */
+  // メッセージ本文はtextContentで挿入するためXSSの心配がない
+  // opts.type: 'danger'|'warning' でアイコン・ボタン色を指定可能（未指定時は opts.danger を後方互換のショートハンドとして使用）
+  // opts.title: メッセージ上部の見出し（省略時はアイコン+メッセージのみのシンプル表示）
+  // opts.detail: メッセージ下部の強調警告ボックス（省略可）
+  confirmModal(message, { title, detail, danger = false, type, confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+    return new Promise(resolve => {
+      const effectiveType = type || (danger ? 'danger' : null);
+      const iconClass = effectiveType === 'danger' ? 'fa-exclamation-triangle'
+        : effectiveType === 'warning' ? 'fa-exclamation-circle'
+        : 'fa-question-circle';
+      const btnCls = effectiveType === 'danger' ? 'btn-danger'
+        : effectiveType === 'warning' ? 'btn-warning'
+        : 'btn-primary';
+
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay confirm-modal-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'modal confirm-modal';
+      modal.setAttribute('role', 'alertdialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const body = document.createElement('div');
+      body.className = 'modal-body confirm-modal-body';
+      const icon = document.createElement('i');
+      icon.className = `fas ${iconClass} confirm-modal-icon${effectiveType ? ` confirm-modal-icon--${effectiveType}` : ''}`;
+      icon.setAttribute('aria-hidden', 'true');
+
+      const textCol = document.createElement('div');
+      textCol.className = 'confirm-modal-text-col';
+      if (title) {
+        const titleEl = document.createElement('div');
+        titleEl.className = 'confirm-modal-title';
+        titleEl.textContent = title;
+        textCol.appendChild(titleEl);
+      }
+      const text = document.createElement('span');
+      text.className = 'confirm-modal-text';
+      text.textContent = message;
+      textCol.appendChild(text);
+      if (detail) {
+        const detailEl = document.createElement('div');
+        detailEl.className = 'confirm-modal-detail';
+        detailEl.textContent = detail;
+        textCol.appendChild(detailEl);
+      }
+      body.appendChild(icon);
+      body.appendChild(textCol);
+
+      const footer = document.createElement('div');
+      footer.className = 'modal-footer confirm-modal-footer';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'btn btn-outline btn-sm';
+      cancelBtn.textContent = cancelLabel;
+      const okBtn = document.createElement('button');
+      okBtn.className = `btn btn-sm ${btnCls}`;
+      okBtn.textContent = confirmLabel;
+      footer.appendChild(cancelBtn);
+      footer.appendChild(okBtn);
+
+      modal.appendChild(body);
+      modal.appendChild(footer);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(result);
+      };
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(false);
+        if (e.key === 'Enter') cleanup(true);
+      };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+      cancelBtn.addEventListener('click', () => cleanup(false));
+      okBtn.addEventListener('click', () => cleanup(true));
+      document.addEventListener('keydown', onKeydown);
+      okBtn.focus();
+    });
   },
 
   /* ---------- 時計 ---------- */
@@ -87,7 +194,18 @@ const UI = {
 
   showEmpty(containerId, message = 'データがありません') {
     const el = document.getElementById(containerId);
-    if (el) el.innerHTML = `<div class="empty-state"><i class="fas fa-inbox"></i><p>${message}</p></div>`;
+    if (!el) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'empty-state';
+    const icon = document.createElement('i');
+    icon.className = 'fas fa-inbox';
+    icon.setAttribute('aria-hidden', 'true');
+    const p = document.createElement('p');
+    p.textContent = message;
+    wrapper.appendChild(icon);
+    wrapper.appendChild(p);
+    el.innerHTML = '';
+    el.appendChild(wrapper);
   },
 
   /* ---------- タブ切り替え ---------- */

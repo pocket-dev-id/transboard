@@ -20,8 +20,9 @@
   --clr-depart-reg: rgba(219, 234, 254, 0.65);
   --clr-depart-reg-border: #3b82f6;
   --clr-depart-reg-text: #1e40af;
-  --clr-moving: rgba(219, 234, 254, 0.75);
-  --clr-moving-border: #2563eb;
+  --clr-moving: rgba(237, 233, 254, 0.75);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #5b21b6;
   --clr-arrived: rgba(224, 242, 254, 0.7);
   --clr-arrived-border: #0284c7;
   --clr-in-exam: rgba(254, 252, 232, 0.7);
@@ -46,6 +47,28 @@
   --radius: 10px;
   --radius-lg: 16px;
   --transition: .25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* 共通セマンティックカラー（コード #4: マジックナンバー排除） */
+  --clr-danger: #dc2626;
+  --clr-danger-bg: #fee2e2;
+  --clr-warning: #d97706;
+  --clr-warning-bg: #fef3c7;
+  --clr-success: #16a34a;
+  --clr-success-bg: #dcfce7;
+  --clr-info: #0284c7;
+  --clr-info-bg: #e0f2fe;
+  /* タッチターゲット最小サイズ（UX #5） */
+  --touch-target-min: 44px;
+  /* ステータスバッジ色（UI #3 / #4: CSS変数で一元管理） */
+  --badge-in-bed-bg: #e2e8f0;      --badge-in-bed-text: #4a5568;
+  --badge-depart-bg: #dbeafe;      --badge-depart-text: #1e40af;
+  --badge-moving-bg: #ede9fe;      --badge-moving-text: #5b21b6;
+  --badge-arrived-bg: #e0f2fe;     --badge-arrived-text: #0369a1;
+  --badge-in-exam-bg: #fef9c3;     --badge-in-exam-text: #713f12;
+  --badge-nearly-done-bg: #ffedd5; --badge-nearly-done-text: #7c2d12;
+  --badge-pickup-bg: #fee2e2;      --badge-pickup-text: #7f1d1d;
+  --badge-returned-bg: #dcfce7;    --badge-returned-text: #14532d;
+  --badge-cancelled-bg: #f1f5f9;   --badge-cancelled-text: #475569;
 
   /* カードサイズデフォルト (medium) */
   --bed-card-min-h: 55px;
@@ -80,8 +103,8 @@ body.size-large {
 body.size-small {
   --bed-card-min-h: 46px;
   --bed-card-pad: 2px 4px;
-  --bed-card-num-sz: 12px;
-  --bed-card-info-sz: 8px;
+  --bed-card-num-sz: 13px;
+  --bed-card-info-sz: 10px;
 }
 
 /* ---------- リセット ---------- */
@@ -134,6 +157,7 @@ select, input { font-family: inherit; }
   align-items: center;
   gap: 6px;
   white-space: nowrap;
+  touch-action: manipulation;
 }
 .tab-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
 .tab-btn.active { background: rgba(255,255,255,.2); color: #fff; font-weight: 700; }
@@ -174,9 +198,12 @@ select, input { font-family: inherit; }
   border: 1px solid rgba(255,255,255,.2);
   color: #fff;
   width: 32px; height: 32px;
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
   border-radius: 6px;
   font-size: 14px;
   transition: var(--transition);
+  touch-action: manipulation;
 }
 .btn-icon:hover { background: rgba(255,255,255,.25); }
 
@@ -276,7 +303,7 @@ select, input { font-family: inherit; }
 }
 .legend-item.in-bed { background: var(--clr-in-bed); border-color: var(--clr-in-bed-border); color: #4a5568; }
 .legend-item.depart-registered { background: var(--clr-depart-reg); border-color: var(--clr-depart-reg-border); color: var(--clr-depart-reg-text); }
-.legend-item.moving { background: var(--clr-moving); border-color: var(--clr-moving-border); color: #1d4ed8; }
+.legend-item.moving { background: var(--clr-moving); border-color: var(--clr-moving-border); color: var(--clr-moving-text, #5b21b6); }
 .legend-item.arrived { background: var(--clr-arrived); border-color: var(--clr-arrived-border); color: #0369a1; }
 .legend-item.in-exam { background: var(--clr-in-exam); border-color: var(--clr-in-exam-border); color: var(--clr-in-exam-text); }
 .legend-item.nearly-done { background: var(--clr-nearly-done); border-color: var(--clr-nearly-done-border); color: var(--clr-nearly-done-text); }
@@ -302,6 +329,7 @@ select, input { font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  touch-action: manipulation;
 }
 .bed-card:hover {
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06), 0 0 0 2px var(--clr-primary);
@@ -525,6 +553,7 @@ select, input { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  touch-action: manipulation;
 }
 .btn:hover { filter: brightness(.92); transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
@@ -799,6 +828,20 @@ select, input { font-family: inherit; }
 
   /* アニメーション停止 */
   .tl-marker, .timeline-now-marker, .timeline-pickup-marker { animation: none !important; }
+
+  /* ベッドカード：ステータス別背景を印刷時も再現 */
+  .bed-card { backdrop-filter: none !important; }
+  .bed-card.status-IN_BED          { background: #f1f5f9 !important; border-color: #94a3b8 !important; }
+  .bed-card.status-DEPART_REGISTERED { background: #dbeafe !important; border-color: #3b82f6 !important; }
+  .bed-card.status-MOVING          { background: #ede9fe !important; border-color: #7c3aed !important; }
+  .bed-card.status-ARRIVED         { background: #e0f2fe !important; border-color: #0284c7 !important; }
+  .bed-card.status-IN_EXAM         { background: #fef9c3 !important; border-color: #ca8a04 !important; }
+  .bed-card.status-NEARLY_DONE     { background: #ffedd5 !important; border-color: #ea580c !important; }
+  .bed-card.status-PICKUP_REQUIRED { background: #fee2e2 !important; border-color: #dc2626 !important; }
+  .bed-card.status-RETURNED        { background: #dcfce7 !important; border-color: #16a34a !important; }
+  .bed-card.status-CANCELLED       { background: #f1f5f9 !important; border-color: #94a3b8 !important; opacity: 1 !important; }
+  .status-badge { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  body { background: #fff !important; }
 }
 
 /* ---------- 履歴画面 ---------- */
@@ -885,6 +928,29 @@ select, input { font-family: inherit; }
 }
 .modal-close-btn:hover { background: #f1f5f9; color: var(--clr-text); }
 .modal-body { padding: 20px; }
+
+/* ---------- 確認ダイアログ（デザイン#5） ---------- */
+.confirm-modal-overlay { z-index: 400; }
+.confirm-modal { width: 400px; }
+.confirm-modal-body { display: flex; align-items: flex-start; gap: 12px; }
+.confirm-modal-icon { font-size: 22px; color: var(--clr-warning); flex-shrink: 0; margin-top: 2px; }
+.confirm-modal-icon--danger { color: var(--clr-danger); }
+.confirm-modal-icon--warning { color: var(--clr-warning); }
+.confirm-modal-text-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.confirm-modal-title { font-size: 15px; font-weight: 700; color: var(--clr-text); }
+.confirm-modal-text { font-size: 14px; line-height: 1.6; white-space: pre-line; }
+.confirm-modal-detail {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--clr-danger-bg);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--clr-danger);
+  font-weight: 600;
+}
+.confirm-modal-footer { justify-content: flex-end; }
+
 .modal-footer {
   padding: 14px 20px;
   border-top: 1px solid var(--clr-border);
@@ -1029,15 +1095,15 @@ select, input { font-family: inherit; }
   padding: 2px 8px;
   border-radius: 10px;
 }
-.badge-IN_BED { background: #e2e8f0; color: #4a5568; }
-.badge-DEPART_REGISTERED { background: #dbeafe; color: #1e40af; }
-.badge-MOVING { background: #bfdbfe; color: #1d4ed8; }
-.badge-ARRIVED { background: #e0f2fe; color: #0369a1; }
-.badge-IN_EXAM { background: #fef9c3; color: #713f12; }
-.badge-NEARLY_DONE { background: #ffedd5; color: #7c2d12; }
-.badge-PICKUP_REQUIRED { background: #fee2e2; color: #7f1d1d; }
-.badge-RETURNED { background: #dcfce7; color: #14532d; }
-.badge-CANCELLED { background: #f1f5f9; color: #475569; }
+.badge-IN_BED          { background: var(--badge-in-bed-bg);      color: var(--badge-in-bed-text); }
+.badge-DEPART_REGISTERED { background: var(--badge-depart-bg);    color: var(--badge-depart-text); }
+.badge-MOVING          { background: var(--badge-moving-bg);       color: var(--badge-moving-text); }
+.badge-ARRIVED         { background: var(--badge-arrived-bg);      color: var(--badge-arrived-text); }
+.badge-IN_EXAM         { background: var(--badge-in-exam-bg);      color: var(--badge-in-exam-text); }
+.badge-NEARLY_DONE     { background: var(--badge-nearly-done-bg);  color: var(--badge-nearly-done-text); }
+.badge-PICKUP_REQUIRED { background: var(--badge-pickup-bg);       color: var(--badge-pickup-text); }
+.badge-RETURNED        { background: var(--badge-returned-bg);     color: var(--badge-returned-text); }
+.badge-CANCELLED       { background: var(--badge-cancelled-bg);    color: var(--badge-cancelled-text); }
 
 /* ---------- トースト通知 ---------- */
 #toast-container {
@@ -1443,6 +1509,21 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
   align-self: stretch; margin: 6px 4px; flex-shrink: 0;
 }
 
+/* タブグループの見出しラベル（デザイン#4） */
+.stab-group-label {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--clr-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 0 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* タブの種別バッジ */
 .stab-badge {
   display: inline-block;
@@ -1542,48 +1623,65 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 .settings-table tr:hover td { background: #f8fafc; }
 .row--inactive { opacity: 0.5; }
 
-/* 独自確認ダイアログ */
-.confirm-dialog-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.5);
-  z-index: 9000;
-  display: flex; align-items: center; justify-content: center;
-  animation: fadeIn .15s ease;
-}
-.confirm-dialog {
-  background: #fff;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  width: 440px; max-width: 96vw;
-  animation: slideUp .2s ease;
-  overflow: hidden;
-}
-.confirm-dialog-header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 16px 20px;
-  border-bottom: 1px solid #e2e8f0;
-}
-.confirm-dialog-header i { font-size: 18px; }
-.confirm-dialog-header h3 { font-size: 16px; font-weight: 700; margin: 0; }
-.confirm-dialog-header--danger i { color: #dc2626; }
-.confirm-dialog-header--warning i { color: #d97706; }
-.confirm-dialog-body { padding: 20px; font-size: 13px; line-height: 1.65; color: #374151; }
-.confirm-dialog-detail {
-  margin-top: 10px;
-  padding: 10px 14px;
-  background: #fff5f5;
-  border: 1px solid #fecaca;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #7f1d1d;
-  font-weight: 600;
-}
-.confirm-dialog-footer {
-  display: flex; gap: 8px; justify-content: flex-end;
-  padding: 14px 20px;
-  background: #f8fafc;
+/* 設定パネル汎用ヘルパー (UI #3) */
+.settings-section {
   border-top: 1px solid #e2e8f0;
+  padding-top: 16px;
 }
+.settings-section-title {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: #2d3748;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-note { font-size: 11px; color: #718096; }
+.settings-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 800;
+}
+.settings-badge--shared { background: #f1f5f9; color: #475569; }
+.settings-badge--parent { background: #fee2e2; color: #b91c1c; }
+
+/* 設定テーブル内の入力・カラーピッカー共通スタイル（デザイン#1） */
+.settings-input-text {
+  width: 160px;
+  padding: 4px 8px;
+  border: 1px solid var(--clr-border);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--clr-surface);
+  color: var(--clr-text);
+}
+.settings-color-swatch {
+  width: 40px;
+  height: 28px;
+  cursor: pointer;
+  border: 1px solid var(--clr-border);
+  border-radius: 4px;
+  padding: 0;
+  background: none;
+}
+.settings-preview-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.settings-contrast-warn {
+  color: var(--clr-warning);
+  font-size: 12px;
+  margin-left: 6px;
+  cursor: help;
+}
+.settings-badge--device { background: #e0f2fe; color: #0369a1; }
+
 .bed-type-tag {
   display: inline-block;
   font-size: 10px;
@@ -2057,8 +2155,9 @@ body.theme-dark {
   --clr-depart-reg: rgba(30, 58, 138, 0.6);
   --clr-depart-reg-border: #3b82f6;
   --clr-depart-reg-text: #93c5fd;
-  --clr-moving: rgba(23, 37, 84, 0.6);
-  --clr-moving-border: #2563eb;
+  --clr-moving: rgba(46, 16, 101, 0.6);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #c4b5fd;
   --clr-arrived: rgba(12, 74, 110, 0.6);
   --clr-arrived-border: #0284c7;
   --clr-in-exam: rgba(66, 32, 6, 0.65);
@@ -2122,6 +2221,17 @@ body.theme-dark #bed-map-filter-bar {
 body.theme-dark #bed-map-filter-bar span {
   color: #94a3b8 !important;
 }
+body.theme-dark .tl-ctx-menu {
+  background: #1e293b;
+  border-color: #334155;
+  color: #f8fafc;
+}
+body.theme-dark .tl-ctx-header { color: #94a3b8; }
+body.theme-dark .tl-ctx-badge { background: #334155; color: #cbd5e0; }
+body.theme-dark .tl-ctx-item { color: #e2e8f0; }
+body.theme-dark .tl-ctx-item:hover { background: #334155; }
+body.theme-dark .tl-ctx-item i { color: #94a3b8; }
+body.theme-dark .tl-ctx-divider { background: #334155; }
 
 /* --- メディカルブルーテーマ (.theme-blue) --- */
 body.theme-blue {
@@ -2141,8 +2251,9 @@ body.theme-blue {
   --clr-depart-reg: rgba(224, 242, 254, 0.7);
   --clr-depart-reg-border: #0284c7;
   --clr-depart-reg-text: #0369a1;
-  --clr-moving: rgba(224, 242, 254, 0.8);
-  --clr-moving-border: #0284c7;
+  --clr-moving: rgba(237, 233, 254, 0.8);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #5b21b6;
   --clr-arrived: rgba(204, 251, 241, 0.7);
   --clr-arrived-border: #0d9488;
   --clr-in-exam: rgba(254, 252, 232, 0.7);
@@ -2191,8 +2302,8 @@ body.theme-high-contrast {
   --clr-in-exam-border: #ffff00;
   --clr-in-exam-text: #ffff00;
   --clr-nearly-done: #000000;
-  --clr-nearly-done-border: #ff00ff;
-  --clr-nearly-done-text: #ff00ff;
+  --clr-nearly-done-border: #ff8c00;
+  --clr-nearly-done-text: #ff8c00;
   --clr-pickup: #000000;
   --clr-pickup-border: #ff0000;
   --clr-pickup-text: #ff0000;
@@ -2425,4 +2536,58 @@ body.theme-high-contrast .btn-primary {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
+}
+
+/* --- 色覚サポートテーマ (.theme-cvd) --- */
+/* 赤緑色盲（第1・第2色覚異常）対応: 青・紫・アンバー・ティールの組み合わせ */
+body.theme-cvd {
+  --clr-bg: linear-gradient(135deg, #f0f4f8 0%, #d5e6f5 100%);
+  --clr-surface: rgba(255, 255, 255, 0.85);
+  --clr-border: rgba(200, 215, 230, 0.6);
+  --clr-text: #1a202c;
+  --clr-text-muted: #64748b;
+  --clr-primary: #3b82f6;
+  --clr-primary-dark: #2563eb;
+  --clr-header-bg: rgba(30, 58, 95, 0.85);
+  --border-header: none;
+
+  /* 色覚対応ステータスカラー: 赤↔緑の混同を避けティール/ピンクで代替 */
+  --clr-in-bed: rgba(248, 250, 252, 0.85);
+  --clr-in-bed-border: rgba(148, 163, 184, 0.6);
+  --clr-depart-reg: rgba(219, 234, 254, 0.85);
+  --clr-depart-reg-border: #2563eb;
+  --clr-depart-reg-text: #1e40af;
+  --clr-moving: rgba(237, 233, 254, 0.85);
+  --clr-moving-border: #7c3aed;
+  --clr-moving-text: #5b21b6;
+  --clr-arrived: rgba(207, 250, 254, 0.85);
+  --clr-arrived-border: #0891b2;
+  --clr-in-exam: rgba(255, 251, 235, 0.85);
+  --clr-in-exam-border: #d97706;
+  --clr-in-exam-text: #92400e;
+  --clr-nearly-done: rgba(255, 237, 213, 0.85);
+  --clr-nearly-done-border: #ea580c;
+  --clr-nearly-done-text: #7c2d12;
+  /* PICKUP: ピンク系 (赤との混同なし、緑との区別も明確) */
+  --clr-pickup: rgba(252, 231, 243, 0.85);
+  --clr-pickup-border: #be185d;
+  --clr-pickup-text: #831843;
+  /* RETURNED: ティール系 (緑の代替、赤緑色盲でも識別可) */
+  --clr-returned: rgba(204, 251, 241, 0.85);
+  --clr-returned-border: #0f766e;
+  --clr-returned-text: #134e4a;
+  --clr-cancelled: rgba(241, 245, 249, 0.75);
+  --clr-cancelled-border: #94a3b8;
+  --clr-cancelled-text: #475569;
+}
+
+/* --- アニメーション省略 (prefers-reduced-motion) --- */
+/* てんかん対応環境・視覚過敏ユーザー向け。OSレベルのアニメーション削減設定を尊重する */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

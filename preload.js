@@ -47,7 +47,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // フルスクリーン切り替え
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
-  onFullscreenChanged: (callback) => ipcRenderer.on('fullscreen-changed', (event, value) => callback(value)),
+  onFullscreenChanged: (callback) => {
+    ipcRenderer.removeAllListeners('fullscreen-changed');
+    ipcRenderer.on('fullscreen-changed', (event, value) => callback(value));
+  },
 
   // データベースバックアップ & リストア
   backupDatabase: () => ipcRenderer.invoke('backup-db'),
@@ -58,11 +61,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   changeDatabaseStorageMode: (mode) => ipcRenderer.invoke('change-database-storage-mode', mode),
 
   // NFC カードスキャン
-  onCardScanned: (callback) => ipcRenderer.on('card-scanned', (event, uid) => callback(uid)),
+  onCardScanned: (callback) => {
+    ipcRenderer.removeAllListeners('card-scanned');
+    ipcRenderer.on('card-scanned', (event, uid) => callback(uid));
+  },
   setNfcWatcher: (enabled) => ipcRenderer.invoke('set-nfc-watcher', enabled),
 
   // アプリバージョン取得
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
+  // 開発/本番モード判定 (インフラ #4)
+  isDevMode: () => ipcRenderer.invoke('is-dev-mode'),
 
   // OSデスクトップ通知（メインプロセス経由）
   showOsNotification: (title, body) => ipcRenderer.invoke('show-os-notification', { title, body }),

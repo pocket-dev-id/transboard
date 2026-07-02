@@ -252,6 +252,7 @@ const Wizard = {
             <option value="dark"          ${this.config.theme_style === 'dark'          ? 'selected' : ''}>ダーク</option>
             <option value="blue"          ${this.config.theme_style === 'blue'          ? 'selected' : ''}>メディカルブルー</option>
             <option value="high-contrast" ${this.config.theme_style === 'high-contrast' ? 'selected' : ''}>高コントラスト</option>
+            <option value="cvd"           ${this.config.theme_style === 'cvd'           ? 'selected' : ''}>色覚サポート (CVD対応)</option>
           </select>
         </div>
         <div>
@@ -298,7 +299,7 @@ const Wizard = {
     const modeLabel   = this.config.share_mode === 'parent' ? '親機モード' : '子機モード';
     const connLabels  = { csv: 'CSVファイル連携', odbc: 'ODBCデータベース連携', none: '手動入力' };
     const admLabels   = { csv: 'CSVインポート', manual: '手動登録', hybrid: 'ハイブリッド' };
-    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', 'high-contrast': '高コントラスト' };
+    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
 
     const rows = [
       ['稼働モード',     modeLabel],

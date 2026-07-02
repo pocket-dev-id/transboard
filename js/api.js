@@ -171,9 +171,10 @@ const API = {
     if (statusTimeMap[newStatus]) {
       patch[statusTimeMap[newStatus]] = now;
     }
-    // あと10分の場合、迎え目安を再計算
+    // NEARLY_DONEの場合、設定値に基づいて迎え目安を再計算
     if (newStatus === 'NEARLY_DONE') {
-      patch.estimated_pickup_at = now + 10 * 60 * 1000;
+      const ndMin = AppState.getSettingInt('nearly_done_minutes', 10);
+      patch.estimated_pickup_at = now + (ndMin > 0 ? ndMin : 10) * 60 * 1000;
     }
     // ログ用に遷移前のステータスを取得
     let fromStatus = null;
@@ -229,6 +230,23 @@ const API = {
     }
 
     return updated;
+  },
+
+  /* ---------- 操作監査ログ (データ #2) ---------- */
+  async writeAuditLog(action, { targetType = '', targetId = null, staffId = null, details = {} } = {}) {
+    try {
+      await this.create('audit_logs', {
+        id: `al-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        action,
+        target_type: targetType,
+        target_id: targetId,
+        staff_id: staffId,
+        details: JSON.stringify(details),
+        created_at: Date.now(),
+      });
+    } catch (e) {
+      console.warn('[AuditLog] 書き込み失敗:', e);
+    }
   },
 
   /* ---------- 状態ログ ---------- */

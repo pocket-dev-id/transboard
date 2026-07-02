@@ -11,23 +11,73 @@ const WardDashboard = {
   },
 };
 
+// パスコード: SHA-256ハッシュユーティリティ (セキュリティ #3)
+const PasscodeHash = {
+  SALT: 'transboard-passcode-v1',
+  LOCKOUT_MS: 60 * 1000,
+  MAX_ATTEMPTS: 5,
+
+  async hash(raw) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(raw + this.SALT);
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return 'SHA256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  async verify(input, stored) {
+    if (!stored) return !input; // 空パスコード = 認証なし
+    if (stored.startsWith('SHA256:')) {
+      return (await this.hash(input)) === stored;
+    }
+    return input === stored; // レガシー平文の後方互換
+  },
+
+  getRateState() {
+    try { return JSON.parse(localStorage.getItem('_pc_rate') || '{}'); } catch { return {}; }
+  },
+
+  recordAttempt(failed) {
+    const s = this.getRateState();
+    if (failed) {
+      s.attempts = (s.attempts || 0) + 1;
+      s.lastAttempt = Date.now();
+    } else {
+      delete s.attempts;
+      delete s.lastAttempt;
+    }
+    localStorage.setItem('_pc_rate', JSON.stringify(s));
+  },
+
+  isLocked() {
+    const s = this.getRateState();
+    if (!s.attempts || s.attempts < this.MAX_ATTEMPTS) return false;
+    if ((Date.now() - (s.lastAttempt || 0)) > this.LOCKOUT_MS) {
+      localStorage.removeItem('_pc_rate');
+      return false;
+    }
+    return true;
+  },
+
+  remainingLockout() {
+    const s = this.getRateState();
+    return Math.max(0, Math.ceil((this.LOCKOUT_MS - (Date.now() - (s.lastAttempt || 0))) / 1000));
+  },
+};
+
 const PasscodeModal = {
   _onSuccess: null,
 
   open(onSuccess) {
     this._onSuccess = onSuccess;
-    
-    // 入力フォームとエラーメッセージをリセット
+
     const input = document.getElementById('passcode-input');
     if (input) input.value = '';
     const errMsg = document.getElementById('passcode-error-msg');
     if (errMsg) errMsg.style.display = 'none';
-    
-    // モーダルを表示
+
     const overlay = document.getElementById('passcode-modal-overlay');
     if (overlay) overlay.classList.remove('hidden');
-    
-    // 入力欄にフォーカスをあてる
+
     setTimeout(() => {
       if (input) input.focus();
     }, 50);
@@ -67,18 +117,36 @@ const PasscodeModal = {
   async submit() {
     const input = document.getElementById('passcode-input');
     if (!input) return;
-    const inputVal = input.value;
 
+    if (PasscodeHash.isLocked()) {
+      const errMsg = document.getElementById('passcode-error-msg');
+      if (errMsg) {
+        errMsg.textContent = `試行回数超過。あと${PasscodeHash.remainingLockout()}秒後に再試行できます`;
+        errMsg.style.display = 'block';
+      }
+      return;
+    }
+
+    const inputVal = input.value;
     const requiredPasscode = await this.getRequiredPasscode();
 
-    if (inputVal === requiredPasscode) {
+    const ok = await PasscodeHash.verify(inputVal, requiredPasscode);
+    if (ok) {
+      PasscodeHash.recordAttempt(false);
       window.isAdminSession = true;
       const onSuccess = this._onSuccess;
       this.close();
       if (onSuccess) onSuccess();
     } else {
+      PasscodeHash.recordAttempt(true);
       const errMsg = document.getElementById('passcode-error-msg');
-      if (errMsg) errMsg.style.display = 'block';
+      if (errMsg) {
+        const remaining = this.MAX_ATTEMPTS - (PasscodeHash.getRateState().attempts || 0);
+        errMsg.textContent = remaining > 0
+          ? `パスコードが違います（残り${remaining}回）`
+          : `試行回数超過。1分間ロックされます`;
+        errMsg.style.display = 'block';
+      }
       input.value = '';
       input.focus();
     }
@@ -106,8 +174,78 @@ const PasscodeModal = {
   }
 };
 
+// 環境識別ユーティリティ (インフラ #4: 環境分離)
+const AppEnv = {
+  _isDev: null,
+
+  async detect() {
+    if (this._isDev !== null) return;
+    try {
+      this._isDev = window.electronAPI?.isDevMode
+        ? await window.electronAPI.isDevMode()
+        : !!(process?.env?.NODE_ENV === 'development');
+    } catch {
+      this._isDev = false;
+    }
+  },
+
+  get isDev() { return this._isDev === true; },
+  get isProd() { return this._isDev === false; },
+};
+
+// 親機サーバー可用性チェック (インフラ #3: 高可用性／縮退モード)
+const ParentServerMonitor = {
+  _degraded: false,
+  _interval: null,
+
+  init() {
+    const mode = localStorage.getItem('cfg_share_mode');
+    if (mode !== 'client') return;
+    this._check();
+    this._interval = setInterval(() => this._check(), 30000);
+  },
+
+  async _check() {
+    const parentIp = localStorage.getItem('cfg_parent_ip');
+    if (!parentIp) return;
+    try {
+      const res = await fetch(`http://${parentIp}:3005/tables/wards`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        if (this._degraded) this._setDegraded(false);
+      } else {
+        this._setDegraded(true);
+      }
+    } catch {
+      this._setDegraded(true);
+    }
+  },
+
+  _setDegraded(degraded) {
+    if (this._degraded === degraded) return;
+    this._degraded = degraded;
+    let banner = document.getElementById('degraded-mode-banner');
+    if (degraded) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'degraded-mode-banner';
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#dc2626;color:#fff;text-align:center;padding:6px 16px;font-size:13px;font-weight:700;';
+        banner.textContent = '⚠ 親機サーバーに接続できません。表示データは最終取得時のキャッシュです。';
+        document.body.prepend(banner);
+      }
+      banner.style.display = '';
+    } else {
+      if (banner) banner.style.display = 'none';
+      UI.toast('親機サーバーへの接続が回復しました', 'success', 3000);
+    }
+  },
+
+  destroy() {
+    if (this._interval) clearInterval(this._interval);
+  },
+};
+
 const App = {
- 
+
   async init() {
     console.log('[App] 初期化開始...');
  
@@ -168,7 +306,16 @@ const App = {
  
     // 時計開始
     UI.startClock();
- 
+
+    // オフライン状態の監視開始
+    OfflineManager.init();
+
+    // 環境検出 (インフラ #4)
+    await AppEnv.detect();
+
+    // 親機サーバー可用性監視 (インフラ #3: 子機モードのみ)
+    ParentServerMonitor.init();
+
     // 管理者セッション認証状態（設定画面の多重プロンプト防止用キャッシュ）
     window.isAdminSession = false;
 
@@ -803,6 +950,9 @@ const App = {
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
+
+      // 保持期間設定に基づき古い完了済みイベントを削除（起動時に1回）
+      EventRetentionManager.run().catch(e => console.warn('[App] イベントクリーンアップ失敗:', e));
     } catch (e) {
       console.error('[App] マスタ読み込み失敗:', e);
       UI.toast('マスタデータの読み込みに失敗しました', 'danger');
@@ -931,7 +1081,7 @@ const App = {
           const bed = AppState.getBedById(e.bed_id);
           const bedLabel = bed ? `${bed.bed_number}号床` : '';
           const statusLabel = CONFIG.STATUS_LABEL?.[e.current_status] || e.current_status;
-          const patientName = bed?.patient_name ? `（${bed.patient_name}）` : '';
+          const patientName = bed?.patient_name ? `（${UI.getPatientName(bed.patient_name)}）` : '';
           const toastTypes = {
             RETURNED: 'success', ARRIVED: 'info', IN_EXAM: 'info',
             DEPART_REGISTERED: 'info', MOVING: 'info',
@@ -948,7 +1098,7 @@ const App = {
         const cfg = soundSettings['PICKUP_REQUIRED'];
         if (cfg?.toast !== false) {
           UI.toast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！`, 'danger', 6000);
-          UI.showOsNotification('TransBoard:迎えが必要', `${bed ? bed.bed_number + '号床' : ''}${bed?.patient_name ? '（' + bed.patient_name + '）' : ''}`);
+          UI.showOsNotification('TransBoard:迎えが必要', `${bed ? bed.bed_number + '号床' : ''}${bed?.patient_name ? '（' + UI.getPatientName(bed.patient_name) + '）' : ''}`);
         }
         this._prevNotified.add(`pickup-${e.id}`);
         if (lastStatus === undefined && cfg?.enabled) UI.playNotificationSound(cfg.sound);
@@ -985,46 +1135,40 @@ const App = {
 
   async applySystemVisualSettings() {
     console.log('[App] 画面表示・フォント・カードサイズ設定を適用中...');
+    this._applyZoomAndFont();
+    await this._applySyncTimeDisplay();
+    const themeStyle = this._applyTheme();
+    this._applyPowerSettings();
+    this._applyStatusLabels();
+    const ndMin = this._applyThresholds();
+    this._applyStatusColors(themeStyle);
+    this._applyActionButtonLabels(ndMin);
+  },
 
-    // 1. 表示倍率（ズーム）の適用
+  // 表示倍率・フォント・病床カードサイズの適用（端末個別設定を優先）
+  _applyZoomAndFont() {
     const localZoom = localStorage.getItem('cfg_app_zoom');
-    const dbZoomSetting = AppState.systemSettings?.find(s => s.id === 'default_zoom');
-    const targetZoom = localZoom || (dbZoomSetting ? dbZoomSetting.value : '1.0');
-
+    const targetZoom = localZoom || AppState.getSettingRaw('default_zoom', '1.0');
     document.body.style.zoom = targetZoom;
-
     const zoomSelect = document.getElementById('zoom-select');
-    if (zoomSelect) {
-      zoomSelect.value = targetZoom;
-    }
+    if (zoomSelect) zoomSelect.value = targetZoom;
 
-    // 2. フォントスタイルの適用 (端末個別設定を優先)
     const localFont = localStorage.getItem('cfg_font_style');
-    const fontSetting = AppState.systemSettings?.find(s => s.id === 'font_style');
-    const fontStyle = localFont || (fontSetting ? fontSetting.value : 'ud');
-
+    const fontStyle = localFont || AppState.getSettingRaw('font_style', 'ud');
     document.body.classList.remove('font-standard', 'font-bold');
-    if (fontStyle === 'standard') {
-      document.body.classList.add('font-standard');
-    } else if (fontStyle === 'bold') {
-      document.body.classList.add('font-bold');
-    }
+    if (fontStyle === 'standard') document.body.classList.add('font-standard');
+    else if (fontStyle === 'bold') document.body.classList.add('font-bold');
 
-    // 3. 病床カードサイズの適用 (端末個別設定を優先)
     const localCardSize = localStorage.getItem('cfg_bed_card_size');
-    const cardSizeSetting = AppState.systemSettings?.find(s => s.id === 'bed_card_size');
-    const bedCardSize = localCardSize || (cardSizeSetting ? cardSizeSetting.value : 'medium');
-
+    const bedCardSize = localCardSize || AppState.getSettingRaw('bed_card_size', 'medium');
     document.body.classList.remove('size-large', 'size-small');
-    if (bedCardSize === 'large') {
-      document.body.classList.add('size-large');
-    } else if (bedCardSize === 'small') {
-      document.body.classList.add('size-small');
-    }
+    if (bedCardSize === 'large') document.body.classList.add('size-large');
+    else if (bedCardSize === 'small') document.body.classList.add('size-small');
+  },
 
-    // 4. 同期時間・取り込み時間の表示制御
-    const showSyncSetting = AppState.systemSettings?.find(s => s.id === 'show_sync_time');
-    const showSync = showSyncSetting ? showSyncSetting.value !== 'false' : true;
+  // 同期時間・取り込み時間の表示制御
+  async _applySyncTimeDisplay() {
+    const showSync = AppState.getSettingBool('show_sync_time', true);
     const syncDisp = document.getElementById('sync-time-display');
     if (syncDisp) {
       if (showSync) {
@@ -1037,8 +1181,7 @@ const App = {
       }
     }
 
-    const showImportSetting = AppState.systemSettings?.find(s => s.id === 'show_import_time');
-    const showImport = showImportSetting ? showImportSetting.value !== 'false' : true;
+    const showImport = AppState.getSettingBool('show_import_time', true);
     const importDisp = document.getElementById('import-time-display');
     if (importDisp) {
       if (showImport) {
@@ -1065,31 +1208,204 @@ const App = {
         importDisp.style.display = 'none';
       }
     }
+  },
 
-    // 5. カラーテーマの適用 (端末個別設定を優先)
+  // カラーテーマの適用（端末個別設定を優先）。適用したテーマ名を返す
+  _applyTheme() {
     const localTheme = localStorage.getItem('cfg_theme_style');
-    const themeSetting = AppState.systemSettings?.find(s => s.id === 'theme_style');
-    const themeStyle = localTheme || (themeSetting ? themeSetting.value : 'light');
-
-    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast');
+    const themeStyle = localTheme || AppState.getSettingRaw('theme_style', 'light');
+    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd');
     document.body.classList.add(`theme-${themeStyle}`);
+    return themeStyle;
+  },
 
-    // 6. スクリーンセイバー・スリープ防止の適用
+  // スクリーンセイバー抑制・最前面表示の適用（端末個別設定）
+  _applyPowerSettings() {
     if (window.electronAPI?.setPowerSave) {
       const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
       window.electronAPI.setPowerSave(preventSleep);
     }
-
-    // 7. 最前面表示の適用
     if (window.electronAPI?.setAlwaysOnTop) {
       const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
       window.electronAPI.setAlwaysOnTop(alwaysOnTop);
+    }
+  },
+
+  // ステータス表示名のカスタマイズ（#1）。CONFIG.STATUS_LABEL_DEFAULTS（単一情報源）にリセットしてから適用する
+  _applyStatusLabels() {
+    Object.assign(CONFIG.STATUS_LABEL, CONFIG.STATUS_LABEL_DEFAULTS);
+
+    const customLabels = AppState.getSettingJSON('status_custom_labels', {});
+    Object.entries(customLabels).forEach(([sid, lbl]) => {
+      if (lbl && Object.prototype.hasOwnProperty.call(CONFIG.STATUS_LABEL, sid)) CONFIG.STATUS_LABEL[sid] = lbl;
+    });
+  },
+
+  // 「あと何分」しきい値のカスタマイズ（#2）。NEARLY_DONEの分数を返す
+  _applyThresholds() {
+    const customLabels = AppState.getSettingJSON('status_custom_labels', {});
+    const ndMin = AppState.getSettingInt('nearly_done_minutes', 10);
+    if (ndMin > 0 && !customLabels.NEARLY_DONE) {
+      CONFIG.STATUS_LABEL.NEARLY_DONE = `あと${ndMin}分`;
+    }
+    const stMin = AppState.getSettingInt('soon_threshold_min', 15);
+    if (stMin > 0) CONFIG.SOON_THRESHOLD_MIN = stMin;
+    return ndMin;
+  },
+
+  // ステータスカラーのカスタマイズ（#3）。高コントラスト・CVDテーマ有効時はテーマを優先する
+  _applyStatusColors(themeStyle) {
+    const isAccessibleTheme = ['high-contrast', 'cvd'].includes(themeStyle);
+    if (isAccessibleTheme) return;
+
+    const STATUS_CSS_VARS = {
+      IN_BED:           { card_bg: '--clr-in-bed',        card_border: '--clr-in-bed-border',      badge_bg: '--badge-in-bed-bg',        badge_text: '--badge-in-bed-text' },
+      DEPART_REGISTERED:{ card_bg: '--clr-depart-reg',    card_border: '--clr-depart-reg-border',  card_text: '--clr-depart-reg-text',    badge_bg: '--badge-depart-bg',    badge_text: '--badge-depart-text' },
+      MOVING:           { card_bg: '--clr-moving',        card_border: '--clr-moving-border',      card_text: '--clr-moving-text',        badge_bg: '--badge-moving-bg',    badge_text: '--badge-moving-text' },
+      ARRIVED:          { card_bg: '--clr-arrived',       card_border: '--clr-arrived-border',     badge_bg: '--badge-arrived-bg',        badge_text: '--badge-arrived-text' },
+      IN_EXAM:          { card_bg: '--clr-in-exam',       card_border: '--clr-in-exam-border',     card_text: '--clr-in-exam-text',       badge_bg: '--badge-in-exam-bg',   badge_text: '--badge-in-exam-text' },
+      NEARLY_DONE:      { card_bg: '--clr-nearly-done',   card_border: '--clr-nearly-done-border', card_text: '--clr-nearly-done-text',   badge_bg: '--badge-nearly-done-bg',badge_text: '--badge-nearly-done-text' },
+      PICKUP_REQUIRED:  { card_bg: '--clr-pickup',        card_border: '--clr-pickup-border',      card_text: '--clr-pickup-text',        badge_bg: '--badge-pickup-bg',    badge_text: '--badge-pickup-text' },
+      RETURNED:         { card_bg: '--clr-returned',      card_border: '--clr-returned-border',    card_text: '--clr-returned-text',      badge_bg: '--badge-returned-bg',  badge_text: '--badge-returned-text' },
+      CANCELLED:        { card_bg: '--clr-cancelled',     card_border: '--clr-cancelled-border',   card_text: '--clr-cancelled-text',     badge_bg: '--badge-cancelled-bg', badge_text: '--badge-cancelled-text' },
+    };
+    const colors = AppState.getSettingJSON('status_colors', null);
+    if (!colors) return;
+    const root = document.documentElement;
+    Object.entries(colors).forEach(([sid, colorMap]) => {
+      const vars = STATUS_CSS_VARS[sid];
+      if (!vars || !colorMap) return;
+      if (colorMap.card_bg    && vars.card_bg)    root.style.setProperty(vars.card_bg,    colorMap.card_bg);
+      if (colorMap.card_border && vars.card_border) root.style.setProperty(vars.card_border, colorMap.card_border);
+      if (colorMap.card_text  && vars.card_text)  root.style.setProperty(vars.card_text,  colorMap.card_text);
+      if (colorMap.badge_bg   && vars.badge_bg)   root.style.setProperty(vars.badge_bg,   colorMap.badge_bg);
+      if (colorMap.badge_text && vars.badge_text) root.style.setProperty(vars.badge_text, colorMap.badge_text);
+    });
+  },
+
+  // アクションボタンラベルのカスタマイズ（#4）。オリジナル値を保存し、再呼び出し時にリセットしてから適用する
+  _applyActionButtonLabels(ndMin) {
+    if (!App._origActionButtonLabels) {
+      App._origActionButtonLabels = {};
+      Object.entries(CONFIG.ACTION_BUTTONS).forEach(([st, btns]) => {
+        App._origActionButtonLabels[st] = btns.map(b => b.label);
+      });
+      App._origExamRoomActionLabels = {};
+      Object.entries(CONFIG.EXAM_ROOM_ACTIONS).forEach(([st, btns]) => {
+        App._origExamRoomActionLabels[st] = btns.map(b => b.label);
+      });
+    }
+    Object.entries(App._origActionButtonLabels).forEach(([st, labels]) => {
+      labels.forEach((lbl, i) => { if (CONFIG.ACTION_BUTTONS[st]?.[i]) CONFIG.ACTION_BUTTONS[st][i].label = lbl; });
+    });
+    Object.entries(App._origExamRoomActionLabels).forEach(([st, labels]) => {
+      labels.forEach((lbl, i) => { if (CONFIG.EXAM_ROOM_ACTIONS[st]?.[i]) CONFIG.EXAM_ROOM_ACTIONS[st][i].label = lbl; });
+    });
+
+    const actionLabels = AppState.getSettingJSON('action_button_labels', {});
+    Object.entries(actionLabels).forEach(([key, lbl]) => {
+      if (!lbl) return;
+      const parts = key.split(':');
+      if (parts.length === 2) {
+        const btn = CONFIG.ACTION_BUTTONS[parts[0]]?.find(b => b.toStatus === parts[1]);
+        if (btn) btn.label = lbl;
+      } else if (parts.length === 3 && parts[0] === 'EXAM') {
+        const btn = CONFIG.EXAM_ROOM_ACTIONS[parts[1]]?.find(b => b.toStatus === parts[2]);
+        if (btn) btn.label = lbl;
+      }
+    });
+    // NEARLY_DONEボタンのラベルをしきい値から自動生成（カスタムラベルが未設定の場合）
+    if (!actionLabels['IN_EXAM:NEARLY_DONE'] && ndMin > 0) {
+      const wardBtn = CONFIG.ACTION_BUTTONS.IN_EXAM?.find(b => b.toStatus === 'NEARLY_DONE');
+      if (wardBtn) wardBtn.label = `あと${ndMin}分`;
+      const examBtn = CONFIG.EXAM_ROOM_ACTIONS.IN_EXAM?.find(b => b.toStatus === 'NEARLY_DONE');
+      if (examBtn) examBtn.label = `あと${ndMin}分`;
+    }
+  },
+};
+
+/* ---------- オフライン状態管理 ---------- */
+// navigator.onLine ベースのネットワーク状態監視（UX: オフライン時に書き込み操作を無効化）
+const OfflineManager = {
+  _isOnline: navigator.onLine,
+
+  init() {
+    window.addEventListener('online', () => this._handleOnline());
+    window.addEventListener('offline', () => this._handleOffline());
+    if (!navigator.onLine) this._handleOffline();
+  },
+
+  _handleOnline() {
+    if (this._isOnline) return;
+    this._isOnline = true;
+    this._setWriteOpsDisabled(false);
+    UI.toast('ネットワーク接続が回復しました', 'success', 3000);
+  },
+
+  _handleOffline() {
+    if (!this._isOnline) return;
+    this._isOnline = false;
+    this._setWriteOpsDisabled(true);
+    UI.toast('ネットワーク接続が切断されました。書き込み操作は制限されます。', 'warning', 8000);
+  },
+
+  // 書き込み系ボタンを無効化（読み取り操作はそのまま）
+  _setWriteOpsDisabled(disabled) {
+    const selector = [
+      '.btn-primary', '.btn-danger', '.btn-warning',
+      '.btn-success', '.btn-info', '.btn-orange',
+    ].join(', ');
+    document.querySelectorAll(selector).forEach(btn => {
+      if (disabled) {
+        if (!btn.dataset.preOfflineDisabled) {
+          btn.dataset.preOfflineDisabled = btn.disabled ? 'true' : 'false';
+          btn.disabled = true;
+          btn.title = btn.title || 'オフライン中は操作できません';
+          btn.dataset.offlineDisabled = 'true';
+        }
+      } else if (btn.dataset.offlineDisabled) {
+        btn.disabled = btn.dataset.preOfflineDisabled === 'true';
+        delete btn.dataset.offlineDisabled;
+        delete btn.dataset.preOfflineDisabled;
+        btn.title = btn.title === 'オフライン中は操作できません' ? '' : btn.title;
+      }
+    });
+  },
+
+  get isOnline() { return this._isOnline; },
+};
+
+/* ---------- 古いイベントのクリーンアップ ---------- */
+// 要件定義: event_retention_days 設定に基づき完了済みイベントを自動削除
+const EventRetentionManager = {
+  async run() {
+    const setting = AppState.systemSettings?.find(s => s.id === 'event_retention_days');
+    const days = parseInt(setting?.value || '0', 10);
+    if (!days || days <= 0) return; // 0 = 無期限
+
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const completedStatuses = ['RETURNED', 'CANCELLED'];
+
+    try {
+      const res = await API.getAll('transfer_events');
+      const stale = (res.data || []).filter(e =>
+        completedStatuses.includes(e.current_status) &&
+        (e.created_at || 0) < cutoff
+      );
+
+      if (stale.length === 0) return;
+
+      await Promise.all(stale.map(e => API.remove('transfer_events', e.id)));
+      console.log(`[EventRetention] ${stale.length}件の古いイベントを削除しました（${days}日以前）`);
+    } catch (e) {
+      console.warn('[EventRetention] クリーンアップに失敗しました:', e);
     }
   },
 };
 
 // DOM 準備完了後に初期化
 document.addEventListener('DOMContentLoaded', () => {
+  ErrorHandler.init();
   App.init().catch(e => {
     console.error('[App] 起動エラー:', e);
     UI.toast('アプリの起動に失敗しました', 'danger');

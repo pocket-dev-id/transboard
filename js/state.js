@@ -92,6 +92,26 @@ const AppState = {
     return this.todayEvents.find(e => e.bed_id === bedId);
   },
 
+  /* ---------- サブスクライバーパターン ---------- */
+  // コンポーネントが特定のデータキーの変更を購読できるようにする
+  // 戻り値は購読解除関数
+  _subscribers: {},
+
+  subscribe(key, callback) {
+    if (!this._subscribers[key]) this._subscribers[key] = new Set();
+    this._subscribers[key].add(callback);
+    return () => this._subscribers[key].delete(callback);
+  },
+
+  // データ更新後に呼ぶことで、そのキーを購読しているコンポーネントを再描画させる
+  notify(key) {
+    const subs = this._subscribers[key];
+    if (!subs) return;
+    subs.forEach(cb => {
+      try { cb(); } catch (e) { console.error(`[AppState.notify:${key}]`, e); }
+    });
+  },
+
   // サマリー計算
   getSummary() {
     const events = this.activeEvents;
@@ -132,5 +152,26 @@ const AppState = {
       })
       .sort((a, b) => a.priorityScore - b.priorityScore);
     return items;
+  },
+
+  /* ---------- system_settings 読み取りヘルパー（コード#1: 重複ボイラープレート排除） ---------- */
+  getSettingRaw(id, fallback = null) {
+    const s = this.systemSettings?.find(x => x.id === id);
+    return s ? s.value : fallback;
+  },
+  getSettingJSON(id, fallback) {
+    try {
+      const raw = this.getSettingRaw(id);
+      return raw != null ? JSON.parse(raw) : fallback;
+    } catch { return fallback; }
+  },
+  getSettingInt(id, fallback) {
+    const raw = this.getSettingRaw(id);
+    const n = parseInt(raw, 10);
+    return isNaN(n) ? fallback : n;
+  },
+  getSettingBool(id, fallback) {
+    const raw = this.getSettingRaw(id);
+    return raw == null ? fallback : raw !== 'false';
   },
 };

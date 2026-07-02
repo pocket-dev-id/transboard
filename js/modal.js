@@ -83,6 +83,10 @@ const BedModal = {
             patient_name: null, patient_id: null, is_present: false,
             admission_date: null, patient_note: null, manually_registered: false
           });
+          API.writeAuditLog('PATIENT_DISCHARGE', {
+            targetType: 'bed', targetId: bedId,
+            details: { bed_number: bed.bed_number, patient_id: bed.patient_id },
+          });
           await App.loadMasters();
           BedMap.render();
           this.close();
@@ -364,7 +368,8 @@ const BedModal = {
 
   _renderActionButtons(event, isManual = false) {
     const status = event.current_status;
-    const actions = CONFIG.ACTION_BUTTONS[status] || [];
+    const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
+    const actions = (CONFIG.ACTION_BUTTONS[status] || []).filter(a => !hiddenStatuses.includes(a.toStatus));
 
     if (actions.length === 0 && status !== 'RETURNED' && status !== 'CANCELLED') return '';
 
@@ -383,7 +388,7 @@ const BedModal = {
       <i class="fas fa-phone"></i> 検査室へコール
     </button>`;
     primaryActions.forEach(action => {
-      rightHtml += `<button class="btn ${action.cls}" data-action-status="${action.toStatus}">${action.label}</button>`;
+      rightHtml += `<button class="btn ${action.cls}" data-action-status="${action.toStatus}">${UI.escapeHTML(action.label)}</button>`;
     });
     if (isManual) {
       rightHtml += `<button class="btn btn-outline btn-sm" id="btn-patient-edit-inline">
@@ -938,6 +943,10 @@ const PatientRegModal = {
           admission_date: admDate,
           patient_note: note || null,
           manually_registered: true,
+        });
+        API.writeAuditLog(isEdit ? 'PATIENT_UPDATE' : 'PATIENT_REGISTER', {
+          targetType: 'bed', targetId: bedId,
+          details: { patient_id: patId || null },
         });
         await App.loadMasters();
         BedMap.render();

@@ -84,7 +84,34 @@ function getDBPath() {
   return path.join(targetDir, 'db.json');
 }
 
+// アトミック書き込みユーティリティ: tmpファイルに書いてからrenameする
+// これにより書き込み途中でプロセスが終了してもターゲットファイルが壊れない
+function safeWriteFile(targetPath, content) {
+  const tmpPath = targetPath + '.tmp';
+  fs.writeFileSync(tmpPath, content, 'utf8');
+  try {
+    fs.renameSync(tmpPath, targetPath);
+  } catch (renameErr) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    throw renameErr;
+  }
+}
+
 let DB_FILE = getDBPath();
+
+// 起動時に前回クラッシュで残ったtmpファイルをクリーンアップする
+function cleanupStaleTmpFiles() {
+  const tmpPath = DB_FILE + '.tmp';
+  if (fs.existsSync(tmpPath)) {
+    try {
+      fs.unlinkSync(tmpPath);
+      console.warn('[DB] 前回の異常終了で残留した一時ファイルを削除しました:', tmpPath);
+    } catch (err) {
+      console.error('[DB] 残留一時ファイルの削除に失敗しました:', err.message);
+    }
+  }
+}
+cleanupStaleTmpFiles();
 
 // WebRTCシグナリング用のメモリ内一時キュー
 const webrtcSignalingQueue = {};
@@ -191,10 +218,17 @@ const SEEDS = {
     { id: "notification_scan_sound", value: "true" },
     { id: "notification_mute", value: "{\"enabled\":false,\"start\":\"22:00\",\"end\":\"06:00\"}" },
     { id: "notification_import_toast", value: "true" },
-    { id: "notification_os", value: "false" }
+    { id: "notification_os", value: "false" },
+    { id: "status_custom_labels", value: "{}" },
+    { id: "nearly_done_minutes", value: "10" },
+    { id: "soon_threshold_min", value: "15" },
+    { id: "status_colors", value: "{}" },
+    { id: "action_button_labels", value: "{}" },
+    { id: "hidden_statuses", value: "[]" }
   ],
   transfer_events: [],
   transfer_status_logs: [],
+  audit_logs: [],
   calls: [],
   import_logs: [],
   schedule_feeds: [],
@@ -235,13 +269,22 @@ function decryptSensitiveValue(value) {
   return ''; // 復号エラー時は空文字
 }
 
+// ローカルデータベースのメモリキャッシュ（コード#6: 毎リクエストごとのディスク読み込み・JSON.parseを回避）
+// Node.jsはシングルスレッドのためIPC/HTTPリクエストはイベントループ上で直列化され、
+// キャッシュと実ファイルがズレるような競合は発生しない
+let dbCache = null;
+
 // ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）
 function readDB() {
+  if (dbCache) {
+    return JSON.parse(JSON.stringify(dbCache));
+  }
   try {
     if (!fs.existsSync(DB_FILE)) {
       console.log(`[DB] データベースが存在しないため初期データを書き込みます: ${DB_FILE}`);
-      fs.writeFileSync(DB_FILE, JSON.stringify(SEEDS, null, 2), 'utf8');
-      return SEEDS;
+      safeWriteFile(DB_FILE, JSON.stringify(SEEDS, null, 2));
+      dbCache = JSON.parse(JSON.stringify(SEEDS));
+      return JSON.parse(JSON.stringify(SEEDS));
     }
     const data = fs.readFileSync(DB_FILE, 'utf8');
     const db = JSON.parse(data);
@@ -252,6 +295,10 @@ function readDB() {
     // 後方互換性：新規テーブル・新規設定項目のパッチ
     if (!db.import_logs) {
       db.import_logs = [];
+      hasDuplicates = true;
+    }
+    if (!db.audit_logs) {
+      db.audit_logs = [];
       hasDuplicates = true;
     }
     if (!db.system_settings) {
@@ -323,20 +370,48 @@ function readDB() {
       console.log('[DB] 重複データ検出または暗号化適用のための再書き込みを実施します。');
       writeDB(db);
     }
-    
+
+    dbCache = JSON.parse(JSON.stringify(db));
     return db;
   } catch (err) {
     console.error('[DB] データベースの読み込み失敗:', err);
-    return SEEDS;
+
+    // バックアップファイルからのリカバリを試みる
+    const bakPath = DB_FILE + '.bak';
+    if (fs.existsSync(bakPath)) {
+      try {
+        const bakData = fs.readFileSync(bakPath, 'utf8');
+        const recovered = JSON.parse(bakData);
+        console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
+        dbCache = JSON.parse(JSON.stringify(recovered));
+        return recovered;
+      } catch (bakErr) {
+        console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
+      }
+    }
+
+    // 破損ファイルを保全してから初期データで再起動できるようにする
+    if (fs.existsSync(DB_FILE)) {
+      const corruptPath = DB_FILE + '.corrupt';
+      try {
+        fs.copyFileSync(DB_FILE, corruptPath);
+        console.warn('[DB] 破損したDBファイルを保全しました:', corruptPath);
+      } catch {}
+    }
+
+    console.error('[DB] データを復旧できませんでした。初期データで再構築します。');
+    dbCache = JSON.parse(JSON.stringify(SEEDS));
+    return JSON.parse(JSON.stringify(SEEDS));
   }
 }
 
 // ローカルデータベース書き込み
+// 成功時は true、失敗時は false を返す（呼び出し元がハンドリング可能）
 function writeDB(data) {
   try {
     // インメモリの元のデータを破壊しないようディープコピーを作成
     const dbClone = JSON.parse(JSON.stringify(data));
-    
+
     // センシティブな設定情報の暗号化
     if (dbClone.system_settings && Array.isArray(dbClone.system_settings)) {
       dbClone.system_settings.forEach(s => {
@@ -346,17 +421,20 @@ function writeDB(data) {
       });
     }
 
-    const tmpFile = DB_FILE + '.tmp';
-    fs.writeFileSync(tmpFile, JSON.stringify(dbClone, null, 2), 'utf8');
-    try {
-      fs.renameSync(tmpFile, DB_FILE);
-    } catch (renameErr) {
-      console.error('[DB] DBファイルのリネームに失敗しました。一時ファイルを削除します:', renameErr);
-      try { fs.unlinkSync(tmpFile); } catch {}
-      throw renameErr;
-    }
+    safeWriteFile(DB_FILE, JSON.stringify(dbClone, null, 2));
+
+    // 書き込み成功後にローリングバックアップを更新する
+    // （破損時のリカバリ用。直前の正常状態を1世代保持）
+    try { fs.copyFileSync(DB_FILE, DB_FILE + '.bak'); } catch {}
+
+    // メモリキャッシュを最新の状態（復号化された形）に更新する
+    dbCache = JSON.parse(JSON.stringify(data));
+
+    return true;
   } catch (err) {
     console.error('[DB] データベースの書き込み失敗:', err);
+    // 書き込み失敗時はキャッシュを更新しない（ディスク上の状態と不整合を避ける）
+    return false;
   }
 }
 
@@ -425,7 +503,10 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     }
   });
 
@@ -1396,7 +1477,8 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
 const ALLOWED_TABLES = new Set([
   'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs',
   'system_settings', 'transfer_events', 'transfer_status_logs',
-  'calls', 'import_logs', 'schedule_feeds', 'schedule_items'
+  'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
+  'audit_logs',
 ]);
 
 // 共通のデータベース操作処理関数
@@ -1512,7 +1594,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       console.log(`[DB Cleaner] Trimmed calls to 500 entries.`);
     }
 
-    writeDB(db);
+    if (!writeDB(db)) {
+      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
     return data;
   }
 
@@ -1534,7 +1618,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
           updatedItems.push(list[index]);
         }
       });
-      writeDB(db);
+      if (!writeDB(db)) {
+        throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+      }
       console.log(`[DB] Bulk ${method} Updated: table=${table}, items=${updatedItems.length}`);
       return { success: true, count: updatedItems.length, data: updatedItems };
     }
@@ -1549,7 +1635,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       return { success: false, message: 'Not Found' };
     }
     list[index] = { ...list[index], ...data };
-    writeDB(db);
+    if (!writeDB(db)) {
+      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
     console.log(`[DB] PATCH Updated: table=${table}, id=${id}, updated fields:`, Object.keys(data));
     return list[index];
   }
@@ -1561,7 +1649,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       return { success: false, message: 'Not Found' };
     }
     const removed = list.splice(index, 1)[0];
-    writeDB(db);
+    if (!writeDB(db)) {
+      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
     console.log(`[DB] DELETE Success: table=${table}, id=${id}`);
     return removed;
   }
@@ -1618,6 +1708,9 @@ ipcMain.handle('read-csv-headers', async (event, folderPath) => {
     return { ok: false, reason: e.message };
   }
 });
+
+// 開発/本番モード判定 (インフラ #4: 環境分離)
+ipcMain.handle('is-dev-mode', () => !app.isPackaged || process.env.NODE_ENV === 'development');
 
 // OSデスクトップ通知を表示（メインプロセス経由 — Windowsで確実に動作）
 ipcMain.handle('show-os-notification', (event, { title, body }) => {
@@ -1745,7 +1838,19 @@ ipcMain.handle('restore-db', async () => {
     if (!parsed.system_settings || !parsed.beds || !parsed.wards) {
       throw new Error('無効なバックアップファイルフォーマットです。');
     }
-    fs.writeFileSync(DB_FILE, fileContent, 'utf8');
+    // 復元前に現在のDBを保全する
+    if (fs.existsSync(DB_FILE)) {
+      try {
+        fs.copyFileSync(DB_FILE, DB_FILE + '.before_restore');
+        console.log('[DB] 復元前のDBをバックアップしました:', DB_FILE + '.before_restore');
+      } catch (bakErr) {
+        console.warn('[DB] 復元前バックアップの作成に失敗しました:', bakErr.message);
+      }
+    }
+    // アトミックに上書きして復元する
+    safeWriteFile(DB_FILE, fileContent);
+    // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
+    dbCache = null;
     return { success: true };
   } catch (err) {
     console.error('[DB Restore Error]', err);
@@ -1787,7 +1892,7 @@ ipcMain.handle('change-database-storage-mode', async (event, mode) => {
       if (!fs.existsSync(COMMON_DATA_DIR)) {
         fs.mkdirSync(COMMON_DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'common' }, null, 2), 'utf8');
+      safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'common' }, null, 2));
     } catch (err) {
       console.error('[DB] Storage mode change to common failed:', err);
       return { 
@@ -1816,7 +1921,7 @@ ipcMain.handle('change-database-storage-mode', async (event, mode) => {
       if (!fs.existsSync(COMMON_DATA_DIR)) {
         fs.mkdirSync(COMMON_DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'user' }, null, 2), 'utf8');
+      safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'user' }, null, 2));
     } catch (err) {
       console.error('[DB] Storage mode change to user failed:', err);
       return { 
