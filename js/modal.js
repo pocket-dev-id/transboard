@@ -368,12 +368,7 @@ const BedModal = {
 
   _renderActionButtons(event, isManual = false) {
     const status = event.current_status;
-    const hiddenStatuses = (() => {
-      try {
-        const s = AppState.systemSettings?.find(x => x.id === 'hidden_statuses');
-        return JSON.parse(s?.value || '[]');
-      } catch { return []; }
-    })();
+    const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
     const actions = (CONFIG.ACTION_BUTTONS[status] || []).filter(a => !hiddenStatuses.includes(a.toStatus));
 
     if (actions.length === 0 && status !== 'RETURNED' && status !== 'CANCELLED') return '';
@@ -393,7 +388,7 @@ const BedModal = {
       <i class="fas fa-phone"></i> 検査室へコール
     </button>`;
     primaryActions.forEach(action => {
-      rightHtml += `<button class="btn ${action.cls}" data-action-status="${action.toStatus}">${action.label}</button>`;
+      rightHtml += `<button class="btn ${action.cls}" data-action-status="${action.toStatus}">${UI.escapeHTML(action.label)}</button>`;
     });
     if (isManual) {
       rightHtml += `<button class="btn btn-outline btn-sm" id="btn-patient-edit-inline">

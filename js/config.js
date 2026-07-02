@@ -19,7 +19,7 @@ const CONFIG = {
     CANCELLED: 'CANCELLED',
   },
 
-  // 状態表示名
+  // 状態表示名（施設ごとのカスタム表示名で上書きされる可能性がある実行時の値）
   STATUS_LABEL: {
     IN_BED: '在床',
     DEPART_REGISTERED: '出棟登録済',
@@ -30,6 +30,28 @@ const CONFIG = {
     PICKUP_REQUIRED: '迎え要',
     RETURNED: '帰棟済',
     CANCELLED: 'キャンセル',
+  },
+
+  // 状態表示名のデフォルト値（不変のスナップショット）
+  // カスタム表示名設定画面のプレースホルダー・リセット処理など、
+  // 「本来のデフォルト」を参照する必要がある箇所は STATUS_LABEL ではなくこちらを使う
+  STATUS_LABEL_DEFAULTS: Object.freeze({
+    IN_BED: '在床',
+    DEPART_REGISTERED: '出棟登録済',
+    MOVING: '移動中',
+    ARRIVED: '検査室到着',
+    IN_EXAM: '検査中',
+    NEARLY_DONE: 'あと10分',
+    PICKUP_REQUIRED: '迎え要',
+    RETURNED: '帰棟済',
+    CANCELLED: 'キャンセル',
+  }),
+
+  // ステータスカラーのデフォルト値（カラーピッカーの初期表示・リセット用）
+  STATUS_DEFAULT_COLORS: {
+    IN_BED: '#f8fafc', DEPART_REGISTERED: '#dbeafe', MOVING: '#ede9fe',
+    ARRIVED: '#e0f2fe', IN_EXAM: '#fefce8', NEARLY_DONE: '#fff7ed',
+    PICKUP_REQUIRED: '#fee2e2', RETURNED: '#f0fdf4', CANCELLED: '#f1f5f9',
   },
 
   // 状態アイコン（FontAwesome クラス名）

@@ -173,9 +173,8 @@ const API = {
     }
     // NEARLY_DONEの場合、設定値に基づいて迎え目安を再計算
     if (newStatus === 'NEARLY_DONE') {
-      const ndSetting = AppState.systemSettings?.find(s => s.id === 'nearly_done_minutes');
-      const ndMin = parseInt(ndSetting?.value || '10', 10);
-      patch.estimated_pickup_at = now + (isNaN(ndMin) || ndMin <= 0 ? 10 : ndMin) * 60 * 1000;
+      const ndMin = AppState.getSettingInt('nearly_done_minutes', 10);
+      patch.estimated_pickup_at = now + (ndMin > 0 ? ndMin : 10) * 60 * 1000;
     }
     // ログ用に遷移前のステータスを取得
     let fromStatus = null;

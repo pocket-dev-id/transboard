@@ -39,29 +39,35 @@ const TimelinePopup = {
 const TimelineContextMenu = {
   _el: null,
 
-  // 次のステータス定義
+  // 次のステータス定義（labelはCONFIG.ACTION_BUTTONSから解決するため持たない。コード#2: 重複データ排除）
   NEXT: {
     DEPART_REGISTERED: [
-      { to: 'MOVING',     label: '移動開始',   icon: 'fa-walking' },
-      { to: 'CANCELLED',  label: 'キャンセル', icon: 'fa-times',  danger: true },
+      { to: 'MOVING',     icon: 'fa-walking' },
+      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
     ],
     MOVING: [
-      { to: 'ARRIVED',    label: '検査室到着', icon: 'fa-hospital' },
-      { to: 'CANCELLED',  label: 'キャンセル', icon: 'fa-times',  danger: true },
+      { to: 'ARRIVED',    icon: 'fa-hospital' },
+      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
     ],
     ARRIVED: [
-      { to: 'IN_EXAM',    label: '検査開始',   icon: 'fa-flask' },
-      { to: 'CANCELLED',  label: 'キャンセル', icon: 'fa-times',  danger: true },
+      { to: 'IN_EXAM',    icon: 'fa-flask' },
+      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
     ],
     IN_EXAM: [
-      { to: 'NEARLY_DONE', label: 'あと10分',  icon: 'fa-clock' },
+      { to: 'NEARLY_DONE', icon: 'fa-clock' },
     ],
     NEARLY_DONE: [
-      { to: 'PICKUP_REQUIRED', label: '迎え要', icon: 'fa-bell' },
+      { to: 'PICKUP_REQUIRED', icon: 'fa-bell' },
     ],
     PICKUP_REQUIRED: [
-      { to: 'RETURNED', label: '帰棟完了', icon: 'fa-check-circle' },
+      { to: 'RETURNED', icon: 'fa-check-circle' },
     ],
+  },
+
+  // CONFIG.ACTION_BUTTONS（実行時にカスタム設定で上書きされる）から遷移先に対応するデフォルトラベルを解決する
+  _resolveDefaultLabel(fromStatus, toStatus) {
+    const btn = CONFIG.ACTION_BUTTONS[fromStatus]?.find(b => b.toStatus === toStatus);
+    return btn ? btn.label : toStatus;
   },
 
   _ensureEl() {
@@ -83,23 +89,14 @@ const TimelineContextMenu = {
 
   show(event, x, y) {
     const el = this._ensureEl();
-    const hiddenStatuses = (() => {
-      try {
-        const s = AppState.systemSettings?.find(x => x.id === 'hidden_statuses');
-        return JSON.parse(s?.value || '[]');
-      } catch { return []; }
-    })();
-    const actionLabels = (() => {
-      try {
-        const s = AppState.systemSettings?.find(x => x.id === 'action_button_labels');
-        return JSON.parse(s?.value || '{}');
-      } catch { return {}; }
-    })();
+    const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
+    const actionLabels = AppState.getSettingJSON('action_button_labels', {});
     const nexts = (this.NEXT[event.current_status] || [])
       .filter(n => !hiddenStatuses.includes(n.to))
       .map(n => {
         const customLabel = actionLabels[`${event.current_status}:${n.to}`];
-        return customLabel ? { ...n, label: customLabel } : n;
+        const label = customLabel || this._resolveDefaultLabel(event.current_status, n.to);
+        return { ...n, label };
       });
     const bed = AppState.getBedById(event.bed_id);
     const bedName = bed ? `${bed.bed_number}号床` : '?';
@@ -107,11 +104,11 @@ const TimelineContextMenu = {
 
     const statusItems = nexts.map(n => `
       <div class="tl-ctx-item${n.danger ? ' tl-ctx-item--danger' : ''}" data-to="${n.to}">
-        <i class="fas ${n.icon}"></i> ${n.label}
+        <i class="fas ${n.icon}"></i> ${UI.escapeHTML(n.label)}
       </div>`).join('');
 
     el.innerHTML = `
-      <div class="tl-ctx-header">${bedName} <span class="tl-ctx-badge">${statusLabel}</span></div>
+      <div class="tl-ctx-header">${UI.escapeHTML(bedName)} <span class="tl-ctx-badge">${UI.escapeHTML(statusLabel)}</span></div>
       ${statusItems}
       <div class="tl-ctx-divider"></div>
       <div class="tl-ctx-item tl-ctx-item--detail" data-action="detail">

@@ -1127,46 +1127,39 @@ const App = {
 
   async applySystemVisualSettings() {
     console.log('[App] 画面表示・フォント・カードサイズ設定を適用中...');
+    this._applyZoomAndFont();
+    await this._applySyncTimeDisplay();
+    const themeStyle = this._applyTheme();
+    this._applyStatusLabels();
+    const ndMin = this._applyThresholds();
+    this._applyStatusColors(themeStyle);
+    this._applyActionButtonLabels(ndMin);
+  },
 
-    // 1. 表示倍率（ズーム）の適用
+  // 表示倍率・フォント・病床カードサイズの適用（端末個別設定を優先）
+  _applyZoomAndFont() {
     const localZoom = localStorage.getItem('cfg_app_zoom');
-    const dbZoomSetting = AppState.systemSettings?.find(s => s.id === 'default_zoom');
-    const targetZoom = localZoom || (dbZoomSetting ? dbZoomSetting.value : '1.0');
-
+    const targetZoom = localZoom || AppState.getSettingRaw('default_zoom', '1.0');
     document.body.style.zoom = targetZoom;
-
     const zoomSelect = document.getElementById('zoom-select');
-    if (zoomSelect) {
-      zoomSelect.value = targetZoom;
-    }
+    if (zoomSelect) zoomSelect.value = targetZoom;
 
-    // 2. フォントスタイルの適用 (端末個別設定を優先)
     const localFont = localStorage.getItem('cfg_font_style');
-    const fontSetting = AppState.systemSettings?.find(s => s.id === 'font_style');
-    const fontStyle = localFont || (fontSetting ? fontSetting.value : 'ud');
-
+    const fontStyle = localFont || AppState.getSettingRaw('font_style', 'ud');
     document.body.classList.remove('font-standard', 'font-bold');
-    if (fontStyle === 'standard') {
-      document.body.classList.add('font-standard');
-    } else if (fontStyle === 'bold') {
-      document.body.classList.add('font-bold');
-    }
+    if (fontStyle === 'standard') document.body.classList.add('font-standard');
+    else if (fontStyle === 'bold') document.body.classList.add('font-bold');
 
-    // 3. 病床カードサイズの適用 (端末個別設定を優先)
     const localCardSize = localStorage.getItem('cfg_bed_card_size');
-    const cardSizeSetting = AppState.systemSettings?.find(s => s.id === 'bed_card_size');
-    const bedCardSize = localCardSize || (cardSizeSetting ? cardSizeSetting.value : 'medium');
-
+    const bedCardSize = localCardSize || AppState.getSettingRaw('bed_card_size', 'medium');
     document.body.classList.remove('size-large', 'size-small');
-    if (bedCardSize === 'large') {
-      document.body.classList.add('size-large');
-    } else if (bedCardSize === 'small') {
-      document.body.classList.add('size-small');
-    }
+    if (bedCardSize === 'large') document.body.classList.add('size-large');
+    else if (bedCardSize === 'small') document.body.classList.add('size-small');
+  },
 
-    // 4. 同期時間・取り込み時間の表示制御
-    const showSyncSetting = AppState.systemSettings?.find(s => s.id === 'show_sync_time');
-    const showSync = showSyncSetting ? showSyncSetting.value !== 'false' : true;
+  // 同期時間・取り込み時間の表示制御
+  async _applySyncTimeDisplay() {
+    const showSync = AppState.getSettingBool('show_sync_time', true);
     const syncDisp = document.getElementById('sync-time-display');
     if (syncDisp) {
       if (showSync) {
@@ -1179,8 +1172,7 @@ const App = {
       }
     }
 
-    const showImportSetting = AppState.systemSettings?.find(s => s.id === 'show_import_time');
-    const showImport = showImportSetting ? showImportSetting.value !== 'false' : true;
+    const showImport = AppState.getSettingBool('show_import_time', true);
     const importDisp = document.getElementById('import-time-display');
     if (importDisp) {
       if (showImport) {
@@ -1207,21 +1199,71 @@ const App = {
         importDisp.style.display = 'none';
       }
     }
+  },
 
-    // 5. カラーテーマの適用 (端末個別設定を優先)
+  // カラーテーマの適用（端末個別設定を優先）。適用したテーマ名を返す
+  _applyTheme() {
     const localTheme = localStorage.getItem('cfg_theme_style');
-    const themeSetting = AppState.systemSettings?.find(s => s.id === 'theme_style');
-    const themeStyle = localTheme || (themeSetting ? themeSetting.value : 'light');
-
+    const themeStyle = localTheme || AppState.getSettingRaw('theme_style', 'light');
     document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd');
     document.body.classList.add(`theme-${themeStyle}`);
+    return themeStyle;
+  },
 
-    // 6-9. ステータスカスタマイズ設定の適用
+  // ステータス表示名のカスタマイズ（#1）。CONFIG.STATUS_LABEL_DEFAULTS（単一情報源）にリセットしてから適用する
+  _applyStatusLabels() {
+    Object.assign(CONFIG.STATUS_LABEL, CONFIG.STATUS_LABEL_DEFAULTS);
 
-    // オリジナル値を初回のみ保存（再呼び出し時に蓄積しないよう必ずリセット）
-    if (!App._origStatusLabels) {
-      App._origStatusLabels = { ...CONFIG.STATUS_LABEL };
+    const customLabels = AppState.getSettingJSON('status_custom_labels', {});
+    Object.entries(customLabels).forEach(([sid, lbl]) => {
+      if (lbl && Object.prototype.hasOwnProperty.call(CONFIG.STATUS_LABEL, sid)) CONFIG.STATUS_LABEL[sid] = lbl;
+    });
+  },
+
+  // 「あと何分」しきい値のカスタマイズ（#2）。NEARLY_DONEの分数を返す
+  _applyThresholds() {
+    const customLabels = AppState.getSettingJSON('status_custom_labels', {});
+    const ndMin = AppState.getSettingInt('nearly_done_minutes', 10);
+    if (ndMin > 0 && !customLabels.NEARLY_DONE) {
+      CONFIG.STATUS_LABEL.NEARLY_DONE = `あと${ndMin}分`;
     }
+    const stMin = AppState.getSettingInt('soon_threshold_min', 15);
+    if (stMin > 0) CONFIG.SOON_THRESHOLD_MIN = stMin;
+    return ndMin;
+  },
+
+  // ステータスカラーのカスタマイズ（#3）。高コントラスト・CVDテーマ有効時はテーマを優先する
+  _applyStatusColors(themeStyle) {
+    const isAccessibleTheme = ['high-contrast', 'cvd'].includes(themeStyle);
+    if (isAccessibleTheme) return;
+
+    const STATUS_CSS_VARS = {
+      IN_BED:           { card_bg: '--clr-in-bed',        card_border: '--clr-in-bed-border',      badge_bg: '--badge-in-bed-bg',        badge_text: '--badge-in-bed-text' },
+      DEPART_REGISTERED:{ card_bg: '--clr-depart-reg',    card_border: '--clr-depart-reg-border',  card_text: '--clr-depart-reg-text',    badge_bg: '--badge-depart-bg',    badge_text: '--badge-depart-text' },
+      MOVING:           { card_bg: '--clr-moving',        card_border: '--clr-moving-border',      card_text: '--clr-moving-text',        badge_bg: '--badge-moving-bg',    badge_text: '--badge-moving-text' },
+      ARRIVED:          { card_bg: '--clr-arrived',       card_border: '--clr-arrived-border',     badge_bg: '--badge-arrived-bg',        badge_text: '--badge-arrived-text' },
+      IN_EXAM:          { card_bg: '--clr-in-exam',       card_border: '--clr-in-exam-border',     card_text: '--clr-in-exam-text',       badge_bg: '--badge-in-exam-bg',   badge_text: '--badge-in-exam-text' },
+      NEARLY_DONE:      { card_bg: '--clr-nearly-done',   card_border: '--clr-nearly-done-border', card_text: '--clr-nearly-done-text',   badge_bg: '--badge-nearly-done-bg',badge_text: '--badge-nearly-done-text' },
+      PICKUP_REQUIRED:  { card_bg: '--clr-pickup',        card_border: '--clr-pickup-border',      card_text: '--clr-pickup-text',        badge_bg: '--badge-pickup-bg',    badge_text: '--badge-pickup-text' },
+      RETURNED:         { card_bg: '--clr-returned',      card_border: '--clr-returned-border',    card_text: '--clr-returned-text',      badge_bg: '--badge-returned-bg',  badge_text: '--badge-returned-text' },
+      CANCELLED:        { card_bg: '--clr-cancelled',     card_border: '--clr-cancelled-border',   card_text: '--clr-cancelled-text',     badge_bg: '--badge-cancelled-bg', badge_text: '--badge-cancelled-text' },
+    };
+    const colors = AppState.getSettingJSON('status_colors', null);
+    if (!colors) return;
+    const root = document.documentElement;
+    Object.entries(colors).forEach(([sid, colorMap]) => {
+      const vars = STATUS_CSS_VARS[sid];
+      if (!vars || !colorMap) return;
+      if (colorMap.card_bg    && vars.card_bg)    root.style.setProperty(vars.card_bg,    colorMap.card_bg);
+      if (colorMap.card_border && vars.card_border) root.style.setProperty(vars.card_border, colorMap.card_border);
+      if (colorMap.card_text  && vars.card_text)  root.style.setProperty(vars.card_text,  colorMap.card_text);
+      if (colorMap.badge_bg   && vars.badge_bg)   root.style.setProperty(vars.badge_bg,   colorMap.badge_bg);
+      if (colorMap.badge_text && vars.badge_text) root.style.setProperty(vars.badge_text, colorMap.badge_text);
+    });
+  },
+
+  // アクションボタンラベルのカスタマイズ（#4）。オリジナル値を保存し、再呼び出し時にリセットしてから適用する
+  _applyActionButtonLabels(ndMin) {
     if (!App._origActionButtonLabels) {
       App._origActionButtonLabels = {};
       Object.entries(CONFIG.ACTION_BUTTONS).forEach(([st, btns]) => {
@@ -1232,9 +1274,6 @@ const App = {
         App._origExamRoomActionLabels[st] = btns.map(b => b.label);
       });
     }
-
-    // オリジナル値にリセット
-    Object.assign(CONFIG.STATUS_LABEL, App._origStatusLabels);
     Object.entries(App._origActionButtonLabels).forEach(([st, labels]) => {
       labels.forEach((lbl, i) => { if (CONFIG.ACTION_BUTTONS[st]?.[i]) CONFIG.ACTION_BUTTONS[st][i].label = lbl; });
     });
@@ -1242,60 +1281,7 @@ const App = {
       labels.forEach((lbl, i) => { if (CONFIG.EXAM_ROOM_ACTIONS[st]?.[i]) CONFIG.EXAM_ROOM_ACTIONS[st][i].label = lbl; });
     });
 
-    // #1 ステータス表示名のカスタマイズ
-    const customLabelsSetting = AppState.systemSettings?.find(s => s.id === 'status_custom_labels');
-    let customLabels = {};
-    try { customLabels = JSON.parse(customLabelsSetting?.value || '{}'); } catch (e) {}
-    Object.entries(customLabels).forEach(([sid, lbl]) => {
-      if (lbl && Object.prototype.hasOwnProperty.call(CONFIG.STATUS_LABEL, sid)) CONFIG.STATUS_LABEL[sid] = lbl;
-    });
-
-    // #2 しきい値カスタマイズ
-    const nearlyDoneMinSetting = AppState.systemSettings?.find(s => s.id === 'nearly_done_minutes');
-    const ndMin = parseInt(nearlyDoneMinSetting?.value || '10', 10);
-    if (!isNaN(ndMin) && ndMin > 0 && !customLabels.NEARLY_DONE) {
-      CONFIG.STATUS_LABEL.NEARLY_DONE = `あと${ndMin}分`;
-    }
-    const soonThreshSetting = AppState.systemSettings?.find(s => s.id === 'soon_threshold_min');
-    const stMin = parseInt(soonThreshSetting?.value || '15', 10);
-    if (!isNaN(stMin) && stMin > 0) CONFIG.SOON_THRESHOLD_MIN = stMin;
-
-    // #3 ステータスカラーのカスタマイズ（アクセシブルテーマ優先）
-    const isAccessibleTheme = ['high-contrast', 'cvd'].includes(themeStyle);
-    if (!isAccessibleTheme) {
-      const STATUS_CSS_VARS = {
-        IN_BED:           { card_bg: '--clr-in-bed',        card_border: '--clr-in-bed-border',      badge_bg: '--badge-in-bed-bg',        badge_text: '--badge-in-bed-text' },
-        DEPART_REGISTERED:{ card_bg: '--clr-depart-reg',    card_border: '--clr-depart-reg-border',  card_text: '--clr-depart-reg-text',    badge_bg: '--badge-depart-bg',    badge_text: '--badge-depart-text' },
-        MOVING:           { card_bg: '--clr-moving',        card_border: '--clr-moving-border',      card_text: '--clr-moving-text',        badge_bg: '--badge-moving-bg',    badge_text: '--badge-moving-text' },
-        ARRIVED:          { card_bg: '--clr-arrived',       card_border: '--clr-arrived-border',     badge_bg: '--badge-arrived-bg',        badge_text: '--badge-arrived-text' },
-        IN_EXAM:          { card_bg: '--clr-in-exam',       card_border: '--clr-in-exam-border',     card_text: '--clr-in-exam-text',       badge_bg: '--badge-in-exam-bg',   badge_text: '--badge-in-exam-text' },
-        NEARLY_DONE:      { card_bg: '--clr-nearly-done',   card_border: '--clr-nearly-done-border', card_text: '--clr-nearly-done-text',   badge_bg: '--badge-nearly-done-bg',badge_text: '--badge-nearly-done-text' },
-        PICKUP_REQUIRED:  { card_bg: '--clr-pickup',        card_border: '--clr-pickup-border',      card_text: '--clr-pickup-text',        badge_bg: '--badge-pickup-bg',    badge_text: '--badge-pickup-text' },
-        RETURNED:         { card_bg: '--clr-returned',      card_border: '--clr-returned-border',    card_text: '--clr-returned-text',      badge_bg: '--badge-returned-bg',  badge_text: '--badge-returned-text' },
-        CANCELLED:        { card_bg: '--clr-cancelled',     card_border: '--clr-cancelled-border',   card_text: '--clr-cancelled-text',     badge_bg: '--badge-cancelled-bg', badge_text: '--badge-cancelled-text' },
-      };
-      const colorsSetting = AppState.systemSettings?.find(s => s.id === 'status_colors');
-      if (colorsSetting) {
-        try {
-          const colors = JSON.parse(colorsSetting.value || '{}');
-          const root = document.documentElement;
-          Object.entries(colors).forEach(([sid, colorMap]) => {
-            const vars = STATUS_CSS_VARS[sid];
-            if (!vars || !colorMap) return;
-            if (colorMap.card_bg    && vars.card_bg)    root.style.setProperty(vars.card_bg,    colorMap.card_bg);
-            if (colorMap.card_border && vars.card_border) root.style.setProperty(vars.card_border, colorMap.card_border);
-            if (colorMap.card_text  && vars.card_text)  root.style.setProperty(vars.card_text,  colorMap.card_text);
-            if (colorMap.badge_bg   && vars.badge_bg)   root.style.setProperty(vars.badge_bg,   colorMap.badge_bg);
-            if (colorMap.badge_text && vars.badge_text) root.style.setProperty(vars.badge_text, colorMap.badge_text);
-          });
-        } catch (e) { console.warn('[App] status_colors parse error:', e); }
-      }
-    }
-
-    // #4 アクションボタンラベルのカスタマイズ
-    const actionLabelsSetting = AppState.systemSettings?.find(s => s.id === 'action_button_labels');
-    let actionLabels = {};
-    try { actionLabels = JSON.parse(actionLabelsSetting?.value || '{}'); } catch (e) {}
+    const actionLabels = AppState.getSettingJSON('action_button_labels', {});
     Object.entries(actionLabels).forEach(([key, lbl]) => {
       if (!lbl) return;
       const parts = key.split(':');
@@ -1308,7 +1294,7 @@ const App = {
       }
     });
     // NEARLY_DONEボタンのラベルをしきい値から自動生成（カスタムラベルが未設定の場合）
-    if (!actionLabels['IN_EXAM:NEARLY_DONE'] && !isNaN(ndMin) && ndMin > 0) {
+    if (!actionLabels['IN_EXAM:NEARLY_DONE'] && ndMin > 0) {
       const wardBtn = CONFIG.ACTION_BUTTONS.IN_EXAM?.find(b => b.toStatus === 'NEARLY_DONE');
       if (wardBtn) wardBtn.label = `あと${ndMin}分`;
       const examBtn = CONFIG.EXAM_ROOM_ACTIONS.IN_EXAM?.find(b => b.toStatus === 'NEARLY_DONE');

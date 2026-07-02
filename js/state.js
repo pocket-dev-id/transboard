@@ -153,4 +153,25 @@ const AppState = {
       .sort((a, b) => a.priorityScore - b.priorityScore);
     return items;
   },
+
+  /* ---------- system_settings 読み取りヘルパー（コード#1: 重複ボイラープレート排除） ---------- */
+  getSettingRaw(id, fallback = null) {
+    const s = this.systemSettings?.find(x => x.id === id);
+    return s ? s.value : fallback;
+  },
+  getSettingJSON(id, fallback) {
+    try {
+      const raw = this.getSettingRaw(id);
+      return raw != null ? JSON.parse(raw) : fallback;
+    } catch { return fallback; }
+  },
+  getSettingInt(id, fallback) {
+    const raw = this.getSettingRaw(id);
+    const n = parseInt(raw, 10);
+    return isNaN(n) ? fallback : n;
+  },
+  getSettingBool(id, fallback) {
+    const raw = this.getSettingRaw(id);
+    return raw == null ? fallback : raw !== 'false';
+  },
 };

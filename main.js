@@ -268,12 +268,21 @@ function decryptSensitiveValue(value) {
   return ''; // 復号エラー時は空文字
 }
 
+// ローカルデータベースのメモリキャッシュ（コード#6: 毎リクエストごとのディスク読み込み・JSON.parseを回避）
+// Node.jsはシングルスレッドのためIPC/HTTPリクエストはイベントループ上で直列化され、
+// キャッシュと実ファイルがズレるような競合は発生しない
+let dbCache = null;
+
 // ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）
 function readDB() {
+  if (dbCache) {
+    return JSON.parse(JSON.stringify(dbCache));
+  }
   try {
     if (!fs.existsSync(DB_FILE)) {
       console.log(`[DB] データベースが存在しないため初期データを書き込みます: ${DB_FILE}`);
       safeWriteFile(DB_FILE, JSON.stringify(SEEDS, null, 2));
+      dbCache = JSON.parse(JSON.stringify(SEEDS));
       return JSON.parse(JSON.stringify(SEEDS));
     }
     const data = fs.readFileSync(DB_FILE, 'utf8');
@@ -361,6 +370,7 @@ function readDB() {
       writeDB(db);
     }
 
+    dbCache = JSON.parse(JSON.stringify(db));
     return db;
   } catch (err) {
     console.error('[DB] データベースの読み込み失敗:', err);
@@ -372,6 +382,7 @@ function readDB() {
         const bakData = fs.readFileSync(bakPath, 'utf8');
         const recovered = JSON.parse(bakData);
         console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
+        dbCache = JSON.parse(JSON.stringify(recovered));
         return recovered;
       } catch (bakErr) {
         console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
@@ -388,6 +399,7 @@ function readDB() {
     }
 
     console.error('[DB] データを復旧できませんでした。初期データで再構築します。');
+    dbCache = JSON.parse(JSON.stringify(SEEDS));
     return JSON.parse(JSON.stringify(SEEDS));
   }
 }
@@ -414,9 +426,13 @@ function writeDB(data) {
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
     try { fs.copyFileSync(DB_FILE, DB_FILE + '.bak'); } catch {}
 
+    // メモリキャッシュを最新の状態（復号化された形）に更新する
+    dbCache = JSON.parse(JSON.stringify(data));
+
     return true;
   } catch (err) {
     console.error('[DB] データベースの書き込み失敗:', err);
+    // 書き込み失敗時はキャッシュを更新しない（ディスク上の状態と不整合を避ける）
     return false;
   }
 }
@@ -1577,7 +1593,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       console.log(`[DB Cleaner] Trimmed calls to 500 entries.`);
     }
 
-    writeDB(db);
+    if (!writeDB(db)) {
+      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
     return data;
   }
 
@@ -1599,7 +1617,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
           updatedItems.push(list[index]);
         }
       });
-      writeDB(db);
+      if (!writeDB(db)) {
+        throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+      }
       console.log(`[DB] Bulk ${method} Updated: table=${table}, items=${updatedItems.length}`);
       return { success: true, count: updatedItems.length, data: updatedItems };
     }
@@ -1614,7 +1634,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       return { success: false, message: 'Not Found' };
     }
     list[index] = { ...list[index], ...data };
-    writeDB(db);
+    if (!writeDB(db)) {
+      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
     console.log(`[DB] PATCH Updated: table=${table}, id=${id}, updated fields:`, Object.keys(data));
     return list[index];
   }
@@ -1626,7 +1648,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
       return { success: false, message: 'Not Found' };
     }
     const removed = list.splice(index, 1)[0];
-    writeDB(db);
+    if (!writeDB(db)) {
+      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
     console.log(`[DB] DELETE Success: table=${table}, id=${id}`);
     return removed;
   }
@@ -1774,6 +1798,8 @@ ipcMain.handle('restore-db', async () => {
     }
     // アトミックに上書きして復元する
     safeWriteFile(DB_FILE, fileContent);
+    // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
+    dbCache = null;
     return { success: true };
   } catch (err) {
     console.error('[DB Restore Error]', err);

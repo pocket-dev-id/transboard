@@ -90,6 +90,62 @@ const UI = {
     }, duration);
   },
 
+  /* ---------- 確認ダイアログ（デザイン#5: ネイティブconfirm()の代替） ---------- */
+  // メッセージ本文はtextContentで挿入するためXSSの心配がない
+  confirmModal(message, { danger = false, confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay confirm-modal-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'modal confirm-modal';
+      modal.setAttribute('role', 'alertdialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const body = document.createElement('div');
+      body.className = 'modal-body confirm-modal-body';
+      const icon = document.createElement('i');
+      icon.className = `fas ${danger ? 'fa-exclamation-triangle' : 'fa-question-circle'} confirm-modal-icon${danger ? ' confirm-modal-icon--danger' : ''}`;
+      icon.setAttribute('aria-hidden', 'true');
+      const text = document.createElement('span');
+      text.className = 'confirm-modal-text';
+      text.textContent = message;
+      body.appendChild(icon);
+      body.appendChild(text);
+
+      const footer = document.createElement('div');
+      footer.className = 'modal-footer confirm-modal-footer';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'btn btn-outline btn-sm';
+      cancelBtn.textContent = cancelLabel;
+      const okBtn = document.createElement('button');
+      okBtn.className = `btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`;
+      okBtn.textContent = confirmLabel;
+      footer.appendChild(cancelBtn);
+      footer.appendChild(okBtn);
+
+      modal.appendChild(body);
+      modal.appendChild(footer);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(result);
+      };
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(false);
+        if (e.key === 'Enter') cleanup(true);
+      };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+      cancelBtn.addEventListener('click', () => cleanup(false));
+      okBtn.addEventListener('click', () => cleanup(true));
+      document.addEventListener('keydown', onKeydown);
+      okBtn.focus();
+    });
+  },
+
   /* ---------- 時計 ---------- */
   startClock() {
     const el = document.getElementById('clock');
