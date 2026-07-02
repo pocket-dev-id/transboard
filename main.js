@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, safeStorage, Notification: ElectronNotification, dialog } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, powerSaveBlocker, safeStorage, Notification: ElectronNotification, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const chokidar = require('chokidar');
@@ -13,6 +13,7 @@ let mainWindow;
 let currentWatcher = null;
 let currentWatchDir = null;
 let nfcProcess = null;
+let powerSaveBlockerId = null;
 
 function startNfcWatcher() {
   if (nfcProcess) return;
@@ -1210,10 +1211,10 @@ try {
   $conn.Open()
   $schema = $conn.GetSchema('Tables')
   $conn.Close()
-  $items = $schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
+  $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
     Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
-    Sort-Object type, name
-  $items | ConvertTo-Json -Compress
+    Sort-Object type, name)
+  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }
 } catch {
   Write-Output "ERROR:$($_.Exception.Message)"
 }`.trim();
@@ -1221,8 +1222,8 @@ try {
   try {
     const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
       { encoding: 'utf8', timeout: 15000 }).trim();
-    if (out.startsWith('ERROR:')) {
-      return { success: false, error: out.slice(6), tables: [] };
+    if (!out || out.startsWith('ERROR:')) {
+      return { success: false, error: out ? out.slice(6) : 'テーブル情報を取得できませんでした', tables: [] };
     }
     const raw = JSON.parse(out);
     const tables = (Array.isArray(raw) ? raw : [raw]).map(r => ({ name: r.name, type: r.type }));
@@ -1680,6 +1681,33 @@ ipcMain.handle('webrtc-request', async (event, { url, options }) => {
 
 // アプリバージョンを返す
 ipcMain.handle('get-app-version', () => app.getVersion());
+ipcMain.handle('get-hostname', () => os.hostname());
+
+// フォルダ選択ダイアログ（スケジュール取り込みの監視フォルダ選択用）
+ipcMain.handle('select-folder', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: '監視フォルダを選択',
+  });
+  return canceled ? null : filePaths[0];
+});
+
+// CSVのヘッダ行を読み取る（スケジュール取り込みの列マッピング補助用）
+ipcMain.handle('read-csv-headers', async (event, folderPath) => {
+  try {
+    const files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.csv'));
+    if (files.length === 0) return { ok: false, reason: 'no_csv' };
+    const firstFile = path.join(folderPath, files[0]);
+    const content = fs.readFileSync(firstFile, 'utf-8');
+    const firstLine = content.split(/\r?\n/)[0] || '';
+    // カンマ区切りとタブ区切りを自動判定
+    const sep = firstLine.includes('\t') ? '\t' : ',';
+    const headers = firstLine.split(sep).map(h => h.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+    return { ok: true, headers, filename: files[0] };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+});
 
 // 開発/本番モード判定 (インフラ #4: 環境分離)
 ipcMain.handle('is-dev-mode', () => !app.isPackaged || process.env.NODE_ENV === 'development');
@@ -1747,6 +1775,29 @@ ipcMain.handle('toggle-fullscreen', () => {
     return !isFS;
   }
   return false;
+});
+
+// スクリーンセイバー・ディスプレイスリープを抑制する
+ipcMain.handle('set-power-save', (event, prevent) => {
+  if (prevent) {
+    if (powerSaveBlockerId === null) {
+      powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    }
+  } else {
+    if (powerSaveBlockerId !== null) {
+      powerSaveBlocker.stop(powerSaveBlockerId);
+      powerSaveBlockerId = null;
+    }
+  }
+  return { ok: true };
+});
+
+// ウィンドウを常に最前面に表示する
+ipcMain.handle('set-always-on-top', (event, value) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(value, 'floating');
+  }
+  return { ok: true };
 });
 
 // IPC通信でデータベースのバックアップファイルをエクスポートする

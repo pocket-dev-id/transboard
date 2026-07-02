@@ -935,7 +935,20 @@ select, input { font-family: inherit; }
 .confirm-modal-body { display: flex; align-items: flex-start; gap: 12px; }
 .confirm-modal-icon { font-size: 22px; color: var(--clr-warning); flex-shrink: 0; margin-top: 2px; }
 .confirm-modal-icon--danger { color: var(--clr-danger); }
+.confirm-modal-icon--warning { color: var(--clr-warning); }
+.confirm-modal-text-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.confirm-modal-title { font-size: 15px; font-weight: 700; color: var(--clr-text); }
 .confirm-modal-text { font-size: 14px; line-height: 1.6; white-space: pre-line; }
+.confirm-modal-detail {
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--clr-danger-bg);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--clr-danger);
+  font-weight: 600;
+}
 .confirm-modal-footer { justify-content: flex-end; }
 
 .modal-footer {
@@ -1608,6 +1621,7 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 }
 .settings-table tr:last-child td { border-bottom: none; }
 .settings-table tr:hover td { background: #f8fafc; }
+.row--inactive { opacity: 0.5; }
 
 /* 設定パネル汎用ヘルパー (UI #3) */
 .settings-section {

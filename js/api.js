@@ -98,7 +98,7 @@ const API = {
   },
   async getAllBeds()     { return (await this.getAll('beds')).data; },
   async getBedTypes()    { return (await this.getAll('bed_types')).data; },
-  async getExamRooms()  { return (await this.getAll('exam_rooms')).data.filter(r => r.is_active); },
+  async getExamRooms()  { return (await this.getAll('exam_rooms')).data; },
   async getExamTypes()  { return (await this.getAll('exam_types')).data; },
   async getStaffs(wardId) {
     const res = await this.getAll('staffs');

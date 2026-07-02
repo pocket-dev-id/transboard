@@ -134,8 +134,9 @@ const PasscodeModal = {
     if (ok) {
       PasscodeHash.recordAttempt(false);
       window.isAdminSession = true;
+      const onSuccess = this._onSuccess;
       this.close();
-      if (this._onSuccess) this._onSuccess();
+      if (onSuccess) onSuccess();
     } else {
       PasscodeHash.recordAttempt(true);
       const errMsg = document.getElementById('passcode-error-msg');
@@ -875,13 +876,18 @@ const App = {
       return id;
     })();
 
+    let _cachedHostname = null;
+    if (window.electronAPI?.getHostname) {
+      window.electronAPI.getHostname().then(h => { _cachedHostname = h || null; }).catch(() => {});
+    }
+
     const sendHeartbeat = async () => {
       const wardId = AppState.currentWardId || localStorage.getItem('current_ward_id') || '';
-      const name = navigator.userAgent.match(/Windows NT/) ? (location.hostname || 'Windows端末') : (location.hostname || '端末');
       try {
         const res = await API.deviceHeartbeat({
           deviceId,
           name: localStorage.getItem('_device_name') || deviceId,
+          hostname: _cachedHostname || undefined,
           wardId,
           mode: localStorage.getItem('cfg_share_mode') || 'client',
           page: document.querySelector('.tab-btn.active')?.dataset.page || ''
@@ -934,10 +940,12 @@ const App = {
       ]);
       AppState.wards = wards;
       AppState.beds = beds;
+      AppState.allBedTypes = bedTypes.slice().sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
       AppState.bedTypes = bedTypes.filter(t => t.is_active !== false).sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
       AppState.allExamRooms = examRooms;
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
-      AppState.examTypes = examTypes;
+      AppState.allExamTypes = examTypes;
+      AppState.examTypes = examTypes.filter(t => t.is_active !== false);
       AppState.staffs = staffs;
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
@@ -1130,6 +1138,7 @@ const App = {
     this._applyZoomAndFont();
     await this._applySyncTimeDisplay();
     const themeStyle = this._applyTheme();
+    this._applyPowerSettings();
     this._applyStatusLabels();
     const ndMin = this._applyThresholds();
     this._applyStatusColors(themeStyle);
@@ -1208,6 +1217,18 @@ const App = {
     document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd');
     document.body.classList.add(`theme-${themeStyle}`);
     return themeStyle;
+  },
+
+  // スクリーンセイバー抑制・最前面表示の適用（端末個別設定）
+  _applyPowerSettings() {
+    if (window.electronAPI?.setPowerSave) {
+      const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
+      window.electronAPI.setPowerSave(preventSleep);
+    }
+    if (window.electronAPI?.setAlwaysOnTop) {
+      const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
+      window.electronAPI.setAlwaysOnTop(alwaysOnTop);
+    }
   },
 
   // ステータス表示名のカスタマイズ（#1）。CONFIG.STATUS_LABEL_DEFAULTS（単一情報源）にリセットしてから適用する

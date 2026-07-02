@@ -72,7 +72,7 @@ const AppState = {
   },
 
   getExamTypeById(id) {
-    return this.examTypes.find(t => t.id === id);
+    return (this.allExamTypes || this.examTypes).find(t => t.id === id);
   },
 
   getExamRoomById(id) {

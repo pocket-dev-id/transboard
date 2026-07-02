@@ -22,6 +22,27 @@ const Settings = {
   _csvDataRows: [],
 
 
+  // ──────────────────────────────────
+  //  共通ユーティリティ
+  // ──────────────────────────────────
+
+  // モーダルオーバーレイに Escape キーで閉じる機能を付与する
+  _addEscapeClose(overlay, close) {
+    const handler = (e) => {
+      if (e.key === 'Escape') { close(); }
+    };
+    document.addEventListener('keydown', handler);
+    overlay.addEventListener('remove', () => document.removeEventListener('keydown', handler), { once: true });
+    // overlay.remove() では 'remove' イベントが発火しないため MutationObserver で監視
+    const obs = new MutationObserver(() => {
+      if (!document.body.contains(overlay)) {
+        document.removeEventListener('keydown', handler);
+        obs.disconnect();
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: false });
+  },
+
   updateImportPreview() {
     const previewContainer = document.getElementById('helper-preview-container');
     if (!previewContainer || !this._csvDataRows || this._csvDataRows.length === 0) return;

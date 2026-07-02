@@ -92,8 +92,19 @@ const UI = {
 
   /* ---------- 確認ダイアログ（デザイン#5: ネイティブconfirm()の代替） ---------- */
   // メッセージ本文はtextContentで挿入するためXSSの心配がない
-  confirmModal(message, { danger = false, confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+  // opts.type: 'danger'|'warning' でアイコン・ボタン色を指定可能（未指定時は opts.danger を後方互換のショートハンドとして使用）
+  // opts.title: メッセージ上部の見出し（省略時はアイコン+メッセージのみのシンプル表示）
+  // opts.detail: メッセージ下部の強調警告ボックス（省略可）
+  confirmModal(message, { title, detail, danger = false, type, confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
     return new Promise(resolve => {
+      const effectiveType = type || (danger ? 'danger' : null);
+      const iconClass = effectiveType === 'danger' ? 'fa-exclamation-triangle'
+        : effectiveType === 'warning' ? 'fa-exclamation-circle'
+        : 'fa-question-circle';
+      const btnCls = effectiveType === 'danger' ? 'btn-danger'
+        : effectiveType === 'warning' ? 'btn-warning'
+        : 'btn-primary';
+
       const overlay = document.createElement('div');
       overlay.className = 'modal-overlay confirm-modal-overlay';
 
@@ -105,13 +116,29 @@ const UI = {
       const body = document.createElement('div');
       body.className = 'modal-body confirm-modal-body';
       const icon = document.createElement('i');
-      icon.className = `fas ${danger ? 'fa-exclamation-triangle' : 'fa-question-circle'} confirm-modal-icon${danger ? ' confirm-modal-icon--danger' : ''}`;
+      icon.className = `fas ${iconClass} confirm-modal-icon${effectiveType ? ` confirm-modal-icon--${effectiveType}` : ''}`;
       icon.setAttribute('aria-hidden', 'true');
+
+      const textCol = document.createElement('div');
+      textCol.className = 'confirm-modal-text-col';
+      if (title) {
+        const titleEl = document.createElement('div');
+        titleEl.className = 'confirm-modal-title';
+        titleEl.textContent = title;
+        textCol.appendChild(titleEl);
+      }
       const text = document.createElement('span');
       text.className = 'confirm-modal-text';
       text.textContent = message;
+      textCol.appendChild(text);
+      if (detail) {
+        const detailEl = document.createElement('div');
+        detailEl.className = 'confirm-modal-detail';
+        detailEl.textContent = detail;
+        textCol.appendChild(detailEl);
+      }
       body.appendChild(icon);
-      body.appendChild(text);
+      body.appendChild(textCol);
 
       const footer = document.createElement('div');
       footer.className = 'modal-footer confirm-modal-footer';
@@ -119,7 +146,7 @@ const UI = {
       cancelBtn.className = 'btn btn-outline btn-sm';
       cancelBtn.textContent = cancelLabel;
       const okBtn = document.createElement('button');
-      okBtn.className = `btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}`;
+      okBtn.className = `btn btn-sm ${btnCls}`;
       okBtn.textContent = confirmLabel;
       footer.appendChild(cancelBtn);
       footer.appendChild(okBtn);

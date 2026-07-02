@@ -9,15 +9,15 @@ Object.assign(Settings, {
   // ──────────────────────────────────
 
   _renderBedTypes(body) {
-    const types = (AppState.bedTypes || [])
-      .slice()
-      .sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
-
     body.innerHTML = `
       <div class="settings-panel">
         <div class="settings-panel-header">
           <h3><i class="fas fa-tags"></i> 病床タイプマスタ</h3>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--clr-text-muted); cursor:pointer; user-select:none;">
+              <input type="checkbox" id="chk-show-inactive-bed-types" style="cursor:pointer;">
+              無効を表示
+            </label>
             <button class="btn btn-outline btn-sm" id="btn-export-bed_types"><i class="fas fa-file-download"></i> CSV出力</button>
             <button class="btn btn-outline btn-sm" id="btn-import-bed_types"><i class="fas fa-file-upload"></i> CSV入力</button>
             <button class="btn btn-primary btn-sm" id="btn-add-bed-type"><i class="fas fa-plus"></i> タイプ追加</button>
@@ -26,34 +26,48 @@ Object.assign(Settings, {
         <p class="settings-hint"><i class="fas fa-info-circle"></i> 病床に割り当てるタイプを管理します。ここで追加したタイプは病床マスタで選択できます。</p>
         <table class="settings-table">
           <thead><tr><th>表示名</th><th>コード</th><th>並び順</th><th>状態</th><th>操作</th></tr></thead>
-          <tbody>
-            ${types.map(type => `
-              <tr>
-                <td class="font-bold">${type.name}</td>
-                <td><code>${type.code}</code></td>
-                <td>${type.sort_order ?? '-'}</td>
-                <td>${type.is_active === false ? '<span style="color:#64748b; font-weight:700;">無効</span>' : '<span style="color:#16a34a; font-weight:700;">有効</span>'}</td>
-                <td>
-                  <button class="btn btn-outline btn-sm btn-edit-bed-type" data-type-id="${type.id}"><i class="fas fa-edit"></i></button>
-                  <button class="btn btn-outline btn-sm btn-toggle-bed-type" data-type-id="${type.id}" style="margin-left:4px;">${type.is_active === false ? '有効化' : '無効化'}</button>
-                </td>
-              </tr>
-            `).join('') || '<tr><td colspan="5" class="text-muted">病床タイプが登録されていません</td></tr>'}
-          </tbody>
+          <tbody id="bed-types-tbody"></tbody>
         </table>
       </div>
     `;
 
+    const _renderBedTypesTable = (showInactive) => {
+      const all = AppState.allBedTypes || AppState.bedTypes;
+      const rows = showInactive ? all : all.filter(t => t.is_active !== false);
+      const inactiveCount = all.filter(t => t.is_active === false).length;
+      const tbody = document.getElementById('bed-types-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = rows.map(type => `
+        <tr class="${type.is_active === false ? 'row--inactive' : ''}">
+          <td class="font-bold">${type.name}</td>
+          <td><code>${type.code}</code></td>
+          <td>${type.sort_order ?? '-'}</td>
+          <td>${type.is_active === false ? '<span style="color:#64748b; font-weight:700;">無効</span>' : '<span style="color:#16a34a; font-weight:700;">有効</span>'}</td>
+          <td>
+            <button class="btn btn-outline btn-sm btn-edit-bed-type" data-type-id="${type.id}"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline btn-sm btn-toggle-bed-type" data-type-id="${type.id}" style="margin-left:4px;">${type.is_active === false ? '有効化' : '無効化'}</button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="5" class="text-muted">病床タイプが登録されていません</td></tr>';
+
+      const chk = document.getElementById('chk-show-inactive-bed-types');
+      if (chk) chk.title = inactiveCount > 0 ? `無効の病床タイプが ${inactiveCount} 件あります` : '無効の病床タイプはありません';
+
+      tbody.querySelectorAll('.btn-edit-bed-type').forEach(btn => {
+        btn.onclick = () => {
+          const type = (AppState.allBedTypes || AppState.bedTypes).find(t => t.id === btn.dataset.typeId);
+          this._openBedTypeForm(type);
+        };
+      });
+      tbody.querySelectorAll('.btn-toggle-bed-type').forEach(btn => {
+        btn.onclick = () => this._toggleBedType(btn.dataset.typeId);
+      });
+    };
+
+    _renderBedTypesTable(false);
+
+    document.getElementById('chk-show-inactive-bed-types').onchange = (e) => _renderBedTypesTable(e.target.checked);
     document.getElementById('btn-add-bed-type').onclick = () => this._openBedTypeForm(null);
-    body.querySelectorAll('.btn-edit-bed-type').forEach(btn => {
-      btn.onclick = () => {
-        const type = (AppState.bedTypes || []).find(t => t.id === btn.dataset.typeId);
-        this._openBedTypeForm(type);
-      };
-    });
-    body.querySelectorAll('.btn-toggle-bed-type').forEach(btn => {
-      btn.onclick = () => this._toggleBedType(btn.dataset.typeId);
-    });
     this._setupCsvHandlers('bed_types', 'bed_types', ['id', 'code', 'name', 'sort_order', 'is_active']);
   },
 
@@ -90,6 +104,7 @@ Object.assign(Settings, {
     document.getElementById('bt-close').onclick = close;
     document.getElementById('bt-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
     setTimeout(() => document.getElementById('bt-name')?.focus(), 50);
 
     document.getElementById('bt-save').onclick = async () => {
@@ -119,7 +134,7 @@ Object.assign(Settings, {
   },
 
   async _toggleBedType(typeId) {
-    const type = (AppState.bedTypes || []).find(t => t.id === typeId);
+    const type = (AppState.allBedTypes || AppState.bedTypes || []).find(t => t.id === typeId);
     if (!type) return;
     try {
       await API.patch('bed_types', type.id, { is_active: type.is_active === false });
@@ -141,6 +156,9 @@ Object.assign(Settings, {
         <div class="settings-panel-header">
           <h3><i class="fas fa-bed"></i> 病床マスタ — ${wardName}</h3>
           <div style="display:flex; gap:8px;">
+            <button class="btn btn-danger btn-sm" id="btn-delete-all-beds" title="この病棟の病床をすべて削除します">
+              <i class="fas fa-trash-alt"></i> 全削除
+            </button>
             <button class="btn btn-outline btn-sm" id="btn-export-beds" title="病床マスタをCSVファイルに出力します">
               <i class="fas fa-file-download"></i> CSV出力
             </button>
@@ -175,6 +193,30 @@ Object.assign(Settings, {
     `;
 
     document.getElementById('btn-add-bed').onclick = () => this._openBedForm(null);
+
+    document.getElementById('btn-delete-all-beds').onclick = async () => {
+      const targetBeds = AppState.beds.filter(b => b.ward_id === wardId);
+      if (targetBeds.length === 0) { UI.toast('削除する病床がありません', 'info'); return; }
+      const ok = await UI.confirmModal(`「${wardName}」の病床 ${targetBeds.length} 件をすべて削除します。`, {
+        title: '病床を全削除',
+        detail: 'マップ配置情報も失われます。この操作は元に戻せません。',
+        danger: true,
+        confirmLabel: `全削除（${targetBeds.length}件）`,
+      });
+      if (!ok) return;
+      const btn = document.getElementById('btn-delete-all-beds');
+      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 削除中...'; }
+      try {
+        await Promise.all(targetBeds.map(b => API.remove('beds', b.id)));
+        await App.loadMasters();
+        this._renderBeds(document.getElementById('settings-tab-body'));
+        UI.toast(`病床 ${targetBeds.length} 件を削除しました`, 'success');
+      } catch (e) {
+        console.error(e);
+        UI.toast('削除に失敗しました: ' + e.message, 'danger');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-trash-alt"></i> 全削除'; }
+      }
+    };
 
     body.querySelectorAll('.btn-edit-bed').forEach(btn => {
       btn.onclick = () => {
@@ -309,6 +351,7 @@ Object.assign(Settings, {
     document.getElementById('bed-form-close').onclick = close;
     document.getElementById('bf-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
 
     // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
     setTimeout(() => {
@@ -360,7 +403,7 @@ Object.assign(Settings, {
   async _deleteBed(bedId) {
     const bed = AppState.beds.find(b => b.id === bedId);
     if (!bed) return;
-    if (!await UI.confirmModal(`${bed.bed_number}号床を削除しますか？\n※出棟履歴は残ります`, { danger: true, confirmLabel: '削除' })) return;
+    if (!await UI.confirmModal(`${bed.bed_number}号床を削除しますか？`, { title: '病床を削除', detail: '出棟履歴は残ります。', type: 'warning', confirmLabel: '削除' })) return;
     try {
       await API.remove('beds', bedId);
       UI.toast(`${bed.bed_number}号床を削除しました`, 'info');
@@ -860,7 +903,7 @@ Object.assign(Settings, {
       const tbody = document.getElementById('rooms-tbody');
       if (!tbody) return;
       tbody.innerHTML = rows.map(r => `
-        <tr style="${r.is_active === false ? 'opacity:0.5;' : ''}">
+        <tr class="${r.is_active === false ? 'row--inactive' : ''}">
           <td class="font-bold">${r.name}</td>
           <td>${r.code}</td>
           <td>${r.floor}</td>
@@ -957,6 +1000,7 @@ Object.assign(Settings, {
     document.getElementById('room-form-close').onclick = close;
     document.getElementById('rf-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
 
     // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
     setTimeout(() => {
@@ -1020,16 +1064,19 @@ Object.assign(Settings, {
           </div>
         </div>
         <table class="settings-table">
-          <thead><tr><th>名前</th><th>役職</th><th>有効</th><th>操作</th></tr></thead>
+          <thead><tr><th>名前</th><th>役職</th><th>状態</th><th>操作</th></tr></thead>
           <tbody>
             ${staffs.map(s => `
-              <tr>
+              <tr class="${s.is_active === false ? 'row--inactive' : ''}">
                 <td class="font-bold">${s.name}</td>
                 <td>${roleLabel[s.role]||s.role}</td>
-                <td>${s.is_active ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
+                <td>${s.is_active !== false ? '<span style="color:#16a34a; font-weight:700;">有効</span>' : '<span style="color:#64748b; font-weight:700;">無効</span>'}</td>
                 <td>
                   <button class="btn btn-outline btn-sm btn-edit-staff" data-staff-id="${s.id}">
                     <i class="fas fa-edit"></i>
+                  </button>
+                  <button class="btn btn-outline btn-sm btn-toggle-staff" data-staff-id="${s.id}" style="margin-left:4px;">
+                    ${s.is_active === false ? '有効化' : '無効化'}
                   </button>
                 </td>
               </tr>
@@ -1045,6 +1092,9 @@ Object.assign(Settings, {
         const s = AppState.staffs.find(x => x.id === btn.dataset.staffId);
         this._openStaffForm(s);
       };
+    });
+    body.querySelectorAll('.btn-toggle-staff').forEach(btn => {
+      btn.onclick = () => this._toggleStaff(btn.dataset.staffId);
     });
 
     this._setupCsvHandlers('staffs', 'staffs', ['id', 'name', 'role', 'ward_id', 'is_active']);
@@ -1095,6 +1145,7 @@ Object.assign(Settings, {
     document.getElementById('sf-close').onclick = close;
     document.getElementById('sf-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
 
     // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
     setTimeout(() => {
@@ -1125,6 +1176,18 @@ Object.assign(Settings, {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
       }
     };
+  },
+
+  async _toggleStaff(staffId) {
+    const staff = AppState.staffs.find(s => s.id === staffId);
+    if (!staff) return;
+    try {
+      await API.patch('staffs', staff.id, { is_active: staff.is_active === false });
+      await App.loadMasters();
+      this._renderStaffs(document.getElementById('settings-tab-body'));
+    } catch (e) {
+      UI.toast('状態の変更に失敗しました: ' + e.message, 'danger');
+    }
   },
 
   // ──────────────────────────────────
@@ -1196,7 +1259,7 @@ Object.assign(Settings, {
           return;
         }
 
-        if (!await UI.confirmModal(`「${ward.name}」を削除しますか？`, { danger: true, confirmLabel: '削除' })) return;
+        if (!await UI.confirmModal(`「${ward.name}」を削除しますか？`, { title: '病棟を削除', type: 'warning', confirmLabel: '削除' })) return;
 
         try {
           await API.remove('wards', wardId);
@@ -1260,6 +1323,7 @@ Object.assign(Settings, {
     document.getElementById('ward-form-close').onclick = close;
     document.getElementById('wf-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
 
     setTimeout(() => {
       document.getElementById('wf-name')?.focus();
@@ -1297,8 +1361,8 @@ Object.assign(Settings, {
         close();
         await App.loadMasters();
 
-        if (window.App && window.App.syncWardSelect) {
-          window.App.syncWardSelect();
+        if (typeof App !== 'undefined' && App.syncWardSelect) {
+          App.syncWardSelect();
         }
 
         this._renderWards(document.getElementById('settings-tab-body'));
@@ -1479,7 +1543,11 @@ Object.assign(Settings, {
       <div class="settings-panel">
         <div class="settings-panel-header">
           <h3><i class="fas fa-notes-medical"></i> 検査種別マスタ</h3>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--clr-text-muted); cursor:pointer; user-select:none;">
+              <input type="checkbox" id="chk-show-inactive-exam-types" style="cursor:pointer;">
+              無効を表示
+            </label>
             <button class="btn btn-outline btn-sm" id="btn-export-exam_types" title="検査種別マスタをCSVファイルに出力します">
               <i class="fas fa-file-download"></i> CSV出力
             </button>
@@ -1493,41 +1561,67 @@ Object.assign(Settings, {
         </div>
         <table class="settings-table">
           <thead>
-            <tr><th>検査種別名</th><th>コード</th><th>標準所要時間(分)</th><th>操作</th></tr>
+            <tr><th>検査種別名</th><th>コード</th><th>標準所要時間(分)</th><th>有効</th><th>操作</th></tr>
           </thead>
-          <tbody>
-            ${AppState.examTypes.map(t => `
-              <tr>
-                <td class="font-bold">${t.name}</td>
-                <td>${t.code}</td>
-                <td>${t.standard_duration_min}分</td>
-                <td>
-                  <button class="btn btn-outline btn-sm btn-edit-exam-type" data-type-id="${t.id}">
-                    <i class="fas fa-edit"></i>
-                  </button>
-                  <button class="btn btn-danger btn-sm btn-delete-exam-type" data-type-id="${t.id}" style="margin-left:4px;">
-                    <i class="fas fa-trash"></i>
-                  </button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
+          <tbody id="exam-types-tbody"></tbody>
         </table>
       </div>
     `;
 
-    document.getElementById('btn-add-exam-type').onclick = () => this._openExamTypeForm(null);
-    body.querySelectorAll('.btn-edit-exam-type').forEach(btn => {
-      btn.onclick = () => {
-        const type = AppState.examTypes.find(t => t.id === btn.dataset.typeId);
-        this._openExamTypeForm(type);
-      };
-    });
-    body.querySelectorAll('.btn-delete-exam-type').forEach(btn => {
-      btn.onclick = () => this._deleteExamType(btn.dataset.typeId);
-    });
+    const _renderExamTypesTable = (showInactive) => {
+      const all = AppState.allExamTypes || AppState.examTypes;
+      const rows = showInactive ? all : all.filter(t => t.is_active !== false);
+      const inactiveCount = all.filter(t => t.is_active === false).length;
+      const tbody = document.getElementById('exam-types-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = rows.map(t => `
+        <tr class="${t.is_active === false ? 'row--inactive' : ''}">
+          <td class="font-bold">${t.name}</td>
+          <td>${t.code}</td>
+          <td>${t.standard_duration_min}分</td>
+          <td>${t.is_active !== false ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
+          <td>
+            <button class="btn btn-outline btn-sm btn-edit-exam-type" data-type-id="${t.id}">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn btn-outline btn-sm btn-toggle-exam-type" data-type-id="${t.id}" style="margin-left:4px;">
+              ${t.is_active === false ? '有効化' : '無効化'}
+            </button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="5" class="text-muted" style="text-align:center;">検査種別が登録されていません</td></tr>';
 
-    this._setupCsvHandlers('exam_types', 'exam_types', ['id', 'name', 'code', 'standard_duration_min']);
+      const chk = document.getElementById('chk-show-inactive-exam-types');
+      if (chk) chk.title = inactiveCount > 0 ? `無効の検査種別が ${inactiveCount} 件あります` : '無効の検査種別はありません';
+
+      tbody.querySelectorAll('.btn-edit-exam-type').forEach(btn => {
+        btn.onclick = () => {
+          const type = (AppState.allExamTypes || AppState.examTypes).find(t => t.id === btn.dataset.typeId);
+          this._openExamTypeForm(type);
+        };
+      });
+      tbody.querySelectorAll('.btn-toggle-exam-type').forEach(btn => {
+        btn.onclick = () => this._toggleExamType(btn.dataset.typeId);
+      });
+    };
+
+    _renderExamTypesTable(false);
+
+    document.getElementById('chk-show-inactive-exam-types').onchange = (e) => _renderExamTypesTable(e.target.checked);
+    document.getElementById('btn-add-exam-type').onclick = () => this._openExamTypeForm(null);
+    this._setupCsvHandlers('exam_types', 'exam_types', ['id', 'name', 'code', 'standard_duration_min', 'is_active']);
+  },
+
+  async _toggleExamType(typeId) {
+    const type = (AppState.allExamTypes || AppState.examTypes || []).find(t => t.id === typeId);
+    if (!type) return;
+    try {
+      await API.patch('exam_types', type.id, { is_active: type.is_active === false });
+      await App.loadMasters();
+      this._renderExamTypes(document.getElementById('settings-tab-body'));
+    } catch (e) {
+      UI.toast('状態の変更に失敗しました: ' + e.message, 'danger');
+    }
   },
 
   _openExamTypeForm(type) {
@@ -1567,6 +1661,7 @@ Object.assign(Settings, {
     document.getElementById('et-close').onclick = close;
     document.getElementById('et-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
 
     setTimeout(() => {
       document.getElementById('et-name')?.focus();
@@ -1601,20 +1696,6 @@ Object.assign(Settings, {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
       }
     };
-  },
-
-  async _deleteExamType(typeId) {
-    const type = AppState.examTypes.find(t => t.id === typeId);
-    if (!type) return;
-    if (!await UI.confirmModal(`${type.name}を削除しますか？`, { danger: true, confirmLabel: '削除' })) return;
-    try {
-      await API.remove('exam_types', typeId);
-      UI.toast(`${type.name}を削除しました`, 'info');
-      await App.loadMasters();
-      this._renderExamTypes(document.getElementById('settings-tab-body'));
-    } catch (e) {
-      UI.toast('削除に失敗しました', 'danger');
-    }
   },
 
 });

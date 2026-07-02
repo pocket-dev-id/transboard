@@ -70,7 +70,37 @@ Object.assign(Settings, {
       ipListHtml = '<li>デスクトップ環境（Electron）でのみIP表示に対応しています</li>';
     }
 
+    const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
+    const alwaysOnTop  = localStorage.getItem('cfg_always_on_top') === 'true';
+
     body.innerHTML = `
+      <!-- 端末動作設定 -->
+      <div class="settings-panel" style="margin-bottom:16px;">
+        <div class="settings-panel-header">
+          <h3><i class="fas fa-desktop"></i> 端末動作設定</h3>
+        </div>
+        <p class="settings-hint">
+          <i class="fas fa-info-circle"></i>
+          この端末にのみ適用される動作設定です。保存不要で即時反映されます。
+        </p>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:13px; font-weight:600;">
+            <input type="checkbox" id="chk-prevent-sleep" ${preventSleep ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+            <div>
+              <div><i class="fas fa-moon" style="color:#7c3aed; margin-right:4px;"></i> スクリーンセイバー・スリープを抑制する</div>
+              <div style="font-size:11px; color:var(--clr-text-muted); font-weight:400; margin-top:1px;">有効にするとディスプレイのスリープ・スクリーンセイバーの起動を防止します（常時表示モニター向け）</div>
+            </div>
+          </label>
+          <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:13px; font-weight:600;">
+            <input type="checkbox" id="chk-always-on-top" ${alwaysOnTop ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+            <div>
+              <div><i class="fas fa-layer-group" style="color:#0284c7; margin-right:4px;"></i> 常に最前面に表示する</div>
+              <div style="font-size:11px; color:var(--clr-text-muted); font-weight:400; margin-top:1px;">有効にすると他のウィンドウより手前に固定表示されます（ナースステーション掲示板モード向け）</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <div class="settings-panel">
         <div class="settings-panel-header">
           <h3><i class="fas fa-network-wired"></i> 共有・ネットワーク設定</h3>
@@ -159,6 +189,31 @@ Object.assign(Settings, {
             </label>
             <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
               チェックを外すと、画面間のリアルタイム音声通話が無効になります。簡易定型アナウンス（音声合成）や内線番号表示のみを利用できます。
+            </div>
+
+            <!-- ビデオ通話品質 -->
+            <div style="margin-top:14px; padding-top:14px; border-top:1px dashed #e2e8f0;">
+              <div style="font-size:13px; font-weight:700; color:#2d3748; margin-bottom:4px;"><i class="fas fa-video"></i> ビデオ通話品質</div>
+              <p style="font-size:11px; color:#718096; margin:0 0 10px 0;"><i class="fas fa-info-circle"></i> この設定はこの端末にのみ適用されます。院内Wi-Fiが不安定な場合は低画質を選択してください。</p>
+              <div id="video-quality-btns" style="display:flex;gap:10px;flex-wrap:wrap;">
+                ${[
+                  { key:'low',    icon:'fa-signal', label:'低画質',  sub:'320×240 / 10fps / 200kbps',   col:'#64748b' },
+                  { key:'medium', icon:'fa-signal', label:'標準',    sub:'640×480 / 15fps / 500kbps',   col:'#3b82f6' },
+                  { key:'high',   icon:'fa-signal', label:'高画質',  sub:'1280×720 / 30fps / 1500kbps', col:'#16a34a' },
+                ].map(p => `
+                  <label style="flex:1;min-width:110px;display:flex;flex-direction:column;align-items:center;gap:4px;
+                    border:2px solid #e2e8f0;border-radius:8px;padding:10px 8px;cursor:pointer;
+                    background:#fafafa;transition:border-color .15s;" class="vq-label" data-key="${p.key}">
+                    <input type="radio" name="video-quality" value="${p.key}" style="display:none;">
+                    <i class="fas ${p.icon}" style="font-size:18px;color:${p.col};"></i>
+                    <span style="font-weight:700;font-size:13px;">${p.label}</span>
+                    <span style="font-size:10px;color:#6b7280;">${p.sub}</span>
+                  </label>
+                `).join('')}
+              </div>
+              <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+                <button class="btn btn-primary btn-sm" id="btn-save-video-quality"><i class="fas fa-save"></i> 画質を保存</button>
+              </div>
             </div>
           </div>
 
@@ -358,6 +413,32 @@ Object.assign(Settings, {
       });
     });
 
+    // 端末動作設定 — スリープ抑制
+    const preventSleepChk = body.querySelector('#chk-prevent-sleep');
+    if (preventSleepChk) {
+      preventSleepChk.onchange = () => {
+        const val = preventSleepChk.checked;
+        localStorage.setItem('cfg_prevent_sleep', val ? 'true' : 'false');
+        if (window.electronAPI?.setPowerSave) {
+          window.electronAPI.setPowerSave(val);
+          UI.toast(val ? 'スリープ・スクリーンセイバーを抑制します' : 'スリープ抑制を解除しました', 'info');
+        }
+      };
+    }
+
+    // 端末動作設定 — 最前面表示
+    const alwaysOnTopChk = body.querySelector('#chk-always-on-top');
+    if (alwaysOnTopChk) {
+      alwaysOnTopChk.onchange = () => {
+        const val = alwaysOnTopChk.checked;
+        localStorage.setItem('cfg_always_on_top', val ? 'true' : 'false');
+        if (window.electronAPI?.setAlwaysOnTop) {
+          window.electronAPI.setAlwaysOnTop(val);
+          UI.toast(val ? '最前面表示を有効にしました' : '最前面表示を解除しました', 'info');
+        }
+      };
+    }
+
     // ウィザード起動ボタン
     const wizardBtn = document.getElementById('btn-launch-wizard');
     if (wizardBtn) {
@@ -403,8 +484,33 @@ Object.assign(Settings, {
       };
     }
 
+    // ── ビデオ品質 ──
+    const currentVQ = localStorage.getItem('tbs_video_quality') || 'medium';
+    document.querySelectorAll('.vq-label').forEach(lbl => {
+      const key = lbl.dataset.key;
+      if (key === currentVQ) {
+        lbl.querySelector('input').checked = true;
+        lbl.style.borderColor = key === 'low' ? '#64748b' : key === 'medium' ? '#3b82f6' : '#16a34a';
+        lbl.style.background = '#eff6ff';
+      }
+      lbl.addEventListener('click', () => {
+        document.querySelectorAll('.vq-label').forEach(l => { l.style.borderColor = '#e2e8f0'; l.style.background = '#fafafa'; });
+        lbl.style.borderColor = key === 'low' ? '#64748b' : key === 'medium' ? '#3b82f6' : '#16a34a';
+        lbl.style.background = '#eff6ff';
+        lbl.querySelector('input').checked = true;
+      });
+    });
+    document.getElementById('btn-save-video-quality').onclick = () => {
+      const sel = document.querySelector('input[name="video-quality"]:checked');
+      if (!sel) return;
+      localStorage.setItem('tbs_video_quality', sel.value);
+      if (typeof CallPanel !== 'undefined') CallPanel._videoQualityPreset = sel.value;
+      UI.toast(`ビデオ品質を「${{ low:'低画質', medium:'標準', high:'高画質' }[sel.value]}」に設定しました`, 'success');
+    };
+
     // 保存ボタンイベント
-    document.getElementById('btn-save-network').onclick = async () => {
+    const saveNetworkBtn = body.querySelector('#btn-save-network');
+    if (saveNetworkBtn) saveNetworkBtn.onclick = async () => {
       const mode = body.querySelector('input[name="network-mode"]:checked').value;
       const parentIp = document.getElementById('cfg-parent-ip').value.trim();
       const enableWebRtcCall = document.getElementById('cfg-enable-webrtc-call').checked ? 'true' : 'false';
@@ -486,7 +592,7 @@ Object.assign(Settings, {
         console.error(err);
         UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
       }
-    };
+    }; // if (saveNetworkBtn)
 
     // 移送履歴データの手動クリーンアップ
     const runCleanupBtn = document.getElementById('btn-run-event-cleanup');
@@ -540,7 +646,7 @@ Object.assign(Settings, {
           ? 'データベースの保存先を「全ユーザー共有フォルダ（ProgramData）」に変更します。\nよろしいですか？\n※既存のデータは共有フォルダへ自動的にコピーされます。'
           : 'データベースの保存先を「ユーザー専用フォルダ」に変更します。\nよろしいですか？\n※既存のデータはユーザーフォルダへ自動的にコピーされます。';
 
-        if (!await UI.confirmModal(confirmMsg)) return;
+        if (!await UI.confirmModal(confirmMsg, { title: 'データベース保存先の変更', type: 'warning', confirmLabel: '変更する' })) return;
 
         changeDbStorageBtn.disabled = true;
         const oldHtml = changeDbStorageBtn.innerHTML;
@@ -588,7 +694,7 @@ Object.assign(Settings, {
     const restoreBtn = document.getElementById('btn-restore-db');
     if (restoreBtn) {
       restoreBtn.onclick = async () => {
-        if (!await UI.confirmModal('バックアップから復元を実行しますか？\n現在のすべてのマスターデータ、履歴、設定が消去・上書きされ、アプリが自動再起動します。', { danger: true, confirmLabel: '復元' })) {
+        if (!await UI.confirmModal('バックアップから復元を実行しますか？', { title: 'バックアップから復元', detail: '現在のすべてのマスターデータ、履歴、設定が消去・上書きされ、アプリが自動再起動します。', danger: true, confirmLabel: '復元を実行' })) {
           return;
         }
         try {
@@ -660,7 +766,7 @@ Object.assign(Settings, {
 
         area.innerHTML = `
           <table class="settings-table" style="margin-top:0; background:#fff;">
-            <thead><tr><th>端末名</th><th>IP</th><th>病棟</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
+            <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
             <tbody>
               ${devices.map(d => {
                 const id = d.deviceId || d.id;
@@ -671,6 +777,7 @@ Object.assign(Settings, {
                   <tr style="opacity:${stale ? '.62' : '1'};">
                     <td><strong>${d.name || id || '-'}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>
                     <td>${d.ip || '-'}</td>
+                    <td style="font-size:11px; color:#4a5568;">${d.hostname || d.hostName || '-'}</td>
                     <td>${AppState.wards?.find(w => w.id === d.wardId)?.name || d.wardId || '-'}</td>
                     <td>${d.page || d.mode || '-'}</td>
                     <td>${seconds === null ? '-' : `${seconds}秒前`}</td>
@@ -684,7 +791,7 @@ Object.assign(Settings, {
         area.querySelectorAll('.btn-disconnect-device').forEach(btn => {
           btn.onclick = async () => {
             if (!btn.dataset.id) return;
-            if (!await UI.confirmModal('この端末を接続一覧から削除しますか？', { danger: true, confirmLabel: '削除' })) return;
+            if (!await UI.confirmModal('この端末を接続一覧から削除しますか？', { title: '端末を接続一覧から削除', type: 'warning', confirmLabel: '削除' })) return;
             await API.disconnectDevice(btn.dataset.id);
             UI.toast('接続機器を一覧から削除しました', 'success');
             renderRows();
