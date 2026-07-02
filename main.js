@@ -83,7 +83,34 @@ function getDBPath() {
   return path.join(targetDir, 'db.json');
 }
 
+// アトミック書き込みユーティリティ: tmpファイルに書いてからrenameする
+// これにより書き込み途中でプロセスが終了してもターゲットファイルが壊れない
+function safeWriteFile(targetPath, content) {
+  const tmpPath = targetPath + '.tmp';
+  fs.writeFileSync(tmpPath, content, 'utf8');
+  try {
+    fs.renameSync(tmpPath, targetPath);
+  } catch (renameErr) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    throw renameErr;
+  }
+}
+
 let DB_FILE = getDBPath();
+
+// 起動時に前回クラッシュで残ったtmpファイルをクリーンアップする
+function cleanupStaleTmpFiles() {
+  const tmpPath = DB_FILE + '.tmp';
+  if (fs.existsSync(tmpPath)) {
+    try {
+      fs.unlinkSync(tmpPath);
+      console.warn('[DB] 前回の異常終了で残留した一時ファイルを削除しました:', tmpPath);
+    } catch (err) {
+      console.error('[DB] 残留一時ファイルの削除に失敗しました:', err.message);
+    }
+  }
+}
+cleanupStaleTmpFiles();
 
 // WebRTCシグナリング用のメモリ内一時キュー
 const webrtcSignalingQueue = {};
@@ -246,8 +273,8 @@ function readDB() {
   try {
     if (!fs.existsSync(DB_FILE)) {
       console.log(`[DB] データベースが存在しないため初期データを書き込みます: ${DB_FILE}`);
-      fs.writeFileSync(DB_FILE, JSON.stringify(SEEDS, null, 2), 'utf8');
-      return SEEDS;
+      safeWriteFile(DB_FILE, JSON.stringify(SEEDS, null, 2));
+      return JSON.parse(JSON.stringify(SEEDS));
     }
     const data = fs.readFileSync(DB_FILE, 'utf8');
     const db = JSON.parse(data);
@@ -333,20 +360,45 @@ function readDB() {
       console.log('[DB] 重複データ検出または暗号化適用のための再書き込みを実施します。');
       writeDB(db);
     }
-    
+
     return db;
   } catch (err) {
     console.error('[DB] データベースの読み込み失敗:', err);
-    return SEEDS;
+
+    // バックアップファイルからのリカバリを試みる
+    const bakPath = DB_FILE + '.bak';
+    if (fs.existsSync(bakPath)) {
+      try {
+        const bakData = fs.readFileSync(bakPath, 'utf8');
+        const recovered = JSON.parse(bakData);
+        console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
+        return recovered;
+      } catch (bakErr) {
+        console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
+      }
+    }
+
+    // 破損ファイルを保全してから初期データで再起動できるようにする
+    if (fs.existsSync(DB_FILE)) {
+      const corruptPath = DB_FILE + '.corrupt';
+      try {
+        fs.copyFileSync(DB_FILE, corruptPath);
+        console.warn('[DB] 破損したDBファイルを保全しました:', corruptPath);
+      } catch {}
+    }
+
+    console.error('[DB] データを復旧できませんでした。初期データで再構築します。');
+    return JSON.parse(JSON.stringify(SEEDS));
   }
 }
 
 // ローカルデータベース書き込み
+// 成功時は true、失敗時は false を返す（呼び出し元がハンドリング可能）
 function writeDB(data) {
   try {
     // インメモリの元のデータを破壊しないようディープコピーを作成
     const dbClone = JSON.parse(JSON.stringify(data));
-    
+
     // センシティブな設定情報の暗号化
     if (dbClone.system_settings && Array.isArray(dbClone.system_settings)) {
       dbClone.system_settings.forEach(s => {
@@ -356,17 +408,16 @@ function writeDB(data) {
       });
     }
 
-    const tmpFile = DB_FILE + '.tmp';
-    fs.writeFileSync(tmpFile, JSON.stringify(dbClone, null, 2), 'utf8');
-    try {
-      fs.renameSync(tmpFile, DB_FILE);
-    } catch (renameErr) {
-      console.error('[DB] DBファイルのリネームに失敗しました。一時ファイルを削除します:', renameErr);
-      try { fs.unlinkSync(tmpFile); } catch {}
-      throw renameErr;
-    }
+    safeWriteFile(DB_FILE, JSON.stringify(dbClone, null, 2));
+
+    // 書き込み成功後にローリングバックアップを更新する
+    // （破損時のリカバリ用。直前の正常状態を1世代保持）
+    try { fs.copyFileSync(DB_FILE, DB_FILE + '.bak'); } catch {}
+
+    return true;
   } catch (err) {
     console.error('[DB] データベースの書き込み失敗:', err);
+    return false;
   }
 }
 
@@ -1712,7 +1763,17 @@ ipcMain.handle('restore-db', async () => {
     if (!parsed.system_settings || !parsed.beds || !parsed.wards) {
       throw new Error('無効なバックアップファイルフォーマットです。');
     }
-    fs.writeFileSync(DB_FILE, fileContent, 'utf8');
+    // 復元前に現在のDBを保全する
+    if (fs.existsSync(DB_FILE)) {
+      try {
+        fs.copyFileSync(DB_FILE, DB_FILE + '.before_restore');
+        console.log('[DB] 復元前のDBをバックアップしました:', DB_FILE + '.before_restore');
+      } catch (bakErr) {
+        console.warn('[DB] 復元前バックアップの作成に失敗しました:', bakErr.message);
+      }
+    }
+    // アトミックに上書きして復元する
+    safeWriteFile(DB_FILE, fileContent);
     return { success: true };
   } catch (err) {
     console.error('[DB Restore Error]', err);
@@ -1754,7 +1815,7 @@ ipcMain.handle('change-database-storage-mode', async (event, mode) => {
       if (!fs.existsSync(COMMON_DATA_DIR)) {
         fs.mkdirSync(COMMON_DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'common' }, null, 2), 'utf8');
+      safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'common' }, null, 2));
     } catch (err) {
       console.error('[DB] Storage mode change to common failed:', err);
       return { 
@@ -1783,7 +1844,7 @@ ipcMain.handle('change-database-storage-mode', async (event, mode) => {
       if (!fs.existsSync(COMMON_DATA_DIR)) {
         fs.mkdirSync(COMMON_DATA_DIR, { recursive: true });
       }
-      fs.writeFileSync(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'user' }, null, 2), 'utf8');
+      safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'user' }, null, 2));
     } catch (err) {
       console.error('[DB] Storage mode change to user failed:', err);
       return { 
