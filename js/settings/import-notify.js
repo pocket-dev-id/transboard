@@ -69,6 +69,11 @@ Object.assign(Settings, {
     const dirSetting = AppState.systemSettings?.find(s => s.id === 'import_directory') || { value: '' };
     const currentPath = dirSetting.value || '（デフォルト: プロジェクト内の import_folder フォルダ）';
 
+    // アーカイブフォルダの状況を取得（セキュリティ C-1: 平文残留の可視化）
+    const archiveInfo = window.electronAPI && window.electronAPI.getArchiveInfo
+      ? await window.electronAPI.getArchiveInfo().catch(() => ({ exists: false, count: 0 }))
+      : { exists: false, count: 0 };
+
     const smbAuthSetting = AppState.systemSettings?.find(s => s.id === 'smb_auth_mode') || { value: 'current' };
     const smbUsernameSetting = AppState.systemSettings?.find(s => s.id === 'smb_username') || { value: '' };
     const smbPasswordSetting = AppState.systemSettings?.find(s => s.id === 'smb_password') || { value: '' };
@@ -511,6 +516,10 @@ Object.assign(Settings, {
                   <option value="90" ${policy.retentionDays==='90'?'selected':''}>90日間 (約3ヶ月)</option>
                   <option value="0"  ${policy.retentionDays==='0'?'selected':''}>無期限 (手動クリーンアップ)</option>
                 </select>
+                <p style="margin:6px 0 0 0; font-size:12px; color:#c53030; background:#fff5f5; border:1px solid #feb2b2; border-radius:4px; padding:6px 8px;">
+                  ⚠️ archiveフォルダ内のCSVファイルには患者氏名・IDが平文のまま保管されます。保管期間中は暗号化されません。
+                  ${archiveInfo.exists ? `現在 <strong>${archiveInfo.count}件</strong> のファイルが保管されています。` : ''}
+                </p>
               </div>
 
               <div class="form-row" style="margin-bottom:0;">

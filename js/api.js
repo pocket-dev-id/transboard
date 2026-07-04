@@ -13,7 +13,11 @@ const API = {
     if (shareMode === 'client' || shareMode === 'child') {
       try {
         const cleanUrl = url.replace(/^\//, '');
-        const res = await fetch(`http://${parentIp}:3005/api/${cleanUrl}`, options);
+        const apiToken = localStorage.getItem('cfg_api_token') || '';
+        const optionsWithToken = apiToken
+          ? { ...options, headers: { ...(options.headers || {}), 'X-API-Token': apiToken } }
+          : options;
+        const res = await fetch(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
         if (res.status === 204) return null;
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);

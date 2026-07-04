@@ -12,6 +12,11 @@ Object.assign(Settings, {
       ? await window.electronAPI.getDatabaseStorageInfo()
       : null;
 
+    // DBファイル暗号化の可用性を確認（セキュリティ B-3）
+    const encStatus = window.electronAPI && window.electronAPI.getEncryptionStatus
+      ? await window.electronAPI.getEncryptionStatus().catch(() => null)
+      : null;
+
     const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const currentParentIp = localStorage.getItem('cfg_parent_ip') || '';
 
@@ -74,6 +79,20 @@ Object.assign(Settings, {
     const alwaysOnTop  = localStorage.getItem('cfg_always_on_top') === 'true';
 
     body.innerHTML = `
+      ${encStatus && !encStatus.available ? `
+      <div class="settings-panel" style="margin-bottom:16px; background:#fef2f2; border:1px solid #fca5a5;">
+        <div style="display:flex; align-items:flex-start; gap:10px; padding:4px;">
+          <i class="fas fa-exclamation-triangle" style="color:#dc2626; font-size:18px; margin-top:2px;"></i>
+          <div>
+            <strong style="color:#991b1b;">この端末ではデータベースの暗号化機能が利用できません</strong>
+            <p style="font-size:12px; color:#991b1b; margin:4px 0 0 0;">
+              OSの資格情報ストア（Windows資格情報マネージャー等）にアクセスできないため、患者情報を含むデータベースファイルが平文で保存されています。
+              OSアカウントのログインパスワード設定や、資格情報ストアの状態をご確認ください。
+            </p>
+          </div>
+        </div>
+      </div>
+      ` : ''}
       <!-- 端末動作設定 -->
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
@@ -154,6 +173,11 @@ Object.assign(Settings, {
               <label>親機PCのIPアドレス / ホスト名</label>
               <input type="text" id="cfg-parent-ip" placeholder="例: 192.168.1.15" style="width:100%; max-width:300px; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${currentParentIp}">
             </div>
+            <div class="form-row" style="margin-bottom:12px;">
+              <label>APIトークン <span style="color:#dc2626">*</span></label>
+              <input type="text" id="cfg-api-token" placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力" style="width:100%; max-width:420px; padding:8px; border:1px solid #cbd5e0; border-radius:6px; font-family:monospace; font-size:12px;" value="${localStorage.getItem('cfg_api_token') || ''}">
+              <p style="font-size:11px; color:#718096; margin:4px 0 0 0;">患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</p>
+            </div>
             <div style="display:flex; gap:8px;">
               <button class="btn btn-outline btn-sm" id="btn-test-connection">
                 <i class="fas fa-link"></i> 接続テストを実行
@@ -174,6 +198,15 @@ Object.assign(Settings, {
             <div style="margin-top:10px; font-size:11px; color:#718096;">
               ※共有ポート番号はデフォルトで <code style="background:#edf2f7; padding:1px 4px; border-radius:3px; font-weight:700;">3005</code> を使用します。<br>
               ※子機から接続できない場合は、この親機PCのWindowsファイアウォールでポート3005の受信規則が許可されているか確認してください。
+            </div>
+            <div style="margin-top:14px; padding-top:14px; border-top:1px dashed #fca5a5;">
+              <label style="font-size:12px; font-weight:700; color:#991b1b;">APIトークン（患者情報保護用・子機に設定する値）</label>
+              <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                <input type="text" id="cfg-api-token-display" readonly style="flex:1; max-width:420px; padding:8px; border:1px solid #fca5a5; border-radius:6px; font-family:monospace; font-size:12px; background:#fef2f2;" value="${AppState.systemSettings?.find(s => s.id === 'api_token')?.value || '(初回起動時に自動生成されます)'}">
+                <button class="btn btn-outline btn-sm" id="btn-copy-api-token" title="コピー"><i class="fas fa-copy"></i></button>
+                <button class="btn btn-outline btn-sm" id="btn-regen-api-token" title="再生成（全子機で再設定が必要になります）"><i class="fas fa-sync-alt"></i></button>
+              </div>
+              <p style="font-size:11px; color:#991b1b; margin:6px 0 0 0;">このトークンを各子機PCの「共有・ネットワーク設定」画面に入力してください。再生成すると、全ての子機で入力し直しが必要になります。</p>
             </div>
           </div>
 
@@ -368,6 +401,19 @@ Object.assign(Settings, {
               <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用機能</span>
             </h4>
             <p style="font-size:11px; color:#718096; margin:0 0 10px 0;">病棟・病床マスタ、各種設定、最近の移送履歴データを含んだデータベース（db.json）のバックアップを作成・復元します。</p>
+            <div style="margin-bottom:10px;">
+              <label style="display:block; font-size:12px; font-weight:700; color:#2d3748; margin-bottom:6px;">バックアップ形式</label>
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+                <input type="radio" name="backup-mode" value="encrypted" checked> パスワードで暗号化する（患者情報を含む・推奨）
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
+                <input type="radio" name="backup-mode" value="redacted"> 患者情報を除いて出力する（平文・調査用途向け）
+              </label>
+            </div>
+            <div class="form-row" id="backup-password-row" style="margin-bottom:12px;">
+              <label style="font-size:12px;">パスワード <span style="font-size:11px; color:#718096; font-weight:400;">（暗号化バックアップの作成・復元時に使用）</span></label>
+              <input type="password" id="cfg-backup-password" style="width:100%; max-width:280px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px;" placeholder="バックアップ用パスワード">
+            </div>
             <div style="display:flex; gap:12px;">
               <button class="btn btn-outline btn-sm" id="btn-backup-db" style="border-color:#4b5563; color:#4b5563;">
                 <i class="fas fa-file-download"></i> バックアップを保存
@@ -377,7 +423,8 @@ Object.assign(Settings, {
               </button>
             </div>
             <div style="font-size:11px; color:#c53030; font-weight:700; margin-top:6px;">
-              ※注意: バックアップから復元すると、現在のすべての履歴と設定が上書きされます。
+              ※注意: バックアップから復元すると、現在のすべての履歴と設定が上書きされます。<br>
+              ※パスワードは忘れないよう安全な場所に控えてください。忘れると復元できません。
             </div>
           </div>
           ` : ''}
@@ -447,6 +494,42 @@ Object.assign(Settings, {
       };
     }
 
+    // APIトークンのコピー・再生成ボタン
+    const copyTokenBtn = document.getElementById('btn-copy-api-token');
+    if (copyTokenBtn) {
+      copyTokenBtn.onclick = async () => {
+        const val = document.getElementById('cfg-api-token-display')?.value || '';
+        try {
+          await navigator.clipboard.writeText(val);
+          UI.toast('APIトークンをコピーしました', 'success');
+        } catch (e) {
+          UI.toast('コピーに失敗しました', 'danger');
+        }
+      };
+    }
+    const regenTokenBtn = document.getElementById('btn-regen-api-token');
+    if (regenTokenBtn) {
+      regenTokenBtn.onclick = async () => {
+        const ok = await UI.confirmModal('APIトークンを再生成しますか？', {
+          title: 'APIトークンの再生成',
+          detail: '再生成すると、現在このトークンを設定している全ての子機で再入力が必要になります。',
+          type: 'warning',
+          confirmLabel: '再生成する',
+        });
+        if (!ok) return;
+        try {
+          const newToken = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, '0')).join('');
+          await API.patch('system_settings', 'api_token', { value: newToken });
+          const s = AppState.systemSettings?.find(x => x.id === 'api_token');
+          if (s) s.value = newToken; else AppState.systemSettings.push({ id: 'api_token', value: newToken });
+          document.getElementById('cfg-api-token-display').value = newToken;
+          UI.toast('APIトークンを再生成しました。各子機の設定画面で入力し直してください。', 'success', 6000);
+        } catch (e) {
+          UI.toast('再生成に失敗しました: ' + e.message, 'danger');
+        }
+      };
+    }
+
     // 接続テストボタンイベント
     const testBtn = document.getElementById('btn-test-connection');
     if (testBtn) {
@@ -513,6 +596,7 @@ Object.assign(Settings, {
     if (saveNetworkBtn) saveNetworkBtn.onclick = async () => {
       const mode = body.querySelector('input[name="network-mode"]:checked').value;
       const parentIp = document.getElementById('cfg-parent-ip').value.trim();
+      const apiToken = document.getElementById('cfg-api-token')?.value.trim() || '';
       const enableWebRtcCall = document.getElementById('cfg-enable-webrtc-call').checked ? 'true' : 'false';
       const enablePatientIc = document.getElementById('cfg-enable-patient-ic').checked ? 'true' : 'false';
       const defaultZoom = document.getElementById('cfg-default-zoom').value;
@@ -538,6 +622,7 @@ Object.assign(Settings, {
       // localStorageへ保存（起動時の同期ロードおよび端末個別用）
       localStorage.setItem('cfg_share_mode', mode);
       localStorage.setItem('cfg_parent_ip', parentIp);
+      localStorage.setItem('cfg_api_token', apiToken);
       localStorage.setItem('cfg_app_zoom', defaultZoom);
       localStorage.setItem('cfg_font_style', fontStyle);
       localStorage.setItem('cfg_bed_card_size', bedCardSize);
@@ -673,12 +758,26 @@ Object.assign(Settings, {
       };
     }
 
+    // バックアップ形式の切り替えに応じてパスワード欄の要否を調整
+    const backupPasswordRow = document.getElementById('backup-password-row');
+    body.querySelectorAll('input[name="backup-mode"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        if (backupPasswordRow) backupPasswordRow.style.opacity = radio.value === 'redacted' && radio.checked ? '0.5' : '1';
+      });
+    });
+
     // バックアップボタン
     const backupBtn = document.getElementById('btn-backup-db');
     if (backupBtn) {
       backupBtn.onclick = async () => {
+        const mode = body.querySelector('input[name="backup-mode"]:checked')?.value || 'encrypted';
+        const password = document.getElementById('cfg-backup-password')?.value || '';
+        if (mode === 'encrypted' && !password) {
+          UI.toast('暗号化バックアップにはパスワードの入力が必要です', 'warning');
+          return;
+        }
         try {
-          const res = await window.electronAPI.backupDatabase();
+          const res = await window.electronAPI.backupDatabase({ mode, password });
           if (res && res.success) {
             UI.toast(`バックアップを保存しました:\n${res.filePath}`, 'success');
           } else if (res && res.message !== 'Cancelled') {
@@ -697,13 +796,16 @@ Object.assign(Settings, {
         if (!await UI.confirmModal('バックアップから復元を実行しますか？', { title: 'バックアップから復元', detail: '現在のすべてのマスターデータ、履歴、設定が消去・上書きされ、アプリが自動再起動します。', danger: true, confirmLabel: '復元を実行' })) {
           return;
         }
+        const password = document.getElementById('cfg-backup-password')?.value || '';
         try {
-          const res = await window.electronAPI.restoreDatabase();
+          const res = await window.electronAPI.restoreDatabase({ password });
           if (res && res.success) {
             UI.toast('復元に成功しました。アプリケーションを再起動します...', 'success');
             setTimeout(() => {
               window.electronAPI.relaunchApp();
             }, 1500);
+          } else if (res && res.passwordRequired) {
+            UI.toast('このバックアップはパスワードで保護されています。パスワード欄に入力してから再度お試しください。', 'warning', 6000);
           } else if (res && res.message !== 'Cancelled') {
             UI.toast(`復元エラー: ${res.message}`, 'danger');
           }

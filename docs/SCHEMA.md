@@ -125,6 +125,7 @@ key-valueペアで管理。重要なキー一覧:
 | `event_retention_days` | `0` | イベント保持日数（0=無制限） |
 | `smb_password` | `` | SMBパスワード（`ENCRYPTED:`プレフィックス付きで暗号化保存） |
 | `odbc_connection_string` | `` | ODBC接続文字列（`ENCRYPTED:`プレフィックス付きで暗号化保存） |
+| `api_token` | `` | 子機↔親機のAPI認証トークン（`ENCRYPTED:`プレフィックス付きで暗号化保存、初回起動時に自動生成） |
 
 ---
 
@@ -136,6 +137,12 @@ key-valueペアで管理。重要なキー一覧:
 | macOS | `~/Library/Application Support/TransBoard/transboard-db.json` |
 | Linux | `~/.config/TransBoard/transboard-db.json` |
 
+DBファイル自体もsafeStorageが利用可能な環境では`ENCDB1:`プレフィックス付きで全体が暗号化される（フィールド単位の暗号化とは別の保護層）。暗号化不可の環境では平文で保存され、設定画面にその旨の警告が表示される。
+
 ## バックアップ
 
-設定画面の「データベースバックアップ」ボタンで `transboard-db-backup-YYYYMMDD-HHMMSS.json` を同ディレクトリに書き出す。
+設定画面の「データベースバックアップ」ボタンから2つの形式を選択できる:
+- **パスワード暗号化**（既定・推奨）: AES-256-GCMでパスワード保護。患者情報を含めたまま他PCへの移行にも使える
+- **患者情報を除去した平文**: 患者氏名・ID等を`null`化して出力。障害調査用途向け
+
+復元時は元の形式（暗号化・平文どちらも）を自動判別する。
