@@ -407,7 +407,7 @@ const CallPanel = {
               <i class="fas fa-comment-alt"></i> 呼び出さずにアナウンスを送信 (音声合成):
             </div>
             <!-- 手動入力エリア -->
-            <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <div style="display:flex;gap:6px;margin-bottom:4px;">
               <input type="text" id="announce-custom-text" maxlength="200"
                 placeholder="自由入力でアナウンスを送信..."
                 style="flex:1;padding:7px 10px;border:1px solid #cbd5e0;border-radius:6px;font-size:12.5px;">
@@ -415,6 +415,9 @@ const CallPanel = {
                 style="white-space:nowrap;padding:6px 12px;">
                 <i class="fas fa-paper-plane"></i> 送信
               </button>
+            </div>
+            <div style="font-size:10.5px; color:#94a3b8; margin-bottom:8px;">
+              <i class="fas fa-shield-alt"></i> ネットワーク上で暗号化されずに送信されます。患者名など個人情報の入力は避けてください。
             </div>
             <div style="display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; padding-right: 4px;">
               ${templateBtns}

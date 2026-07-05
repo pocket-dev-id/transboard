@@ -5,6 +5,7 @@ const chokidar = require('chokidar');
 const csv = require('csv-parser');
 const http = require('http');
 const os = require('os');
+const crypto = require('crypto');
 const { execSync, execFileSync, spawn } = require('child_process');
 
 const { Readable } = require('stream');
@@ -199,6 +200,7 @@ const SEEDS = {
     { id: "incoming_ring_sound", value: "ring" },
     { id: "share_mode", value: "parent" },
     { id: "parent_ip", value: "" },
+    { id: "api_token", value: "" },
     { id: "enable_webrtc_call", value: "true" },
     { id: "enable_patient_ic_association", value: "false" },
     { id: "default_zoom", value: "1.0" },
@@ -236,7 +238,7 @@ const SEEDS = {
 };
 
 // センシティブな設定情報の暗号化リストと暗号・復号ヘルパー
-const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password'];
+const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_token'];
 
 function encryptSensitiveValue(value) {
   if (!value) return value;
@@ -269,6 +271,38 @@ function decryptSensitiveValue(value) {
   return ''; // 復号エラー時は空文字
 }
 
+// db.jsonファイル全体の暗号化（セキュリティ B-1: 患者データを含む全内容を保護）
+// safeStorageはOSユーザー資格情報に紐づくため、暗号化後のファイルは同一PC・同一ユーザーでのみ復号可能
+const DB_ENCRYPTION_PREFIX = 'ENCDB1:';
+
+function encryptDbFileContent(jsonStr) {
+  if (safeStorage && safeStorage.isEncryptionAvailable()) {
+    try {
+      const encrypted = safeStorage.encryptString(jsonStr);
+      return DB_ENCRYPTION_PREFIX + encrypted.toString('base64');
+    } catch (err) {
+      console.error('[DB] DBファイル全体の暗号化に失敗しました。平文で保存します:', err);
+    }
+  }
+  return jsonStr; // 暗号化不可時のフォールバック（平文保存）
+}
+
+function decryptDbFileContent(raw) {
+  if (!raw.startsWith(DB_ENCRYPTION_PREFIX)) {
+    return raw; // 未暗号化（旧形式・平文）のDBファイル
+  }
+  if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+    throw new Error('このDBファイルは暗号化されていますが、この環境では復号機能（safeStorage）が利用できません。');
+  }
+  const base64Str = raw.slice(DB_ENCRYPTION_PREFIX.length);
+  const encryptedBuffer = Buffer.from(base64Str, 'base64');
+  try {
+    return safeStorage.decryptString(encryptedBuffer);
+  } catch (err) {
+    throw new Error('DBファイルの復号に失敗しました。別のPCまたは別のOSユーザーで暗号化されたファイルの可能性があります。');
+  }
+}
+
 // ローカルデータベースのメモリキャッシュ（コード#6: 毎リクエストごとのディスク読み込み・JSON.parseを回避）
 // Node.jsはシングルスレッドのためIPC/HTTPリクエストはイベントループ上で直列化され、
 // キャッシュと実ファイルがズレるような競合は発生しない
@@ -282,15 +316,18 @@ function readDB() {
   try {
     if (!fs.existsSync(DB_FILE)) {
       console.log(`[DB] データベースが存在しないため初期データを書き込みます: ${DB_FILE}`);
-      safeWriteFile(DB_FILE, JSON.stringify(SEEDS, null, 2));
+      safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(SEEDS, null, 2)));
       dbCache = JSON.parse(JSON.stringify(SEEDS));
       return JSON.parse(JSON.stringify(SEEDS));
     }
-    const data = fs.readFileSync(DB_FILE, 'utf8');
+    const rawFileContent = fs.readFileSync(DB_FILE, 'utf8');
+    const wasEncrypted = rawFileContent.startsWith(DB_ENCRYPTION_PREFIX);
+    const data = decryptDbFileContent(rawFileContent);
     const db = JSON.parse(data);
-    
+
     let hasDuplicates = false;
-    let needsEncryptionRewrite = false;
+    // 旧形式（平文）のDBを検出した場合、暗号化が使える環境なら次回書き込み時に暗号化形式へ移行する
+    let needsEncryptionRewrite = !wasEncrypted && safeStorage && safeStorage.isEncryptionAvailable();
 
     // 後方互換性：新規テーブル・新規設定項目のパッチ
     if (!db.import_logs) {
@@ -380,7 +417,8 @@ function readDB() {
     const bakPath = DB_FILE + '.bak';
     if (fs.existsSync(bakPath)) {
       try {
-        const bakData = fs.readFileSync(bakPath, 'utf8');
+        const bakRaw = fs.readFileSync(bakPath, 'utf8');
+        const bakData = decryptDbFileContent(bakRaw);
         const recovered = JSON.parse(bakData);
         console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
         dbCache = JSON.parse(JSON.stringify(recovered));
@@ -421,7 +459,7 @@ function writeDB(data) {
       });
     }
 
-    safeWriteFile(DB_FILE, JSON.stringify(dbClone, null, 2));
+    safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbClone, null, 2)));
 
     // 書き込み成功後にローリングバックアップを更新する
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
@@ -1481,8 +1519,11 @@ const ALLOWED_TABLES = new Set([
   'audit_logs',
 ]);
 
+// 患者情報（氏名・ID）を含むテーブル。外部HTTPアクセス時はAPIトークン必須（セキュリティ: A-2）
+const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs']);
+
 // 共通のデータベース操作処理関数
-async function processDbRequest(method, url, bodyStr, isExternal = false) {
+async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null) {
   const db = readDB();
 
   // URL解析 (例: "tables/transfer_events?limit=200" や "tables/beds/bed-701")
@@ -1499,12 +1540,22 @@ async function processDbRequest(method, url, bodyStr, isExternal = false) {
     return { success: false, message: 'Not Found' };
   }
 
+  // 患者情報を含むテーブルへの外部アクセスはAPIトークンで保護する
+  if (isExternal && PATIENT_DATA_TABLES.has(table)) {
+    const tokenSetting = (db.system_settings || []).find(s => s.id === 'api_token');
+    const expectedToken = tokenSetting?.value || '';
+    if (!expectedToken || apiToken !== expectedToken) {
+      console.warn(`[Security] APIトークン認証失敗: table=${table}`);
+      return { success: false, message: 'Unauthorized', unauthorized: true };
+    }
+  }
+
   // 外部(HTTP)からのアクセスに対するセキュリティ制限（機密データの保護）
   if (isExternal && table === 'system_settings') {
     // admin_passcode は子機の設定画面パスコード認証のため単体GETのみ許可する
-    // ODBC接続文字列とSMBパスワードは単体GETも禁止
-    const blockedSingleGet = ['odbc_connection_string', 'smb_password'];
-    const blockedAll = ['odbc_connection_string', 'smb_password', 'admin_passcode'];
+    // ODBC接続文字列・SMBパスワード・APIトークンは単体GETも禁止（APIトークンは親機画面から手動で子機に設定する運用）
+    const blockedSingleGet = ['odbc_connection_string', 'smb_password', 'api_token'];
+    const blockedAll = ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'];
 
     if (method === 'GET') {
       if (id) {
@@ -1801,8 +1852,64 @@ ipcMain.handle('set-always-on-top', (event, value) => {
 });
 
 // IPC通信でデータベースのバックアップファイルをエクスポートする
-ipcMain.handle('backup-db', async () => {
+// バックアップエクスポート用のパスワードベース暗号化（セキュリティ B-2: PC間移行時も患者データを保護）
+// AES-256-GCM + scrypt鍵導出。safeStorageと異なりOS資格情報に依存しないため、他PCへの移行にも使える
+const BACKUP_ENCRYPTION_MAGIC = 'TBENCV1:';
+
+function encryptBackupContent(plaintext, password) {
+  const salt = crypto.randomBytes(16);
+  const key = crypto.scryptSync(password, salt, 32);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  const payload = Buffer.concat([salt, iv, authTag, encrypted]);
+  return BACKUP_ENCRYPTION_MAGIC + payload.toString('base64');
+}
+
+function decryptBackupContent(fileContent, password) {
+  const payload = Buffer.from(fileContent.slice(BACKUP_ENCRYPTION_MAGIC.length), 'base64');
+  const salt = payload.subarray(0, 16);
+  const iv = payload.subarray(16, 28);
+  const authTag = payload.subarray(28, 44);
+  const encrypted = payload.subarray(44);
+  const key = crypto.scryptSync(password, salt, 32);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  // パスワード誤りの場合はGCM認証タグの検証に失敗し、ここで例外が投げられる
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
+// エクスポート用に患者情報（氏名・ID等）を除去した複製を作る（セキュリティ B-2: 匿名化エクスポート）
+function redactPatientData(dbObj) {
+  const clone = JSON.parse(JSON.stringify(dbObj));
+  if (Array.isArray(clone.beds)) {
+    clone.beds.forEach(b => {
+      b.patient_name = null;
+      b.patient_id = null;
+      if ('patient_ic_tag_id' in b) b.patient_ic_tag_id = null;
+    });
+  }
+  if (Array.isArray(clone.audit_logs)) {
+    clone.audit_logs.forEach(a => {
+      try {
+        const details = JSON.parse(a.details || '{}');
+        if ('patient_id' in details) details.patient_id = null;
+        a.details = JSON.stringify(details);
+      } catch {}
+    });
+  }
+  return clone;
+}
+
+// IPC通信でデータベースをバックアップファイルとして保存する
+// mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報を除去）
+ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } = {}) => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
+  if (mode === 'encrypted' && !password) {
+    return { success: false, message: 'パスワードを入力してください' };
+  }
   const { dialog } = require('electron');
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
     title: 'データベースバックアップの保存',
@@ -1811,8 +1918,18 @@ ipcMain.handle('backup-db', async () => {
   });
   if (!filePath) return { success: false, message: 'Cancelled' };
   try {
-    const dbData = fs.readFileSync(DB_FILE, 'utf8');
-    fs.writeFileSync(filePath, dbData, 'utf8');
+    // 現在のDBファイル（暗号化済みの可能性あり）を復号して平文JSONを取得
+    const rawFileContent = fs.readFileSync(DB_FILE, 'utf8');
+    const plaintextJson = decryptDbFileContent(rawFileContent);
+
+    let outputContent;
+    if (mode === 'redacted') {
+      const dbObj = JSON.parse(plaintextJson);
+      outputContent = JSON.stringify(redactPatientData(dbObj), null, 2);
+    } else {
+      outputContent = encryptBackupContent(plaintextJson, password);
+    }
+    fs.writeFileSync(filePath, outputContent, 'utf8');
     return { success: true, filePath };
   } catch (err) {
     console.error('[DB Backup Error]', err);
@@ -1821,7 +1938,7 @@ ipcMain.handle('backup-db', async () => {
 });
 
 // IPC通信でデータベースバックアップファイルから復元（リストア）する
-ipcMain.handle('restore-db', async () => {
+ipcMain.handle('restore-db', async (event, { password = '' } = {}) => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
   const { dialog } = require('electron');
   const { filePaths } = await dialog.showOpenDialog(mainWindow, {
@@ -1833,7 +1950,24 @@ ipcMain.handle('restore-db', async () => {
   const filePath = filePaths[0];
   try {
     const fileContent = fs.readFileSync(filePath, 'utf8');
-    const parsed = JSON.parse(fileContent);
+    let plaintextJson;
+    if (fileContent.startsWith(BACKUP_ENCRYPTION_MAGIC)) {
+      if (!password) {
+        return { success: false, message: 'パスワードが必要です', passwordRequired: true };
+      }
+      try {
+        plaintextJson = decryptBackupContent(fileContent, password);
+      } catch (e) {
+        return { success: false, message: 'パスワードが正しくないか、ファイルが破損しています。' };
+      }
+    } else if (fileContent.startsWith(DB_ENCRYPTION_PREFIX)) {
+      // 自機のsafeStorageで暗号化されたdb.jsonをそのまま指定した場合
+      plaintextJson = decryptDbFileContent(fileContent);
+    } else {
+      plaintextJson = fileContent; // 平文JSON（従来形式・匿名化エクスポート）
+    }
+
+    const parsed = JSON.parse(plaintextJson);
     // バックアップファイルの整合性を検証（親機や別設定を壊さない工夫）
     if (!parsed.system_settings || !parsed.beds || !parsed.wards) {
       throw new Error('無効なバックアップファイルフォーマットです。');
@@ -1847,8 +1981,8 @@ ipcMain.handle('restore-db', async () => {
         console.warn('[DB] 復元前バックアップの作成に失敗しました:', bakErr.message);
       }
     }
-    // アトミックに上書きして復元する
-    safeWriteFile(DB_FILE, fileContent);
+    // アトミックに上書きして復元する（自機のDB暗号化形式で保存）
+    safeWriteFile(DB_FILE, encryptDbFileContent(plaintextJson));
     // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
     dbCache = null;
     return { success: true };
@@ -1882,6 +2016,38 @@ ipcMain.handle('get-database-storage-info', () => {
     currentPath: DB_FILE,
     hasCommonWritePermission: checkCommonWritePermission()
   };
+});
+
+// IPC通信で取り込み元CSVのアーカイブフォルダの状況を返す（セキュリティ C-1: 平文残留の可視化）
+ipcMain.handle('get-archive-info', () => {
+  try {
+    const watchDir = resolveWatchDir();
+    if (!watchDir) return { exists: false, count: 0 };
+    const archiveDir = path.join(watchDir, 'archive');
+    if (!fs.existsSync(archiveDir)) return { exists: false, count: 0 };
+    const files = fs.readdirSync(archiveDir).filter(f => {
+      try { return fs.statSync(path.join(archiveDir, f)).isFile(); } catch { return false; }
+    });
+    return { exists: true, count: files.length, path: archiveDir };
+  } catch (err) {
+    return { exists: false, count: 0, error: err.message };
+  }
+});
+
+// IPC通信でDBファイル暗号化（safeStorage）の可用性を返す（セキュリティ B-3: 平文フォールバック時の警告表示用）
+ipcMain.handle('get-encryption-status', () => {
+  const available = !!(safeStorage && safeStorage.isEncryptionAvailable());
+  let dbIsEncrypted = false;
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const head = Buffer.alloc(DB_ENCRYPTION_PREFIX.length);
+      const fd = fs.openSync(DB_FILE, 'r');
+      fs.readSync(fd, head, 0, head.length, 0);
+      fs.closeSync(fd);
+      dbIsEncrypted = head.toString('utf8') === DB_ENCRYPTION_PREFIX;
+    }
+  } catch {}
+  return { available, dbIsEncrypted };
 });
 
 // IPC通信でデータベースの保存先設定を変更する
@@ -1956,16 +2122,38 @@ function getActiveDevices() {
   return Object.values(connectedDevices).filter(d => (now - d.lastSeen) < DEVICE_TIMEOUT_MS);
 }
 
+// APIトークンの生成・確保（セキュリティ: 患者データを含むテーブルへの外部アクセス保護）
+// 未設定の場合のみランダムトークンを生成して保存する（既存トークンは維持）
+function ensureApiToken() {
+  const db = readDB();
+  const setting = (db.system_settings || []).find(s => s.id === 'api_token');
+  if (setting && setting.value) return setting.value;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  if (setting) {
+    setting.value = token;
+  } else {
+    db.system_settings = db.system_settings || [];
+    db.system_settings.push({ id: 'api_token', value: token });
+  }
+  writeDB(db);
+  console.log('[Security] APIトークンを生成しました（子機側の共有・ネットワーク設定に同じ値を入力してください）');
+  return token;
+}
+
 // 親機としてのHTTP共有サーバー起動
 let parentHttpServer = null;
 function startParentServer() {
   if (parentHttpServer) return;
+  ensureApiToken();
   
   parentHttpServer = http.createServer((req, res) => {
     // CORSヘッダーを追加し、他のPC（子機）からの接続を許可
+    // 子機はfile://から読み込まれ、Origin: null としてリクエストするためオリジン限定はできない。
+    // 実質的なアクセス制御は患者データを含むテーブルへのAPIトークン検証（PATIENT_DATA_TABLES）で行う
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Token');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
@@ -2050,9 +2238,9 @@ function startParentServer() {
           }
         } else {
           // 外部からのHTTP APIリクエストのため isExternal = true
-          result = await processDbRequest(req.method, cleanUrl, body, true);
+          result = await processDbRequest(req.method, cleanUrl, body, true, req.headers['x-api-token']);
         }
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.writeHead(result && result.unauthorized ? 401 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(result));
       } catch (err) {
         console.error('[Parent Server Error]', err);

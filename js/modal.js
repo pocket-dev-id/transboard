@@ -77,7 +77,7 @@ const BedModal = {
         PatientRegModal.open(bedId, bed);
       });
       document.getElementById('btn-patient-discharge')?.addEventListener('click', async () => {
-        if (!confirm(`${UI.formatBedNamePlain(bed)}号床の患者（${bed.patient_name}）を退院しますか？`)) return;
+        if (!await UI.confirmModal(`${UI.formatBedNamePlain(bed)}号床の患者（${UI.getPatientName(bed.patient_name)}）を退院しますか？`, { title: '退院確認', danger: true, confirmLabel: '退院する' })) return;
         try {
           await API.patch('beds', bedId, {
             patient_name: null, patient_id: null, is_present: false,
@@ -951,7 +951,7 @@ const PatientRegModal = {
         await App.loadMasters();
         BedMap.render();
         overlay.remove();
-        UI.toast(isEdit ? '患者情報を更新しました' : `${UI.escapeHTML(name)} さんを登録しました`, 'success');
+        UI.toast(isEdit ? '患者情報を更新しました' : `${UI.escapeHTML(UI.getPatientName(name))} さんを登録しました`, 'success');
         BedModal.open(bedId);
       } catch (e) {
         UI.toast('登録に失敗しました: ' + e.message, 'danger');

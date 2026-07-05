@@ -55,11 +55,14 @@
 
 | 通信経路 | 暗号化 | 備考 |
 |---|---|---|
-| 親機↔子機 REST API | **なし (HTTP)** | LAN内のため短期的リスクは低いが、将来的にHTTPS化を推奨 |
-| 親機↔子機 WebRTCシグナリング | **なし (HTTP)** | 同上 |
+| 親機↔子機 REST API | **通信路はなし (HTTP)。アクセスはAPIトークンで保護** | `beds`/`transfer_events`/`audit_logs`（患者情報を含むテーブル）は`X-API-Token`ヘッダの一致を要求。通信内容自体はLAN内のため平文 |
+| 親機↔子機 WebRTCシグナリング | **なし (HTTP)** | 同上。カスタム音声アナウンス（自由入力）は平文で送信されるため患者名の入力は避けること |
 | WebRTC音声通話 | **あり (DTLS-SRTP)** | WebRTC標準により暗号化済み |
-| ODBC接続文字列（保存） | **あり (safeStorage)** | Electron safeStorageで暗号化保存 |
-| SMBパスワード（保存） | **あり (safeStorage)** | Electron safeStorageで暗号化保存 |
+| db.json（保存） | **あり (safeStorage、可能な場合)** | ファイル全体を暗号化。OSユーザー資格情報に紐づくため他PCでは復号不可。`.bak`/`.corrupt`/`.before_restore`も同様に保護される |
+| ODBC接続文字列・SMBパスワード・APIトークン（保存） | **あり (safeStorage)** | Electron safeStorageでフィールド単位も二重に暗号化保存 |
+| バックアップエクスポート | **選択可 (パスワードAES-256-GCM / 患者情報除去した平文)** | PC間移行時はパスワード方式を使用（safeStorageと異なりOSに依存しない） |
+
+APIトークンは親機の「共有・ネットワーク設定」画面で初回自動生成される。子機側は同画面または初期設定ウィザードでこの値を入力する。
 
 ### HTTPS化の推奨手順（将来対応）
 
@@ -67,6 +70,7 @@
 2. `main.js` の `http.createServer()` を `https.createServer({ key, cert }, ...)` に変更
 3. 子機側で証明書を信頼リストに追加（または `rejectUnauthorized: false` で検証スキップ）
 4. Electron の `--ignore-certificate-errors` フラグは使用不可（セキュリティ低下）
+5. APIトークン認証は導入済みのため、HTTPS化の緊急度は相対的に下がっている（通信内容の盗聴対策として引き続き推奨）
 
 ---
 

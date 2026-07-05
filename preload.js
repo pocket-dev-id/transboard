@@ -53,12 +53,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // データベースバックアップ & リストア
-  backupDatabase: () => ipcRenderer.invoke('backup-db'),
-  restoreDatabase: () => ipcRenderer.invoke('restore-db'),
+  backupDatabase: (opts) => ipcRenderer.invoke('backup-db', opts),
+  restoreDatabase: (opts) => ipcRenderer.invoke('restore-db', opts),
 
   // データベース保存先管理
   getDatabaseStorageInfo: () => ipcRenderer.invoke('get-database-storage-info'),
   changeDatabaseStorageMode: (mode) => ipcRenderer.invoke('change-database-storage-mode', mode),
+  getEncryptionStatus: () => ipcRenderer.invoke('get-encryption-status'),
+  getArchiveInfo: () => ipcRenderer.invoke('get-archive-info'),
 
   // NFC カードスキャン
   onCardScanned: (callback) => {

@@ -12,6 +12,7 @@ const Wizard = {
     this.config = {
       share_mode:                   gs('share_mode')                   || 'parent',
       parent_ip:                    gs('parent_ip')                    || '',
+      api_token:                    localStorage.getItem('cfg_api_token') || '',
       import_connection_type:       gs('import_connection_type')       || 'csv',
       import_directory:             gs('import_directory')             || '',
       odbc_connection_string:       gs('odbc_connection_string')       || '',
@@ -124,6 +125,11 @@ const Wizard = {
         <input type="text" id="wizard-parent-ip" value="${this.config.parent_ip}"
           placeholder="例: 192.168.1.100"
           class="wiz-input" style="font-family:monospace;">
+        <label class="wiz-label" style="margin-top:10px;">APIトークン <span style="color:#dc2626">*</span></label>
+        <input type="text" id="wizard-api-token" value="${UI.escapeHTML(this.config.api_token)}"
+          placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力"
+          class="wiz-input" style="font-family:monospace; font-size:11px;">
+        <div class="wiz-hint"><i class="fas fa-shield-alt"></i> 患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</div>
       </div>
     `;
   },
@@ -501,6 +507,8 @@ const Wizard = {
       if (r) this.config.share_mode = r.value;
       const ip = document.getElementById('wizard-parent-ip');
       if (ip) this.config.parent_ip = ip.value.trim();
+      const token = document.getElementById('wizard-api-token');
+      if (token) this.config.api_token = token.value.trim();
     }
     if (this.currentStep === 2) {
       const r = document.querySelector('input[name="conn_type"]:checked');
@@ -581,6 +589,7 @@ const Wizard = {
 
       localStorage.setItem('cfg_share_mode', this.config.share_mode);
       localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
+      localStorage.setItem('cfg_api_token', this.config.api_token || '');
 
       if (this.config.share_mode === 'parent' && this.config.insert_demo) {
         await API.patch('system_settings', 'demo_inserted', { value: 'false' });

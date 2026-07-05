@@ -541,7 +541,7 @@ const App = {
       
       // 成功時
       window.electronAPI.onDataImported(async ({ fileName, rows }) => {
-        console.log(`[Electron] インポートデータを受信 (${fileName}):`, rows);
+        console.log(`[Electron] インポートデータを受信 (${fileName}): ${rows.length}件`);
 
         // 在室管理モード確認
         const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
