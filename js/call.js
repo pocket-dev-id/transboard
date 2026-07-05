@@ -96,7 +96,20 @@ const CallPanel = {
       </button>
     `).join('');
 
+    // 病棟ボタン一覧を構築（自分自身の病棟は除外）
+    const wardBtns = AppState.wards
+      .filter(w => w.id !== this.getMyId())
+      .map(w => `
+        <button class="call-room-btn" data-ward-id="${w.id}">
+          <span class="call-room-name">${w.name}</span>
+          <span class="call-room-phone">${w.phone ? '内線 ' + w.phone : '番号未設定'}</span>
+        </button>
+      `).join('');
+
     body.innerHTML = `
+      <div class="call-section-title"><i class="fas fa-hospital"></i> 病棟へ発信 (WebRTC / アナウンス)</div>
+      <div class="call-room-list">${wardBtns || '<div class="text-muted text-sm">病棟データ読込中...</div>'}</div>
+      <div class="divider"></div>
       <div class="call-section-title"><i class="fas fa-phone-alt"></i> 検査室へ発信 (WebRTC / アナウンス)</div>
       <div class="call-room-list">${roomBtns || '<div class="text-muted text-sm">検査室データ読込中...</div>'}</div>
       <div class="divider"></div>
@@ -117,6 +130,10 @@ const CallPanel = {
     // 各ボタンにイベント設定
     body.querySelectorAll('.call-room-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (btn.dataset.wardId) {
+          this.showCallSelectionDialog(btn.dataset.wardId);
+          return;
+        }
         const room = AppState.getExamRoomById(btn.dataset.roomId);
         if (room) {
           this.showCallSelectionDialog(room.id);
@@ -185,12 +202,16 @@ const CallPanel = {
         el.innerHTML = '<div style="font-size:11px;color:#94a3b8;padding:4px 0;">通話履歴なし</div>';
         return;
       }
+      const myId = this.getMyId();
       el.innerHTML = calls.slice(0, 6).map(c => {
-        const room = AppState.getExamRoomById(c.exam_room_id);
+        const fromId = c.from_id ?? (c.caller_type === 'ward' ? c.ward_id : c.exam_room_id);
+        const toId = c.to_id ?? (c.caller_type === 'ward' ? c.exam_room_id : c.ward_id);
+        const counterpartId = fromId === myId ? toId : fromId;
+        const counterpartName = counterpartId ? this.getNameById(counterpartId) : '不明';
         const iconColor = c.status === 'missed' ? '#dc2626' : '#16a34a';
         return `
           <div class="call-entry">
-            <span><i class="fas fa-phone-alt" style="color:${iconColor};font-size:10px;"></i> ${room ? room.name : '検査室'}</span>
+            <span><i class="fas fa-phone-alt" style="color:${iconColor};font-size:10px;"></i> ${UI.escapeHTML(counterpartName)}</span>
             <span class="text-muted">${UI.formatTime(c.started_at)}</span>
           </div>`;
       }).join('');
@@ -588,13 +609,11 @@ const CallPanel = {
       });
 
       // コール記録を一時作成
-      const isWardCaller = myId.startsWith('ward-');
       this.currentCallId = `call-${Date.now()}`;
       await API.create('calls', {
         id: this.currentCallId,
-        caller_type: isWardCaller ? 'ward' : 'exam_room',
-        exam_room_id: isWardCaller ? targetId : myId,
-        ward_id: isWardCaller ? myId : targetId,
+        from_id: myId,
+        to_id: targetId,
         status: 'calling',
         started_at: Date.now()
       });
@@ -657,12 +676,10 @@ const CallPanel = {
         type: 'busy'
       });
       // 不応答として記録
-      const isWardCaller = callerId.startsWith('ward-');
       await API.create('calls', {
         id: `call-missed-${Date.now()}`,
-        caller_type: isWardCaller ? 'ward' : 'exam_room',
-        exam_room_id: isWardCaller ? this.getMyId() : callerId,
-        ward_id: isWardCaller ? callerId : this.getMyId(),
+        from_id: callerId,
+        to_id: this.getMyId(),
         status: 'missed',
         started_at: Date.now(),
         ended_at: Date.now()
@@ -699,13 +716,11 @@ const CallPanel = {
       });
 
       // 通話開始の記録
-      const isWardCaller = callerId.startsWith('ward-');
       this.currentCallId = `call-${Date.now()}`;
       await API.create('calls', {
         id: this.currentCallId,
-        caller_type: isWardCaller ? 'ward' : 'exam_room',
-        exam_room_id: isWardCaller ? this.getMyId() : callerId,
-        ward_id: isWardCaller ? callerId : this.getMyId(),
+        from_id: callerId,
+        to_id: this.getMyId(),
         status: 'connected',
         started_at: Date.now()
       });

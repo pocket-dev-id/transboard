@@ -201,17 +201,20 @@ const HistoryView = {
         return;
       }
 
-      const callerLabels = { ward: '病棟', exam_room: '検査室' };
       const statusLabels = { calling: '呼出中', connected: '接続', ended: '終話', missed: '不応答' };
 
       el.innerHTML = calls.map(c => {
         const duration = c.answered_at && c.ended_at ? UI.formatDuration(c.ended_at - c.answered_at) : '--';
+        const fromId = c.from_id ?? (c.caller_type === 'ward' ? c.ward_id : c.exam_room_id);
+        const toId = c.to_id ?? (c.caller_type === 'ward' ? c.exam_room_id : c.ward_id);
+        const fromName = fromId ? CallPanel.getNameById(fromId) : '不明';
+        const toName = toId ? CallPanel.getNameById(toId) : '不明';
         return `
           <div class="history-item">
             <div class="history-time">${UI.formatDateTime(c.started_at)}</div>
             <div class="history-main">
               <i class="fas fa-phone"></i>
-              ${callerLabels[c.caller_type] || c.caller_type} → ${c.caller_type === 'ward' ? '検査室' : '病棟'}
+              ${UI.escapeHTML(fromName)} → ${UI.escapeHTML(toName)}
             </div>
             <div class="history-sub">
               ${statusLabels[c.status] || c.status}
