@@ -72,6 +72,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // アプリバージョン取得
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // アプリ更新（自前アップデータ）
+  checkForUpdate: (opts) => ipcRenderer.invoke('check-for-update', opts),
+  downloadAndInstallUpdate: (opts) => ipcRenderer.invoke('download-and-install-update', opts),
+
+  // 親機の更新配信管理
+  getUpdateDistInfo: () => ipcRenderer.invoke('get-update-dist-info'),
+  importUpdateFiles: () => ipcRenderer.invoke('import-update-files'),
+  rollbackUpdateDist: () => ipcRenderer.invoke('rollback-update-dist'),
+
   // 開発/本番モード判定 (インフラ #4)
   isDevMode: () => ipcRenderer.invoke('is-dev-mode'),
 

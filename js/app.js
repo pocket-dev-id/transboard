@@ -836,6 +836,9 @@ const App = {
       this._startHeartbeat();
     }
 
+    // アプリ更新チェック（親機は自身の配信フォルダ、子機は親機を参照）
+    this._startUpdateCheck();
+
     console.log('[App] 初期化完了');
   },
 
@@ -851,6 +854,72 @@ const App = {
       if (headerRight) headerRight.prepend(el);
     }
     if (el) el.textContent = `v${AppState.appVersion || '-'}`;
+  },
+
+  // ── アプリ更新チェック（自前アップデータ） ──
+  _updateCheckTimer: null,
+
+  _getUpdateParentIp() {
+    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    if (shareMode === 'client' || shareMode === 'child') {
+      return localStorage.getItem('cfg_parent_ip') || '';
+    }
+    return ''; // 親機は自分自身(127.0.0.1)の配信フォルダを参照する
+  },
+
+  _startUpdateCheck() {
+    if (!window.electronAPI?.checkForUpdate) return;
+
+    const check = async () => {
+      if (localStorage.getItem('cfg_auto_update_check') === 'false') return;
+      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+      const parentIp = this._getUpdateParentIp();
+      if ((shareMode === 'client' || shareMode === 'child') && !parentIp) return;
+      const res = await window.electronAPI.checkForUpdate({ parentIp }).catch(() => null);
+      if (res?.success && res.updateAvailable) {
+        this._showUpdateAvailable(res);
+      }
+    };
+
+    // 起動直後は初期同期と重ねない。以後は24時間ごと
+    setTimeout(check, 15000);
+    if (this._updateCheckTimer) clearInterval(this._updateCheckTimer);
+    this._updateCheckTimer = setInterval(check, 24 * 60 * 60 * 1000);
+  },
+
+  _updateNotified: false,
+
+  _showUpdateAvailable(info) {
+    const badge = document.getElementById('app-version-badge');
+    if (badge) {
+      badge.classList.add('update-available');
+      badge.innerHTML = `v${AppState.appVersion} <i class="fas fa-arrow-circle-up"></i> v${UI.escapeHTML(info.latestVersion)}`;
+      badge.title = `新しいバージョン v${info.latestVersion} が利用可能です。クリックで更新`;
+      badge.onclick = () => this._promptInstallUpdate(info);
+    }
+    if (!this._updateNotified) {
+      this._updateNotified = true;
+      UI.toast(`新しいバージョン v${info.latestVersion} が利用可能です（ヘッダーのバージョン表示から更新できます）`, 'info');
+    }
+  },
+
+  async _promptInstallUpdate(info) {
+    const ok = await UI.confirmModal(
+      `TransBoard を v${info.latestVersion} に更新しますか？`,
+      {
+        title: 'アプリの更新',
+        detail: 'ダウンロードと検証の完了後、アプリが自動的に終了してインストールが始まります（数十秒〜数分）。データは更新前に自動バックアップされます。',
+        confirmLabel: '更新する'
+      }
+    );
+    if (!ok) return;
+
+    UI.toast('更新をダウンロードしています...', 'info');
+    const res = await window.electronAPI.downloadAndInstallUpdate({ parentIp: this._getUpdateParentIp() }).catch(e => ({ success: false, message: e.message }));
+    if (!res?.success) {
+      UI.toast(`更新に失敗しました: ${res?.message || '不明なエラー'}`, 'danger');
+    }
+    // 成功時はメインプロセス側でインストーラが起動しアプリが終了する
   },
 
   _setConnectionStatus(ok) {
@@ -890,6 +959,7 @@ const App = {
           hostname: _cachedHostname || undefined,
           wardId,
           mode: localStorage.getItem('cfg_share_mode') || 'client',
+          appVersion: AppState.appVersion || '',
           page: document.querySelector('.tab-btn.active')?.dataset.page || ''
         });
         this._setConnectionStatus(res !== null);

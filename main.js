@@ -1780,6 +1780,261 @@ ipcMain.handle('relaunch-app', () => {
   app.exit(0);
 });
 
+// ── アプリ自動更新（自前軽量アップデータ） ──
+// 親機の /updates/ から electron-builder 標準の latest.yml を取得し、
+// バージョン比較 → sha512検証付きダウンロード → per-userインストーラのサイレント起動を行う。
+// per-userインストール（nsis.perMachine:false）のためUAC昇格は発生しない。
+
+// latest.yml から必要フィールドのみ抽出する簡易パーサ（YAML全文法は不要）
+function parseLatestYml(text) {
+  const result = { version: null, path: null, sha512: null };
+  for (const rawLine of String(text).split(/\r?\n/)) {
+    // トップレベルのキーのみ対象（インデント行は files: 配下なので無視）
+    const m = rawLine.match(/^(version|path|sha512):\s*(.+)$/);
+    if (m && result[m[1]] === null) {
+      result[m[1]] = m[2].trim().replace(/^['"]|['"]$/g, '');
+    }
+  }
+  return result;
+}
+
+// セマンティックバージョン比較: a > b なら正、a < b なら負、同じなら0
+function compareVersions(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  }
+  return 0;
+}
+
+function httpGetText(url, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, res => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('接続がタイムアウトしました')));
+  });
+}
+
+// URLからファイルへストリーム保存しつつsha512(base64)を計算して返す
+function downloadToFileWithHash(url, destPath, timeoutMs = 300000) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, res => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const hash = crypto.createHash('sha512');
+      const out = fs.createWriteStream(destPath);
+      res.on('data', c => hash.update(c));
+      res.pipe(out);
+      out.on('finish', () => resolve(hash.digest('base64')));
+      out.on('error', reject);
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('ダウンロードがタイムアウトしました')));
+  });
+}
+
+function sha512OfFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha512');
+    const s = fs.createReadStream(filePath);
+    s.on('data', c => hash.update(c));
+    s.on('end', () => resolve(hash.digest('base64')));
+    s.on('error', reject);
+  });
+}
+
+function getUpdatesDir() {
+  return path.join(app.getPath('userData'), 'updates');
+}
+
+// 更新フィードURLの組み立て。子機はparentIp指定、親機は自分自身(ループバック)を参照
+function buildUpdateFeedBase(parentIp) {
+  const host = (parentIp || '').trim() || '127.0.0.1';
+  return `http://${host}:3005/updates`;
+}
+
+// 更新チェック: latest.yml を取得し現行バージョンと比較する
+ipcMain.handle('check-for-update', async (event, { parentIp } = {}) => {
+  try {
+    const ymlText = await httpGetText(`${buildUpdateFeedBase(parentIp)}/latest.yml`);
+    const info = parseLatestYml(ymlText);
+    if (!info.version || !info.path || !info.sha512) {
+      return { success: false, message: 'latest.ymlの形式が不正です' };
+    }
+    const currentVersion = app.getVersion();
+    return {
+      success: true,
+      updateAvailable: compareVersions(info.version, currentVersion) > 0,
+      latestVersion: info.version,
+      currentVersion,
+      fileName: info.path
+    };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
+// 更新のダウンロード → sha512検証 → DB退避 → サイレントインストール起動
+ipcMain.handle('download-and-install-update', async (event, { parentIp } = {}) => {
+  try {
+    const feedBase = buildUpdateFeedBase(parentIp);
+    const ymlText = await httpGetText(`${feedBase}/latest.yml`);
+    const info = parseLatestYml(ymlText);
+    if (!info.version || !info.path || !info.sha512) {
+      return { success: false, message: 'latest.ymlの形式が不正です' };
+    }
+    if (compareVersions(info.version, app.getVersion()) <= 0) {
+      return { success: false, message: '配信中のバージョンは現行より新しくありません' };
+    }
+
+    const tmpDir = path.join(app.getPath('temp'), 'transboard-update');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const installerPath = path.join(tmpDir, path.basename(info.path));
+    const actualSha512 = await downloadToFileWithHash(
+      `${feedBase}/${encodeURIComponent(path.basename(info.path))}`, installerPath);
+
+    if (actualSha512 !== info.sha512) {
+      try { fs.unlinkSync(installerPath); } catch {}
+      return { success: false, message: 'ダウンロードファイルの検証(sha512)に失敗しました。ファイルが破損しているか、改ざんされている可能性があります' };
+    }
+
+    // 更新起因の万一の破損に備え、既存の.bakローリングとは別にDBを退避
+    try {
+      if (fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, `${DB_FILE}.before_update`);
+    } catch (e) {
+      console.warn('[Updater] 更新前バックアップに失敗:', e.message);
+    }
+
+    console.log(`[Updater] v${info.version} のインストールを開始します`);
+    const child = spawn(installerPath, ['/S'], { detached: true, stdio: 'ignore' });
+    child.unref();
+    setTimeout(() => app.quit(), 500);
+    return { success: true, version: info.version };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
+// ── 親機の配信管理（取込・状況・ロールバック） ──
+
+// updatesフォルダ内の配信状況を返す
+ipcMain.handle('get-update-dist-info', () => {
+  try {
+    const updatesDir = getUpdatesDir();
+    const ymlPath = path.join(updatesDir, 'latest.yml');
+    let serving = null;
+    if (fs.existsSync(ymlPath)) {
+      const info = parseLatestYml(fs.readFileSync(ymlPath, 'utf8'));
+      const exeExists = info.path && fs.existsSync(path.join(updatesDir, path.basename(info.path)));
+      serving = { version: info.version, fileName: info.path, fileExists: exeExists };
+    }
+    const archiveDir = path.join(updatesDir, 'archive');
+    let archived = null;
+    if (fs.existsSync(path.join(archiveDir, 'latest.yml'))) {
+      const info = parseLatestYml(fs.readFileSync(path.join(archiveDir, 'latest.yml'), 'utf8'));
+      archived = { version: info.version };
+    }
+    return { success: true, serving, archived, currentVersion: app.getVersion() };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
+// 更新ファイルの取込: latest.yml と .exe を選択させ、sha512整合を検証してから配信位置へコピー
+ipcMain.handle('import-update-files', async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: '更新ファイルを選択（latest.yml とインストーラ .exe の両方）',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: '更新ファイル (latest.yml, *.exe)', extensions: ['yml', 'exe'] }]
+    });
+    if (canceled || !filePaths || filePaths.length === 0) return { success: false, canceled: true };
+
+    const ymlSrc = filePaths.find(f => f.toLowerCase().endsWith('.yml'));
+    const exeSrc = filePaths.find(f => f.toLowerCase().endsWith('.exe'));
+    if (!ymlSrc || !exeSrc) {
+      return { success: false, message: 'latest.yml とインストーラ(.exe)の両方を選択してください' };
+    }
+
+    const info = parseLatestYml(fs.readFileSync(ymlSrc, 'utf8'));
+    if (!info.version || !info.path || !info.sha512) {
+      return { success: false, message: 'latest.ymlの形式が不正です（version/path/sha512が必要）' };
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(info.version)) {
+      return { success: false, message: `バージョン形式が不正です: ${info.version}` };
+    }
+
+    // 壊れた・組み合わせ違いのファイルを配信しないよう、取込時点でsha512を照合
+    const actualSha512 = await sha512OfFile(exeSrc);
+    if (actualSha512 !== info.sha512) {
+      return { success: false, message: 'インストーラとlatest.ymlのsha512が一致しません。ダウンロードし直すか、同じリリースの組み合わせか確認してください' };
+    }
+
+    const updatesDir = getUpdatesDir();
+    const archiveDir = path.join(updatesDir, 'archive');
+    fs.mkdirSync(updatesDir, { recursive: true });
+    fs.mkdirSync(archiveDir, { recursive: true });
+
+    // 現在配信中のファイルを archive へ退避（1世代・ロールバック用）
+    const currentYml = path.join(updatesDir, 'latest.yml');
+    if (fs.existsSync(currentYml)) {
+      for (const f of fs.readdirSync(archiveDir)) {
+        try { fs.unlinkSync(path.join(archiveDir, f)); } catch {}
+      }
+      for (const f of fs.readdirSync(updatesDir)) {
+        const p = path.join(updatesDir, f);
+        if (fs.statSync(p).isFile()) fs.renameSync(p, path.join(archiveDir, f));
+      }
+    }
+
+    // 子機は latest.yml の path 名で取得するため、exeはその名前で配置する
+    fs.copyFileSync(exeSrc, path.join(updatesDir, path.basename(info.path)));
+    fs.copyFileSync(ymlSrc, path.join(updatesDir, 'latest.yml'));
+
+    console.log(`[Updater] 配信ファイルを取込: v${info.version}`);
+    return { success: true, version: info.version };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
+// ロールバック: archive内の旧配信ファイルを配信位置へ戻す
+ipcMain.handle('rollback-update-dist', () => {
+  try {
+    const updatesDir = getUpdatesDir();
+    const archiveDir = path.join(updatesDir, 'archive');
+    if (!fs.existsSync(path.join(archiveDir, 'latest.yml'))) {
+      return { success: false, message: 'ロールバック可能な旧バージョンがありません' };
+    }
+    // 現行の配信ファイルを削除し、archiveの内容を昇格
+    for (const f of fs.readdirSync(updatesDir)) {
+      const p = path.join(updatesDir, f);
+      if (fs.statSync(p).isFile()) fs.unlinkSync(p);
+    }
+    for (const f of fs.readdirSync(archiveDir)) {
+      fs.renameSync(path.join(archiveDir, f), path.join(updatesDir, f));
+    }
+    const info = parseLatestYml(fs.readFileSync(path.join(updatesDir, 'latest.yml'), 'utf8'));
+    console.log(`[Updater] 配信をロールバック: v${info.version}`);
+    return { success: true, version: info.version };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
 // スケジュールフィードの手動取り込みとウォッチャー再起動
 ipcMain.handle('trigger-schedule-feed-import', async (event, feedId) => {
   const db = readDB();
