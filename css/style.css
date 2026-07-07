@@ -2538,6 +2538,19 @@ body.theme-high-contrast .btn-primary {
   letter-spacing: 0.02em;
 }
 
+/* 更新が利用可能なとき: バッジを強調しクリック可能にする */
+.app-version-badge.update-available {
+  gap: 4px;
+  cursor: pointer;
+  border-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.25);
+  color: #fef3c7;
+  animation: pulse 2s infinite;
+}
+.app-version-badge.update-available:hover {
+  background: rgba(251, 191, 36, 0.45);
+}
+
 /* --- 色覚サポートテーマ (.theme-cvd) --- */
 /* 赤緑色盲（第1・第2色覚異常）対応: 青・紫・アンバー・ティールの組み合わせ */
 body.theme-cvd {

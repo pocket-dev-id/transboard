@@ -210,6 +210,44 @@ Object.assign(Settings, {
             </div>
           </div>
 
+          <!-- アプリの更新・配信 -->
+          <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
+            <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-arrow-circle-up"></i> アプリの更新
+              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; font-weight:800;">個別設定（PCごと）</span>
+            </h4>
+            <div style="font-size:12px; color:#4a5568; margin-bottom:8px;">
+              現在のバージョン: <b>v${AppState.appVersion || '-'}</b>
+            </div>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
+              <input type="checkbox" id="cfg-auto-update-check" ${localStorage.getItem('cfg_auto_update_check') !== 'false' ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+              起動時と24時間ごとに更新を自動チェックする
+            </label>
+            <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
+              ${currentMode === 'parent' ? '親機は自身の配信フォルダ（下記で取り込んだ更新）をチェックします。' : '子機は親機の配信フォルダをチェックします。更新は通知のみで、インストールは常に手動で開始します。'}
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+              <button class="btn btn-outline btn-sm" id="btn-check-update-now"><i class="fas fa-sync-alt"></i> 今すぐ更新を確認</button>
+              <span id="upd-check-result" style="font-size:12px; color:#64748b;"></span>
+            </div>
+
+            <!-- 親機のみ: 子機への配信管理 -->
+            <div id="update-dist-panel" style="display:${currentMode === 'parent' ? 'block' : 'none'}; margin-top:14px; padding-top:14px; border-top:1px dashed #cbd5e0;">
+              <div style="font-size:13px; font-weight:700; color:#2d3748; margin-bottom:4px;">
+                <i class="fas fa-broadcast-tower"></i> 子機への更新配信
+                <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用</span>
+              </div>
+              <p style="font-size:11px; color:#718096; margin:0 0 8px 0;">
+                GitHub Releases から <code style="background:#edf2f7; padding:1px 4px; border-radius:3px;">latest.yml</code> とインストーラ（.exe）をダウンロードし、ここで取り込むとLAN内の全端末（この親機を含む）へ更新を配信できます。取込時にファイルの整合性（sha512）を検証するため、破損・組み合わせ違いのファイルは配信されません。
+              </p>
+              <div id="upd-dist-status" style="font-size:12px; color:#4a5568; margin-bottom:8px;">読み込み中...</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-primary btn-sm" id="btn-import-update"><i class="fas fa-file-import"></i> 更新ファイルを取込</button>
+                <button class="btn btn-outline btn-sm" id="btn-rollback-update"><i class="fas fa-undo"></i> 1つ前の配信に戻す</button>
+              </div>
+            </div>
+          </div>
+
           <!-- WebRTC通話機能の有効/無効設定 -->
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
@@ -457,6 +495,8 @@ Object.assign(Settings, {
         const isClient = e.target.value === 'client';
         document.getElementById('client-config-section').style.display = isClient ? 'block' : 'none';
         document.getElementById('parent-config-section').style.display = isClient ? 'none' : 'block';
+        const distPanel = document.getElementById('update-dist-panel');
+        if (distPanel) distPanel.style.display = isClient ? 'none' : 'block';
       });
     });
 
@@ -526,6 +566,108 @@ Object.assign(Settings, {
           UI.toast('APIトークンを再生成しました。各子機の設定画面で入力し直してください。', 'success', 6000);
         } catch (e) {
           UI.toast('再生成に失敗しました: ' + e.message, 'danger');
+        }
+      };
+    }
+
+    // アプリ更新 — 自動チェック設定・手動チェック・配信管理
+    const autoUpdateChk = document.getElementById('cfg-auto-update-check');
+    if (autoUpdateChk) {
+      autoUpdateChk.onchange = () => {
+        localStorage.setItem('cfg_auto_update_check', autoUpdateChk.checked ? 'true' : 'false');
+        UI.toast(autoUpdateChk.checked ? '更新の自動チェックを有効にしました' : '更新の自動チェックを無効にしました', 'info');
+      };
+    }
+
+    const checkUpdateBtn = document.getElementById('btn-check-update-now');
+    if (checkUpdateBtn) {
+      checkUpdateBtn.onclick = async () => {
+        const resultEl = document.getElementById('upd-check-result');
+        if (!window.electronAPI?.checkForUpdate) {
+          if (resultEl) resultEl.textContent = 'この環境では更新チェックを利用できません';
+          return;
+        }
+        checkUpdateBtn.disabled = true;
+        if (resultEl) resultEl.textContent = '確認中...';
+        const res = await window.electronAPI.checkForUpdate({ parentIp: App._getUpdateParentIp() }).catch(e => ({ success: false, message: e.message }));
+        checkUpdateBtn.disabled = false;
+        if (!resultEl) return;
+        if (!res?.success) {
+          resultEl.textContent = `確認できませんでした（${res?.message || '不明なエラー'}）`;
+          resultEl.style.color = '#b91c1c';
+        } else if (res.updateAvailable) {
+          resultEl.textContent = `新しいバージョン v${res.latestVersion} が利用可能です`;
+          resultEl.style.color = '#16a34a';
+          App._showUpdateAvailable(res);
+        } else {
+          resultEl.textContent = `最新です (v${res.currentVersion})`;
+          resultEl.style.color = '#64748b';
+        }
+      };
+    }
+
+    // 親機のみ: 配信状況の表示・取込・ロールバック
+    const refreshDistStatus = async () => {
+      const statusEl = document.getElementById('upd-dist-status');
+      if (!statusEl || !window.electronAPI?.getUpdateDistInfo) return;
+      const info = await window.electronAPI.getUpdateDistInfo().catch(() => null);
+      if (!info?.success) {
+        statusEl.textContent = '配信状況を取得できませんでした';
+        return;
+      }
+      const parts = [];
+      if (info.serving) {
+        if (info.serving.fileExists) {
+          parts.push(`配信中: <b style="color:#16a34a;">v${UI.escapeHTML(info.serving.version || '?')}</b>（${UI.escapeHTML(info.serving.fileName || '')}）`);
+        } else {
+          parts.push(`<span style="color:#b91c1c;">配信設定 v${UI.escapeHTML(info.serving.version || '?')} のインストーラが見つかりません。再取込してください</span>`);
+        }
+      } else {
+        parts.push('配信中の更新はありません');
+      }
+      if (info.archived?.version) {
+        parts.push(`ロールバック可: v${UI.escapeHTML(info.archived.version)}`);
+      }
+      statusEl.innerHTML = parts.join(' ｜ ');
+      const rollbackBtn = document.getElementById('btn-rollback-update');
+      if (rollbackBtn) rollbackBtn.disabled = !info.archived?.version;
+    };
+    if ((localStorage.getItem('cfg_share_mode') || 'parent') === 'parent') refreshDistStatus();
+
+    const importUpdateBtn = document.getElementById('btn-import-update');
+    if (importUpdateBtn) {
+      importUpdateBtn.onclick = async () => {
+        if (!window.electronAPI?.importUpdateFiles) return;
+        importUpdateBtn.disabled = true;
+        const res = await window.electronAPI.importUpdateFiles().catch(e => ({ success: false, message: e.message }));
+        importUpdateBtn.disabled = false;
+        if (res?.canceled) return;
+        if (res?.success) {
+          UI.toast(`v${res.version} の配信を開始しました。各端末は次回チェック時に更新通知を受け取ります`, 'success', 6000);
+          refreshDistStatus();
+        } else {
+          UI.toast(`取込に失敗しました: ${res?.message || '不明なエラー'}`, 'danger', 6000);
+        }
+      };
+    }
+
+    const rollbackUpdateBtn = document.getElementById('btn-rollback-update');
+    if (rollbackUpdateBtn) {
+      rollbackUpdateBtn.onclick = async () => {
+        if (!window.electronAPI?.rollbackUpdateDist) return;
+        const ok = await UI.confirmModal('配信を1つ前のバージョンに戻しますか？', {
+          title: '配信のロールバック',
+          detail: '現在配信中のファイルは削除され、前回取込のバージョンが再配信されます。すでに新バージョンへ更新済みの端末を戻すには、その端末で旧インストーラを手動実行してください。',
+          type: 'warning',
+          confirmLabel: '戻す',
+        });
+        if (!ok) return;
+        const res = await window.electronAPI.rollbackUpdateDist().catch(e => ({ success: false, message: e.message }));
+        if (res?.success) {
+          UI.toast(`配信を v${res.version} に戻しました`, 'success');
+          refreshDistStatus();
+        } else {
+          UI.toast(`ロールバックに失敗しました: ${res?.message || '不明なエラー'}`, 'danger');
         }
       };
     }
@@ -868,19 +1010,26 @@ Object.assign(Settings, {
 
         area.innerHTML = `
           <table class="settings-table" style="margin-top:0; background:#fff;">
-            <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
+            <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>バージョン</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
             <tbody>
               ${devices.map(d => {
                 const id = d.deviceId || d.id;
                 const lastSeen = new Date(d.lastSeen || d.last_seen || 0).getTime();
                 const seconds = lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
                 const stale = seconds !== null && seconds > 20;
+                const versionMismatch = d.appVersion && AppState.appVersion && d.appVersion !== AppState.appVersion;
+                const versionHtml = d.appVersion
+                  ? (versionMismatch
+                      ? `<span style="color:#b45309; font-weight:800;" title="親機(v${AppState.appVersion})とバージョンが異なります"><i class="fas fa-exclamation-triangle"></i> v${UI.escapeHTML(d.appVersion)}</span>`
+                      : `v${UI.escapeHTML(d.appVersion)}`)
+                  : '-';
                 return `
                   <tr style="opacity:${stale ? '.62' : '1'};">
                     <td><strong>${d.name || id || '-'}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>
                     <td>${d.ip || '-'}</td>
                     <td style="font-size:11px; color:#4a5568;">${d.hostname || d.hostName || '-'}</td>
                     <td>${AppState.wards?.find(w => w.id === d.wardId)?.name || d.wardId || '-'}</td>
+                    <td style="font-size:11px;">${versionHtml}</td>
                     <td>${d.page || d.mode || '-'}</td>
                     <td>${seconds === null ? '-' : `${seconds}秒前`}</td>
                     <td><button class="btn btn-danger btn-sm btn-disconnect-device" data-id="${id || ''}" ${id ? '' : 'disabled'}>切断</button></td>
