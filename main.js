@@ -564,9 +564,11 @@ function createWindow() {
     }
   });
 
-  // マイク・カメラのパーミッション要求を明示的に許可
+  // マイク・カメラ・クリップボード書き込みのパーミッション要求を明示的に許可
+  // （clipboard-sanitized-write は APIトークン等の「コピー」ボタン用。新しいChromiumでは
+  // navigator.clipboard.writeText() もこのハンドラ経由で許可判定されるようになった）
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media') {
+    if (permission === 'media' || permission === 'clipboard-sanitized-write' || permission === 'clipboard-read') {
       callback(true);
     } else {
       callback(false);
@@ -2412,6 +2414,14 @@ function startParentServer() {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Token');
+
+    // Chromium の Private Network Access (PNA) 対応:
+    // file:// 等の「不明なアドレス空間」からLAN内プライベートIPへの fetch は、
+    // Chrome 130+ で明示許可のプリフライトが必須になった（Access-Control-Allow-Origin だけでは不可）。
+    // これが無いと、子機からの通信がプリフライト段階で無言でブロックされる。
+    if (req.headers['access-control-request-private-network']) {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
