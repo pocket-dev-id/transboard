@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist": "npm version patch --no-git-tag-version && electron-builder"
+    "dist": "electron-builder"
   },
   "build": {
     "appId": "io.transboard.app",
