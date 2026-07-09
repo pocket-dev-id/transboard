@@ -16,6 +16,13 @@ let currentWatchDir = null;
 let nfcProcess = null;
 let powerSaveBlockerId = null;
 
+// chokidar v4 はglob文字列の ignored を廃止したため、監視除外を関数で判定する。
+// 「先頭がドットの隠しファイル・フォルダ」と「archiveフォルダ配下」を除外する
+// （取り込み済みCSVはarchiveへ退避されるため、再取り込みを防ぐ）。
+function isIgnoredWatchPath(p) {
+  return String(p).split(/[\\/]/).some(seg => seg.startsWith('.') || seg === 'archive');
+}
+
 function startNfcWatcher() {
   if (nfcProcess) return;
   const scriptPath = app.isPackaged
@@ -611,11 +618,7 @@ function setupImportTrigger() {
   if (schedule.mode === 'realtime') {
     console.log(`[Watcher] リアルタイム監視を開始します: ${currentWatchDir}`);
     currentWatcher = chokidar.watch(currentWatchDir, {
-      ignored: [
-        /(^|[\/\\])\../,
-        '**/archive/**',
-        '**/archive'
-      ],
+      ignored: isIgnoredWatchPath,
       depth: 0,
       persistent: true,
       awaitWriteFinish: {
@@ -696,7 +699,7 @@ function setupScheduleFeedTriggers() {
 
     if (schedule.mode === 'realtime') {
       const watcher = chokidar.watch(watchDir, {
-        ignored: [/(^|[\/\\])\./, '**/archive/**', '**/archive'],
+        ignored: isIgnoredWatchPath,
         depth: 0,
         persistent: true,
         awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 }
