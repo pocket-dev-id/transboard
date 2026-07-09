@@ -775,9 +775,18 @@ Object.assign(Settings, {
 
       // マスタDB側にも設定値（互換性保存）を反映
       try {
+        // 稼働モード・親機IPは「この端末自身」の設定のため、共有APIルーティング
+        // （API.patch）を通さず常にローカルDBへ直接書き込む。
+        // API.patch経由にすると子機からの保存が親機のDBの share_mode を'client'に
+        // 上書きし、親機の再起動後に共有サーバー(3005)が起動しなくなる事故が起きる。
+        // main.js は起動時にローカルDBの share_mode を見てサーバー起動を判定している。
+        if (window.electronAPI?.dbRequest) {
+          await Promise.all([
+            window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'PATCH', body: JSON.stringify({ value: mode }) } }),
+            window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: parentIp }) } }),
+          ]);
+        }
         await Promise.all([
-          API.patch('system_settings', 'share_mode', { value: mode }),
-          API.patch('system_settings', 'parent_ip', { value: parentIp }),
           API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
           API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
           API.patch('system_settings', 'default_zoom', { value: defaultZoom }),

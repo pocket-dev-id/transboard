@@ -627,6 +627,20 @@ const Wizard = {
       localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
       localStorage.setItem('cfg_api_token', this.config.api_token || '');
 
+      // 稼働モード・親機IPはこの端末自身のローカルDBにも書き込む
+      // （main.jsが起動時にローカルDBの share_mode を見て共有サーバーの起動を判定するため。
+      // 共有ルーティングのAPI.patchは使わない — 子機から親機のDBを上書きしてしまう）
+      if (window.electronAPI?.dbRequest) {
+        try {
+          await Promise.all([
+            window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'PATCH', body: JSON.stringify({ value: this.config.share_mode }) } }),
+            window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: this.config.parent_ip || '' }) } }),
+          ]);
+        } catch (e) {
+          console.warn('[Wizard] ローカルDBへの稼働モード保存に失敗:', e);
+        }
+      }
+
       // 表示設定など、親機・子機を問わず共有DBへ反映してよい項目
       const sharedPatches = [
         API.patch('system_settings', 'theme_style',                   { value: this.config.theme_style }),

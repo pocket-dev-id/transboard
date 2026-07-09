@@ -830,6 +830,9 @@ const App = {
       }
     }
 
+    // 稼働モード設定の整合性チェック（ローカルDBとlocalStorageの不整合を自動修復）
+    await this._repairLocalShareMode();
+
     // 子機モードのみ：ハートビート送信と接続断検知
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     if (shareMode === 'client' || shareMode === 'child') {
@@ -840,6 +843,44 @@ const App = {
     this._startUpdateCheck();
 
     console.log('[App] 初期化完了');
+  },
+
+  // ── 稼働モード設定のセルフリペア ──
+  // 過去の不具合で、子機の設定保存が親機のローカルDBの share_mode を 'client' に
+  // 上書きしてしまうことがあった（その状態で親機を再起動すると共有サーバーが
+  // 起動しなくなり、子機が全断する）。main.js はローカルDBの share_mode で
+  // サーバー起動を判定するため、localStorage（この端末の真の役割）とローカルDBが
+  // 食い違っていたらローカルDB側を修復する。
+  async _repairLocalShareMode() {
+    if (!window.electronAPI?.dbRequest) return;
+    try {
+      const localMode = localStorage.getItem('cfg_share_mode') || 'parent';
+      const rec = await window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'GET' } });
+      const dbMode = rec?.value;
+      if (!dbMode || dbMode === localMode) return;
+
+      await window.electronAPI.dbRequest({
+        url: 'tables/system_settings/share_mode',
+        options: { method: 'PATCH', body: JSON.stringify({ value: localMode }) }
+      });
+      console.warn(`[App] ローカルDBの share_mode (${dbMode}) を端末設定 (${localMode}) に合わせて修復しました`);
+
+      if (localMode === 'parent' && dbMode === 'client') {
+        // 親機なのにDBが'client'だった = 共有サーバーが起動していない状態。再起動で復旧する
+        const ok = await UI.confirmModal('稼働モード設定の不整合を検出し、自動修復しました。今すぐ再起動しますか？', {
+          title: '設定の自動修復',
+          detail: '親機の共有サーバー（ポート3005）が設定不整合のため停止していました。再起動すると子機からの接続を受け付けられるようになります。',
+          confirmLabel: '再起動'
+        });
+        if (ok && window.electronAPI?.relaunchApp) {
+          window.electronAPI.relaunchApp();
+        } else {
+          UI.toast('修復を反映するには、アプリの再起動が必要です', 'warning', 8000);
+        }
+      }
+    } catch (e) {
+      console.warn('[App] share_mode 整合性チェックに失敗:', e);
+    }
   },
 
   _connectionLost: false,
