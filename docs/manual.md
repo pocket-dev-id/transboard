@@ -210,8 +210,10 @@ TransBoardはper-userインストール（`%LOCALAPPDATA%\Programs\`配下）の
 
 ### リリースの作成（開発者向け）
 
-1. `package.json`のバージョンを上げてコミットし、タグ`vX.Y.Z`をpush
+1. `npm version patch`（または`minor`/`major`）でバージョンを上げてコミットし、タグ`vX.Y.Z`をpush
 2. GitHub Actionsが自動でインストーラ（.exe）・`latest.yml`・`.blockmap`をビルドし、GitHub Releasesに添付
+
+> `npm run dist`/`npm run pack`はローカルでの動作確認用で、バージョン番号は変更しない。バージョンを上げるのは上記の`npm version`コマンドを明示的に実行したときだけなので、ビルドを試すたびに`package.json`が汚れて`git pull`が妨げられることはない。
 
 ### 親機の更新と子機への配信
 

@@ -454,7 +454,10 @@ const Wizard = {
           if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${res.status}</span>`;
         }
       } catch (e) {
-        if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
+        const reason = e.name === 'AbortError'
+          ? 'タイムアウトしました（4秒応答なし）'
+          : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
+        if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした（${UI.escapeHTML(reason)}）。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
       }
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-plug"></i> 接続テスト';

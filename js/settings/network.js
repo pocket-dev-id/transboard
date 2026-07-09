@@ -701,7 +701,10 @@ Object.assign(Settings, {
             UI.toast(`❌ 接続失敗: HTTPエラー ${res.status}`, 'danger');
           }
         } catch (e) {
-          UI.toast(`❌ 接続できませんでした。IPアドレスが正しいか、親機が起動しているか、またはネットワーク設定（ファイアウォール）を確認してください。`, 'danger', 6000);
+          const reason = e.name === 'AbortError'
+            ? 'タイムアウトしました（4秒応答なし）'
+            : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
+          UI.toast(`❌ 接続できませんでした（${reason}）。IPアドレスが正しいか、親機が起動しているか、またはネットワーク設定（ファイアウォール）を確認してください。`, 'danger', 8000);
         } finally {
           testBtn.disabled = false;
           testBtn.innerHTML = oldHtml;

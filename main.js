@@ -10,6 +10,12 @@ const { execSync, execFileSync, spawn } = require('child_process');
 
 const { Readable } = require('stream');
 
+// Electron 41 (Chromium 146) が導入した Local Network Access (LNA) 制限を無効化する。
+// 子機(file://)から親機のプライベートIPへのfetchがパーミッション要求扱いになり、
+// 既定拒否のパーミッションハンドラにブロックされて親子間の同期が全断するため、
+// 院内LAN専用アプリとして従来通りの挙動に固定する。app.whenReady() より前に呼ぶ必要がある。
+app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks');
+
 let mainWindow;
 let currentWatcher = null;
 let currentWatchDir = null;
@@ -564,15 +570,19 @@ function createWindow() {
     }
   });
 
-  // マイク・カメラ・クリップボード書き込みのパーミッション要求を明示的に許可
-  // （clipboard-sanitized-write は APIトークン等の「コピー」ボタン用。新しいChromiumでは
-  // navigator.clipboard.writeText() もこのハンドラ経由で許可判定されるようになった）
+  // マイク・カメラ・クリップボード書き込み・ローカルネットワークアクセスの
+  // パーミッション要求を明示的に許可する。
+  // - clipboard-sanitized-write/clipboard-read: APIトークン等の「コピー」ボタン用。
+  //   新しいChromiumでは navigator.clipboard.writeText() もこのハンドラ経由で判定される。
+  // - local-network-access: Electron 41 (Chromium 146) で導入されたLNA制限用の保険
+  //   （実際の無効化は app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks')
+  //   で行っているが、将来そのフラグが廃止された場合に備えてここでも明示許可する）
+  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write', 'clipboard-read', 'local-network-access']);
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media' || permission === 'clipboard-sanitized-write' || permission === 'clipboard-read') {
-      callback(true);
-    } else {
-      callback(false);
-    }
+    callback(ALLOWED_PERMISSIONS.has(permission));
+  });
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    return ALLOWED_PERMISSIONS.has(permission);
   });
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
