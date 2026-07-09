@@ -130,12 +130,26 @@ const Wizard = {
           placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力"
           class="wiz-input" style="font-family:monospace; font-size:11px;">
         <div class="wiz-hint"><i class="fas fa-shield-alt"></i> 患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</div>
+        <button class="btn btn-outline btn-sm" id="btn-wiz-test-connection" style="margin-top:10px;">
+          <i class="fas fa-plug"></i> 接続テスト
+        </button>
+        <span id="wiz-test-connection-result" style="font-size:11px; margin-left:8px;"></span>
       </div>
     `;
   },
 
   // ── Step 2: 電子カルテ連携 ──────────────────────────
   _step2() {
+    if (this.config.share_mode === 'client') {
+      return `
+        <h4 class="wiz-step-title">2. 電子カルテ連携の設定</h4>
+        <p class="wiz-step-desc">この設定は親機でのみ行います。子機は親機が取り込んだ在床データを自動的に受け取ります。</p>
+        <div class="wiz-sub-panel" style="text-align:center; padding:36px 16px; color:#64748b;">
+          <i class="fas fa-server" style="font-size:28px; color:#94a3b8; margin-bottom:10px; display:block;"></i>
+          子機では設定不要です。「次へ」に進んでください。
+        </div>
+      `;
+    }
     const sel = v => this.config.import_connection_type === v;
     return `
       <h4 class="wiz-step-title">2. 電子カルテ連携の設定</h4>
@@ -278,6 +292,7 @@ const Wizard = {
         </div>
       </div>
 
+      ${this.config.share_mode === 'parent' ? `
       <div style="margin-bottom:16px;">
         <label class="wiz-label" style="margin-bottom:8px;">在室管理モード</label>
         <div class="wiz-radio-group" style="gap:8px;">
@@ -292,6 +307,9 @@ const Wizard = {
             'CSVで取り込みつつ、CSVにない患者を手動で追加登録できます。')}
         </div>
       </div>
+      ` : `
+      <div class="wiz-hint" style="margin-bottom:16px;"><i class="fas fa-info-circle"></i> 在室管理モードは親機の設定に従います。</div>
+      `}
 
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:700; color:var(--clr-text);">
         <input type="checkbox" id="wizard-ic-association" ${this.config.enable_patient_ic_association === 'true' ? 'checked' : ''}>
@@ -410,6 +428,36 @@ const Wizard = {
         this.config.share_mode = r.value;
         this._renderModal();
       });
+    });
+
+    // Step 1: 親機への接続テスト
+    document.getElementById('btn-wiz-test-connection')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn-wiz-test-connection');
+      const result = document.getElementById('wiz-test-connection-result');
+      const parentIp = document.getElementById('wizard-parent-ip')?.value.trim();
+      if (!parentIp) {
+        if (result) result.innerHTML = '<span style="color:#dc2626">親機のIPアドレスを入力してください</span>';
+        return;
+      }
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> テスト中...';
+      if (result) result.innerHTML = '';
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(`http://${parentIp}:3005/api/tables/wards`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件を確認）</span>`;
+        } else {
+          if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${res.status}</span>`;
+        }
+      } catch (e) {
+        if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-plug"></i> 接続テスト';
     });
 
     // Step 2: 連携方式切り替え
@@ -549,7 +597,7 @@ const Wizard = {
       const ip = document.getElementById('wizard-parent-ip')?.value.trim();
       if (!ip) { UI.toast('子機モードでは親機IPアドレスを入力してください', 'warning'); return false; }
     }
-    if (this.currentStep === 2 && this.config.import_connection_type === 'odbc') {
+    if (this.currentStep === 2 && this.config.share_mode === 'parent' && this.config.import_connection_type === 'odbc') {
       const cs = document.getElementById('wiz-odbc-connstr')?.value.trim();
       if (!cs) { UI.toast('ODBC接続文字列を入力してください', 'warning'); return false; }
     }
@@ -567,36 +615,62 @@ const Wizard = {
     try {
       this._saveCurrentStepState();
 
-      const promises = [
-        API.patch('system_settings', 'share_mode',                    { value: this.config.share_mode }),
-        API.patch('system_settings', 'parent_ip',                     { value: this.config.parent_ip }),
-        API.patch('system_settings', 'import_connection_type',        { value: this.config.import_connection_type }),
-        API.patch('system_settings', 'import_directory',              { value: this.config.import_directory }),
-        API.patch('system_settings', 'odbc_connection_string',        { value: this.config.odbc_connection_string }),
-        API.patch('system_settings', 'odbc_sql_query',                { value: this.config.odbc_sql_query }),
-        API.patch('system_settings', 'smb_auth_mode',                 { value: this.config.smb_auth_mode }),
-        API.patch('system_settings', 'smb_username',                  { value: this.config.smb_username }),
-        API.patch('system_settings', 'smb_password',                  { value: this.config.smb_password }),
-        API.patch('system_settings', 'admission_mode',                { value: this.config.admission_mode }),
-        API.patch('system_settings', 'theme_style',                   { value: this.config.theme_style }),
-        API.patch('system_settings', 'default_zoom',                  { value: this.config.default_zoom }),
-        API.patch('system_settings', 'font_style',                    { value: this.config.font_style }),
-        API.patch('system_settings', 'enable_patient_ic_association', { value: this.config.enable_patient_ic_association }),
-        API.patch('system_settings', 'wizard_completed',              { value: 'true' }),
-      ];
-
-      await Promise.all(promises);
-
+      // 接続設定（このデバイス自身の役割・接続先）はローカル保存のみで完結させる。
+      // ネットワークに一切依存しないため必ず成功し、子機の場合はこれだけで
+      // 「次回起動時に親機へ接続する」ために必要な情報が揃う。
+      // share_mode/parent_ip/api_token を共有DBテーブルへ書き込んではいけない
+      // （子機が誤って"親機自身の"稼働モードを上書きしてしまう事故になるため）。
       localStorage.setItem('cfg_share_mode', this.config.share_mode);
       localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
       localStorage.setItem('cfg_api_token', this.config.api_token || '');
 
-      if (this.config.share_mode === 'parent' && this.config.insert_demo) {
-        await API.patch('system_settings', 'demo_inserted', { value: 'false' });
-        await DemoData.setup();
+      // 表示設定など、親機・子機を問わず共有DBへ反映してよい項目
+      const sharedPatches = [
+        API.patch('system_settings', 'theme_style',                   { value: this.config.theme_style }),
+        API.patch('system_settings', 'default_zoom',                  { value: this.config.default_zoom }),
+        API.patch('system_settings', 'font_style',                    { value: this.config.font_style }),
+        API.patch('system_settings', 'enable_patient_ic_association', { value: this.config.enable_patient_ic_association }),
+      ];
+
+      // 電子カルテ連携・SMB・在室管理モードは親機のみが持つ設定。
+      // 子機のウィザードがこれらを送ると、親機の実際の連携設定を
+      // 子機側の未入力・初期値で上書きしてしまうため、親機モード選択時のみ送る。
+      if (this.config.share_mode === 'parent') {
+        sharedPatches.push(
+          API.patch('system_settings', 'import_connection_type', { value: this.config.import_connection_type }),
+          API.patch('system_settings', 'import_directory',       { value: this.config.import_directory }),
+          API.patch('system_settings', 'odbc_connection_string', { value: this.config.odbc_connection_string }),
+          API.patch('system_settings', 'odbc_sql_query',         { value: this.config.odbc_sql_query }),
+          API.patch('system_settings', 'smb_auth_mode',          { value: this.config.smb_auth_mode }),
+          API.patch('system_settings', 'smb_username',           { value: this.config.smb_username }),
+          API.patch('system_settings', 'smb_password',           { value: this.config.smb_password }),
+          API.patch('system_settings', 'admission_mode',         { value: this.config.admission_mode }),
+          API.patch('system_settings', 'wizard_completed',       { value: 'true' }),
+        );
       }
 
-      UI.toast('初期設定が完了しました！', 'success');
+      // 一部の項目が失敗しても（例: 子機から親機に一時的に届かない等）
+      // 接続設定は既にローカルへ保存済みなので、ウィザード自体は完了させる。
+      const results = await Promise.allSettled(sharedPatches);
+      const failedCount = results.filter(r => r.status === 'rejected').length;
+      if (failedCount > 0) {
+        console.warn('[Wizard] 一部の設定を共有DBへ反映できませんでした:', results.filter(r => r.status === 'rejected'));
+      }
+
+      if (this.config.share_mode === 'parent' && this.config.insert_demo) {
+        try {
+          await API.patch('system_settings', 'demo_inserted', { value: 'false' });
+          await DemoData.setup();
+        } catch (e) {
+          console.warn('[Wizard] デモデータの投入に失敗しました:', e);
+        }
+      }
+
+      if (failedCount > 0) {
+        UI.toast(`初期設定を保存しました（一部の項目は反映できませんでした。接続後に設定画面から確認してください）`, 'warning', 7000);
+      } else {
+        UI.toast('初期設定が完了しました！', 'success');
+      }
 
       if (this.config.share_mode === 'client') {
         // 子機モード: データ接続先が変わるため再起動するまで正常動作しない
