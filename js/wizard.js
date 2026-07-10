@@ -130,10 +130,15 @@ const Wizard = {
           placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力"
           class="wiz-input" style="font-family:monospace; font-size:11px;">
         <div class="wiz-hint"><i class="fas fa-shield-alt"></i> 患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</div>
-        <button class="btn btn-outline btn-sm" id="btn-wiz-test-connection" style="margin-top:10px;">
-          <i class="fas fa-plug"></i> 接続テスト
-        </button>
-        <span id="wiz-test-connection-result" style="font-size:11px; margin-left:8px;"></span>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+          <button class="btn btn-outline btn-sm" id="btn-wiz-test-connection">
+            <i class="fas fa-plug"></i> 接続テスト
+          </button>
+          <button class="btn btn-outline btn-sm" id="btn-wiz-open-debug-log" title="診断ログをメモ帳で開く">
+            <i class="fas fa-file-alt"></i> ログを開く
+          </button>
+        </div>
+        <span id="wiz-test-connection-result" style="font-size:11px; display:block; margin-top:6px;"></span>
       </div>
     `;
   },
@@ -442,25 +447,42 @@ const Wizard = {
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> テスト中...';
       if (result) result.innerHTML = '';
+      const url = `http://${parentIp}:3005/api/tables/wards`;
+      const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
+      const logLines = [
+        `[Wizard接続テスト] appVersion=${appVer} url=${url}`,
+        `  navigator.onLine=${navigator.onLine}`,
+      ];
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(`http://${parentIp}:3005/api/tables/wards`, { signal: controller.signal });
+        const res = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
+          logLines.push(`  結果: 成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
           if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件を確認）</span>`;
         } else {
+          logLines.push(`  結果: HTTPエラー status=${res.status}`);
           if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${res.status}</span>`;
         }
       } catch (e) {
         const reason = e.name === 'AbortError'
           ? 'タイムアウトしました（4秒応答なし）'
           : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
+        logLines.push(`  結果: 例外 name=${e.name} message=${e.message} stack=${(e.stack || '').split('\n').slice(0, 3).join(' / ')}`);
         if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした（${UI.escapeHTML(reason)}）。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
       }
+      window.electronAPI?.appendDebugLog?.(logLines.join('\n')).catch(() => {});
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-plug"></i> 接続テスト';
+    });
+
+    // 診断ログをメモ帳等で開く（DevTools操作なしで確認できるようにする）
+    document.getElementById('btn-wiz-open-debug-log')?.addEventListener('click', () => {
+      window.electronAPI?.openDebugLog?.().catch(() => {
+        UI.toast('ログファイルを開けませんでした', 'danger');
+      });
     });
 
     // Step 2: 連携方式切り替え
