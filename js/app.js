@@ -839,6 +839,16 @@ const App = {
       this._startHeartbeat();
     }
 
+    // 起動時の設定サマリを診断ログへ記録（DevTools操作なしで状態確認できるように）
+    if (window.electronAPI?.appendDebugLog) {
+      const token = localStorage.getItem('cfg_api_token') || '';
+      const tokenSummary = token ? `設定あり(${token.length}文字, 先頭${token.slice(0, 4)}…)` : '未設定';
+      window.electronAPI.appendDebugLog(
+        `[App起動] version=${AppState.appVersion || '?'} cfg_share_mode=${shareMode} ` +
+        `cfg_parent_ip=${localStorage.getItem('cfg_parent_ip') || '(未設定)'} cfg_api_token=${tokenSummary}`
+      ).catch(() => {});
+    }
+
     // アプリ更新チェック（親機は自身の配信フォルダ、子機は親機を参照）
     this._startUpdateCheck();
 

@@ -108,6 +108,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // PCのホスト名を取得する
   getHostname: () => ipcRenderer.invoke('get-hostname'),
 
+  // 診断用デバッグログ（接続テスト失敗時などの詳細をファイルへ記録・メモ帳等で開く）
+  appendDebugLog: (line) => ipcRenderer.invoke('append-debug-log', line),
+  openDebugLog: () => ipcRenderer.invoke('open-debug-log'),
+
   // フォルダ選択ダイアログを開く
   selectFolder: () => ipcRenderer.invoke('select-folder'),
 

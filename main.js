@@ -1753,6 +1753,43 @@ ipcMain.handle('webrtc-request', async (event, { url, options }) => {
 ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('get-hostname', () => os.hostname());
 
+// ── 診断用デバッグログ ──
+// パッケージ版（.exe）はターミナルが無くコンソール出力を確認できないため、
+// 接続テスト等の失敗時にレンダラーから追記できる簡易ログファイルを用意する。
+// ボタン一つでエクスプローラー/メモ帳から開けるようにし、DevTools操作を不要にする。
+function getDebugLogPath() {
+  return path.join(app.getPath('userData'), 'debug.log');
+}
+
+ipcMain.handle('append-debug-log', (event, line) => {
+  try {
+    const logPath = getDebugLogPath();
+    const timestamp = new Date().toISOString();
+    const entry = `[${timestamp}] ${String(line).slice(0, 2000)}\n`;
+    fs.appendFileSync(logPath, entry, 'utf-8');
+
+    // 肥大化防止: 500行を超えたら直近500行に切り詰める
+    const content = fs.readFileSync(logPath, 'utf-8');
+    const lines = content.split('\n');
+    if (lines.length > 500) {
+      fs.writeFileSync(logPath, lines.slice(-500).join('\n'), 'utf-8');
+    }
+    return { success: true, path: logPath };
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+});
+
+ipcMain.handle('open-debug-log', () => {
+  const { shell } = require('electron');
+  const logPath = getDebugLogPath();
+  if (!fs.existsSync(logPath)) {
+    fs.writeFileSync(logPath, `[${new Date().toISOString()}] (ログはまだありません)\n`, 'utf-8');
+  }
+  shell.openPath(logPath);
+  return { success: true, path: logPath };
+});
+
 // フォルダ選択ダイアログ（スケジュール取り込みの監視フォルダ選択用）
 ipcMain.handle('select-folder', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {

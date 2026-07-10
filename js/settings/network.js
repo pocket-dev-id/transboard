@@ -182,6 +182,9 @@ Object.assign(Settings, {
               <button class="btn btn-outline btn-sm" id="btn-test-connection">
                 <i class="fas fa-link"></i> 接続テストを実行
               </button>
+              <button class="btn btn-outline btn-sm" id="btn-open-debug-log" title="診断ログをメモ帳で開く">
+                <i class="fas fa-file-alt"></i> ログを開く
+              </button>
             </div>
           </div>
 
@@ -686,29 +689,48 @@ Object.assign(Settings, {
         const oldHtml = testBtn.innerHTML;
         testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 接続テスト中...';
 
+        const url = `http://${parentIp}:3005/api/tables/wards`;
+        const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
+        const logLines = [
+          `[設定画面接続テスト] appVersion=${appVer} url=${url}`,
+          `  navigator.onLine=${navigator.onLine}`,
+        ];
         try {
           // テストフェッチ（親機側のwardsマスタを取得してみる）
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 4000); // 4秒タイムアウト
 
-          const res = await fetch(`http://${parentIp}:3005/api/tables/wards`, { signal: controller.signal });
+          const res = await fetch(url, { signal: controller.signal });
           clearTimeout(timeoutId);
 
           if (res.ok) {
             const data = await res.json();
+            logLines.push(`  結果: 成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
             UI.toast(`✅ 接続に成功しました！ 親機の病棟データ (${data.data?.length || 0}件) を正常に検出。`, 'success');
           } else {
+            logLines.push(`  結果: HTTPエラー status=${res.status}`);
             UI.toast(`❌ 接続失敗: HTTPエラー ${res.status}`, 'danger');
           }
         } catch (e) {
           const reason = e.name === 'AbortError'
             ? 'タイムアウトしました（4秒応答なし）'
             : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
+          logLines.push(`  結果: 例外 name=${e.name} message=${e.message} stack=${(e.stack || '').split('\n').slice(0, 3).join(' / ')}`);
           UI.toast(`❌ 接続できませんでした（${reason}）。IPアドレスが正しいか、親機が起動しているか、またはネットワーク設定（ファイアウォール）を確認してください。`, 'danger', 8000);
         } finally {
+          window.electronAPI?.appendDebugLog?.(logLines.join('\n')).catch(() => {});
           testBtn.disabled = false;
           testBtn.innerHTML = oldHtml;
         }
+      };
+    }
+
+    const openLogBtn = document.getElementById('btn-open-debug-log');
+    if (openLogBtn) {
+      openLogBtn.onclick = () => {
+        window.electronAPI?.openDebugLog?.().catch(() => {
+          UI.toast('ログファイルを開けませんでした', 'danger');
+        });
       };
     }
 
