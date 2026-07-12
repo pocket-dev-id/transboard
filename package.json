@@ -4,7 +4,7 @@
   "description": "TransBoard - Hospital Ward Transfer Management Dashboard",
   "main": "main.js",
   "scripts": {
-    "check": "node scripts/check-js-syntax.js",
+    "check": "node scripts/check-js-syntax.js && node scripts/check-device-presence.js",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"

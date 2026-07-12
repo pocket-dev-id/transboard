@@ -13,6 +13,7 @@ browser scripts unless the task explicitly requires it.
   depends on another global, load it after its dependency here.
 - `js/api.js`: browser API wrapper and parent/child request routing.
 - `js/state.js`: shared in-memory browser state helpers.
+- `js/device-presence.js`: pure helpers for connected device summary display.
 - `js/app.js`: application boot, polling, global UI events, passcode session,
   parent connection monitor, device presence display.
 - `js/settings/core.js`: settings shell, tab routing, shared settings helpers.
