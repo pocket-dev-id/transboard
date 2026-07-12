@@ -200,7 +200,7 @@ const ParentServerMonitor = {
 
   init() {
     const mode = localStorage.getItem('cfg_share_mode');
-    if (mode !== 'client') return;
+    if (mode !== 'client' && mode !== 'child') return;
     this._check();
     this._interval = setInterval(() => this._check(), 30000);
   },
@@ -894,6 +894,9 @@ const App = {
   },
 
   _connectionLost: false,
+  _heartbeatTimer: null,
+  _heartbeatInFlight: false,
+  _pollInFlight: false,
 
   _renderAppVersion() {
     let el = document.getElementById('app-version-badge');
@@ -1009,6 +1012,8 @@ const App = {
     }
 
     const sendHeartbeat = async () => {
+      if (this._heartbeatInFlight) return;
+      this._heartbeatInFlight = true;
       const wardId = AppState.currentWardId || localStorage.getItem('current_ward_id') || '';
       try {
         const res = await API.deviceHeartbeat({
@@ -1024,11 +1029,14 @@ const App = {
       } catch (e) {
         console.warn('[Heartbeat] failed:', e);
         this._setConnectionStatus(false);
+      } finally {
+        this._heartbeatInFlight = false;
       }
     };
 
     sendHeartbeat();
-    setInterval(sendHeartbeat, 10000);
+    if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
+    this._heartbeatTimer = setInterval(sendHeartbeat, 10000);
   },
 
   syncWardSelect() {
@@ -1094,11 +1102,23 @@ const App = {
   async refreshData() {
     try {
       const wardId = AppState.currentWardId;
-      const [activeEvents, todayEvents, systemSettings] = await Promise.all([
-        API.getActiveEvents(wardId),
-        API.getTodayEventsForWard(wardId),
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayMs = today.getTime();
+      const [eventsRes, systemSettings] = await Promise.all([
+        API.getAll('transfer_events'),
         API.getAll('system_settings').then(res => res.data).catch(() => [])
       ]);
+      const events = eventsRes.data || [];
+      const activeEvents = events.filter(e =>
+        e.ward_id === wardId &&
+        CONFIG.ACTIVE_STATUSES.includes(e.current_status)
+      );
+      const todayEvents = events.filter(e => {
+        if (e.ward_id !== wardId) return false;
+        if (CONFIG.ACTIVE_STATUSES.includes(e.current_status)) return true;
+        return e.departed_at != null && e.departed_at >= todayMs;
+      });
       AppState.activeEvents = activeEvents;
       AppState.todayEvents = todayEvents;
       AppState.systemSettings = systemSettings;
@@ -1118,19 +1138,26 @@ const App = {
   },
 
   startPolling() {
+    if (AppState.pollTimer) clearInterval(AppState.pollTimer);
     AppState.pollTimer = setInterval(async () => {
-      const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
-      await this.refreshData();
+      if (this._pollInFlight) return;
+      this._pollInFlight = true;
+      try {
+        const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
+        await this.refreshData();
 
-      if (currentPage === 'ward-dashboard') {
-        WardDashboard.render();
-      } else if (currentPage === 'exam-room') {
-        ExamRoom._renderQueue();
-      } else if (currentPage === 'timeline') {
-        Timeline.render();
+        if (currentPage === 'ward-dashboard') {
+          WardDashboard.render();
+        } else if (currentPage === 'exam-room') {
+          ExamRoom._renderQueue();
+        } else if (currentPage === 'timeline') {
+          Timeline.render();
+        }
+
+        this._checkNotifications();
+      } finally {
+        this._pollInFlight = false;
       }
-
-      this._checkNotifications();
     }, CONFIG.POLL_INTERVAL);
   },
 

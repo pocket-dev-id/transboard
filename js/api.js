@@ -3,6 +3,26 @@
  * RESTful Table API ラッパー
  */
 
+const API_DEFAULT_TIMEOUT_MS = 8000;
+const API_SIGNALING_TIMEOUT_MS = 5000;
+const API_HEARTBEAT_TIMEOUT_MS = 4000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = API_DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const originalSignal = options.signal;
+  if (originalSignal) {
+    if (originalSignal.aborted) controller.abort();
+    else originalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 const API = {
 
   /* ---------- 汎用フェッチ ---------- */
@@ -17,7 +37,7 @@ const API = {
         const optionsWithToken = apiToken
           ? { ...options, headers: { ...(options.headers || {}), 'X-API-Token': apiToken } }
           : options;
-        const res = await fetch(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
+        const res = await fetchWithTimeout(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
         if (res.status === 204) return null;
         const data = await res.json();
         if (!res.ok) {
@@ -43,7 +63,7 @@ const API = {
       }
     }
     try {
-      const res = await fetch(url, options);
+      const res = await fetchWithTimeout(url, options);
       if (res.status === 204) return null;
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
@@ -308,11 +328,11 @@ const API = {
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetch(`http://${parentIp}:3005/api/webrtc/send`, {
+      return fetchWithTimeout(`http://${parentIp}:3005/api/webrtc/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(msg)
-      }).then(r => r.json());
+      }, API_SIGNALING_TIMEOUT_MS).then(r => r.json());
     }
 
     if (window.electronAPI && window.electronAPI.webrtcRequest) {
@@ -326,11 +346,11 @@ const API = {
       });
     }
 
-    return fetch('/api/webrtc/send', {
+    return fetchWithTimeout('/api/webrtc/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg)
-    }).then(r => r.json());
+    }, API_SIGNALING_TIMEOUT_MS).then(r => r.json());
   },
 
   async webrtcPoll(myId) {
@@ -338,7 +358,7 @@ const API = {
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetch(`http://${parentIp}:3005/api/webrtc/poll?id=${encodeURIComponent(myId)}`)
+      return fetchWithTimeout(`http://${parentIp}:3005/api/webrtc/poll?id=${encodeURIComponent(myId)}`, {}, API_SIGNALING_TIMEOUT_MS)
         .then(r => r.json());
     }
 
@@ -349,7 +369,7 @@ const API = {
       });
     }
 
-    return fetch(`/api/webrtc/poll?id=${encodeURIComponent(myId)}`)
+    return fetchWithTimeout(`/api/webrtc/poll?id=${encodeURIComponent(myId)}`, {}, API_SIGNALING_TIMEOUT_MS)
       .then(r => r.json());
   },
 
@@ -358,18 +378,18 @@ const API = {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     if (shareMode !== 'client' && shareMode !== 'child') return;
-    return fetch(`http://${parentIp}:3005/api/device/heartbeat`, {
+    return fetchWithTimeout(`http://${parentIp}:3005/api/device/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(info)
-    }).then(r => r.json()).catch(() => null);
+    }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json()).catch(() => null);
   },
 
   async getConnectedDevices() {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetch(`http://${parentIp}:3005/api/device/list`).then(r => r.json());
+      return fetchWithTimeout(`http://${parentIp}:3005/api/device/list`, {}, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
     }
     if (window.electronAPI) {
       return window.electronAPI.dbRequest({ url: 'device/list', options: { method: 'GET' } }).catch(() => ({ success: false, devices: [] }));
@@ -384,7 +404,7 @@ const API = {
       ? `http://${parentIp}:3005/api/device/disconnect`
       : null;
     if (url) {
-      return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId }) }).then(r => r.json());
+      return fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId }) }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
     }
   }
 };

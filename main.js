@@ -128,7 +128,16 @@ function cleanupStaleTmpFiles() {
 cleanupStaleTmpFiles();
 
 // WebRTCシグナリング用のメモリ内一時キュー
-const webrtcSignalingQueue = {};
+const webrtcSignalingQueue = Object.create(null);
+const SIGNALING_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const MAX_SIGNALING_ID_LENGTH = 128;
+
+function isSafeSignalingId(value) {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= MAX_SIGNALING_ID_LENGTH &&
+    SIGNALING_ID_PATTERN.test(value);
+}
 
 // WebRTCシグナリングキューの定期クリーンアップ（古い未取得メッセージの自動破棄）
 setInterval(() => {
@@ -1467,8 +1476,9 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
     try {
       const msg = JSON.parse(bodyStr);
       const to = msg.to;
-      if (!to || typeof to !== 'string') return { success: false, message: 'Missing "to" field' };
-      if (to === '__proto__' || to === 'constructor' || to === 'prototype') return { success: false, message: 'Invalid "to" field' };
+      const from = msg.from;
+      if (!isSafeSignalingId(to)) return { success: false, message: 'Missing or invalid "to" field' };
+      if (from !== undefined && !isSafeSignalingId(from)) return { success: false, message: 'Invalid "from" field' };
 
       const msgId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const entry = { msg: { ...msg, msgId }, timestamp: Date.now() };
@@ -1500,7 +1510,7 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
   if (action === 'poll') {
     if (method !== 'GET') return { success: false, message: 'Method Not Allowed' };
     const id = searchParams.get('id');
-    if (!id || id === '__proto__' || id === 'constructor' || id === 'prototype') return { success: false, message: 'Missing or invalid "id" parameter' };
+    if (!isSafeSignalingId(id)) return { success: false, message: 'Missing or invalid "id" parameter' };
 
     const now = Date.now();
     const EXPIRATION_MS = 30000;
@@ -2425,8 +2435,37 @@ ipcMain.handle('change-database-storage-mode', async (event, mode) => {
 });
 
 // 接続中デバイス管理（ハートビート方式）
-const connectedDevices = {}; // { deviceId: { name, ip, mode, lastSeen, wardId } }
+const connectedDevices = Object.create(null); // { deviceId: { name, ip, mode, lastSeen, wardId } }
 const DEVICE_TIMEOUT_MS = 30000; // 30秒無応答で切断扱い
+const MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024; // 外部HTTP APIの最大リクエストボディ (5MB)
+const MAX_DEVICE_ID_LENGTH = 64;
+const MAX_HEARTBEAT_FIELD_LENGTH = 200;
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const HEARTBEAT_TEXT_FIELDS = ['name', 'hostname', 'wardId', 'mode', 'page', 'appVersion'];
+
+function sanitizeHeartbeatText(value) {
+  if (typeof value !== 'string') return undefined;
+  return value.slice(0, MAX_HEARTBEAT_FIELD_LENGTH);
+}
+
+function sanitizeHeartbeatInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  const deviceId = typeof info.deviceId === 'string' ? info.deviceId.trim() : '';
+  if (!deviceId || deviceId.length >= MAX_DEVICE_ID_LENGTH) return null;
+  if (!DEVICE_ID_PATTERN.test(deviceId)) return null;
+
+  const sanitized = { deviceId };
+  HEARTBEAT_TEXT_FIELDS.forEach(field => {
+    const value = sanitizeHeartbeatText(info[field]);
+    if (value !== undefined) sanitized[field] = value;
+  });
+  return sanitized;
+}
+
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload));
+}
 
 function getActiveDevices() {
   const now = Date.now();
@@ -2522,10 +2561,29 @@ function startParentServer() {
 
     const cleanUrl = req.url.replace(/^\/api\//, '');
     
+    const contentLength = Number(req.headers['content-length'] || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
+      sendJson(res, 413, { success: false, message: 'Request body too large' });
+      return;
+    }
+
     // リクエストボディの受信
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let bodyBytes = 0;
+    let bodyTooLarge = false;
+    req.on('data', chunk => {
+      if (bodyTooLarge) return;
+      bodyBytes += chunk.length;
+      if (bodyBytes > MAX_REQUEST_BODY_BYTES) {
+        bodyTooLarge = true;
+        sendJson(res, 413, { success: false, message: 'Request body too large' });
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', async () => {
+      if (bodyTooLarge) return;
       try {
         let result;
         if (cleanUrl.startsWith('webrtc/')) {
@@ -2535,11 +2593,11 @@ function startParentServer() {
           if (action === 'heartbeat' && req.method === 'POST') {
             let info;
             try { info = JSON.parse(body || '{}'); } catch { info = {}; }
-            const deviceId = info.deviceId;
-            if (deviceId && typeof deviceId === 'string' && deviceId.length < 64) {
+            const sanitizedInfo = sanitizeHeartbeatInfo(info);
+            if (sanitizedInfo) {
               const clientIp = req.socket?.remoteAddress || '';
-              connectedDevices[deviceId] = {
-                ...info,
+              connectedDevices[sanitizedInfo.deviceId] = {
+                ...sanitizedInfo,
                 ip: clientIp.replace(/^::ffff:/, ''),
                 lastSeen: Date.now()
               };
@@ -2567,6 +2625,17 @@ function startParentServer() {
         res.end(JSON.stringify({ success: false, message: err.message }));
       }
     });
+  });
+
+  parentHttpServer.requestTimeout = 30000;
+  parentHttpServer.headersTimeout = 10000;
+  parentHttpServer.keepAliveTimeout = 5000;
+
+  parentHttpServer.on('clientError', (err, socket) => {
+    console.warn('[Parent Server] クライアント接続エラー:', err.message);
+    if (socket.writable) {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    }
   });
 
   parentHttpServer.on('error', (err) => {

@@ -27,6 +27,7 @@ const CallPanel = {
 
   // 受信済みメッセージIDの管理（重複処理防止）
   _seenMsgIds: new Set(),
+  _pollInFlight: false,
 
   // 再接続タイマー & チャット履歴
   reconnectTimeout: null,
@@ -263,6 +264,8 @@ const CallPanel = {
       const myId = this.getMyId();
       if (!myId) return;
 
+      if (this._pollInFlight) return;
+      this._pollInFlight = true;
       try {
         const res = await API.webrtcPoll(myId);
         if (res && res.success && res.messages) {
@@ -281,6 +284,8 @@ const CallPanel = {
         }
       } catch (e) {
         console.error('[WebRTC Poll Error]', e);
+      } finally {
+        this._pollInFlight = false;
       }
     }, 1500);
   },

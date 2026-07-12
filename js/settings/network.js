@@ -1061,9 +1061,15 @@ Object.assign(Settings, {
       </div>
     `);
 
+    let renderRowsInFlight = false;
     const renderRows = async () => {
+      if (renderRowsInFlight) return;
+      renderRowsInFlight = true;
       const area = document.getElementById('connected-devices-body');
-      if (!area) return;
+      if (!area) {
+        renderRowsInFlight = false;
+        return;
+      }
       try {
         const result = await API.getConnectedDevices();
         const devices = Array.isArray(result) ? result : (result?.devices || []);
@@ -1078,24 +1084,34 @@ Object.assign(Settings, {
             <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>バージョン</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
             <tbody>
               ${devices.map(d => {
-                const id = d.deviceId || d.id;
+                const esc = value => UI.escapeHTML(String(value ?? ''));
+                const rawId = d.deviceId || d.id ? String(d.deviceId || d.id) : '';
+                const id = esc(rawId);
                 const lastSeen = new Date(d.lastSeen || d.last_seen || 0).getTime();
                 const seconds = lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
                 const stale = seconds !== null && seconds > 20;
-                const versionMismatch = d.appVersion && AppState.appVersion && d.appVersion !== AppState.appVersion;
-                const versionHtml = d.appVersion
+                const appVersion = d.appVersion ? String(d.appVersion) : '';
+                const parentVersion = AppState.appVersion ? String(AppState.appVersion) : '';
+                const versionMismatch = appVersion && parentVersion && appVersion !== parentVersion;
+                const versionHtml = appVersion
                   ? (versionMismatch
-                      ? `<span style="color:#b45309; font-weight:800;" title="親機(v${AppState.appVersion})とバージョンが異なります"><i class="fas fa-exclamation-triangle"></i> v${UI.escapeHTML(d.appVersion)}</span>`
-                      : `v${UI.escapeHTML(d.appVersion)}`)
+                      ? `<span style="color:#b45309; font-weight:800;" title="親機(v${esc(parentVersion)})とバージョンが異なります"><i class="fas fa-exclamation-triangle"></i> v${esc(appVersion)}</span>`
+                      : `v${esc(appVersion)}`)
                   : '-';
+                const wardName = AppState.wards?.find(w => String(w.id) === String(d.wardId))?.name;
+                const displayName = esc(d.name || rawId || '-');
+                const displayIp = esc(d.ip || '-');
+                const displayHostname = esc(d.hostname || d.hostName || '-');
+                const displayWard = esc(wardName || d.wardId || '-');
+                const displayPage = esc(d.page || d.mode || '-');
                 return `
                   <tr style="opacity:${stale ? '.62' : '1'};">
-                    <td><strong>${d.name || id || '-'}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>
-                    <td>${d.ip || '-'}</td>
-                    <td style="font-size:11px; color:#4a5568;">${d.hostname || d.hostName || '-'}</td>
-                    <td>${AppState.wards?.find(w => w.id === d.wardId)?.name || d.wardId || '-'}</td>
+                    <td><strong>${displayName}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>
+                    <td>${displayIp}</td>
+                    <td style="font-size:11px; color:#4a5568;">${displayHostname}</td>
+                    <td>${displayWard}</td>
                     <td style="font-size:11px;">${versionHtml}</td>
-                    <td>${d.page || d.mode || '-'}</td>
+                    <td>${displayPage}</td>
                     <td>${seconds === null ? '-' : `${seconds}秒前`}</td>
                     <td><button class="btn btn-danger btn-sm btn-disconnect-device" data-id="${id || ''}" ${id ? '' : 'disabled'}>切断</button></td>
                   </tr>
@@ -1116,6 +1132,8 @@ Object.assign(Settings, {
       } catch (e) {
         console.error(e);
         area.innerHTML = '<div style="padding:10px; background:#fff5f5; border:1px solid #fed7d7; border-radius:6px; color:#c53030;">接続機器一覧を取得できませんでした。</div>';
+      } finally {
+        renderRowsInFlight = false;
       }
     };
 
