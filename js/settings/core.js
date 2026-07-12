@@ -5,6 +5,66 @@
  * ・病床マップ配置グリッドエディタ
  */
 
+const SETTINGS_TAB_DEFS = {
+  wards: ['fa-hospital', '病棟マスタ', 'global', '全体'],
+  beds: ['fa-bed', '病床マスタ', 'global', '全体'],
+  bed_types: ['fa-tags', '病床タイプ', 'global', '全体'],
+  map: ['fa-map', 'マップ配置', 'global', '全体'],
+  rooms: ['fa-x-ray', '検査室マスタ', 'global', '全体'],
+  exam_types: ['fa-notes-medical', '検査種別', 'global', '全体'],
+  staffs: ['fa-user-nurse', 'スタッフ', 'global', '全体'],
+  speech_templates: ['fa-bullhorn', 'アナウンス定型文', 'global', '全体'],
+  status_customize: ['fa-sliders-h', 'ステータスカスタマイズ', 'global', '全体'],
+  import: ['fa-file-import', '取り込み設定', 'parent', '親機'],
+  schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
+  notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
+  network: ['fa-network-wired', '共有・ネットワーク設定', 'terminal', '端末'],
+};
+
+const SETTINGS_TAB_GROUPS = {
+  child: [
+    ['端末・接続', ['network', 'notifications']],
+    ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+    ['親機機能', ['import', 'schedule_feeds']],
+  ],
+  parent: [
+    ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+    ['親機機能', ['import', 'schedule_feeds']],
+    ['端末・接続/保守', ['network', 'notifications']],
+  ],
+};
+
+const SETTINGS_TAB_CATEGORIES = {
+  wards: 'global', beds: 'global', bed_types: 'global',
+  map: 'global', rooms: 'global', exam_types: 'global',
+  staffs: 'global', speech_templates: 'global',
+  status_customize: 'global',
+  import: 'parent-only', schedule_feeds: 'parent-only',
+  notifications: 'terminal', network: 'terminal',
+};
+
+const SETTINGS_CATEGORY_META = {
+  global: {
+    icon: 'fa-globe',
+    cls: 'settings-category-banner--global',
+    title: '全体共通設定',
+    desc: 'この設定は親機に保存され、全端末に反映されます。',
+  },
+  terminal: {
+    icon: 'fa-laptop',
+    cls: 'settings-category-banner--terminal',
+    title: '端末固有設定',
+    desc: 'この設定はこの端末にのみ適用されます。他の端末には影響しません。',
+  },
+  'parent-only': {
+    icon: 'fa-server',
+    cls: 'settings-category-banner--parent-only',
+    title: '親機専用機能',
+    parentDesc: 'この機能は親機でのみ実行されます。',
+    childDesc: '実際の処理（ファイル監視・取り込み）は親機で実行されます。設定自体は子機からも変更できます。',
+  },
+};
+
 const Settings = {
 
   // 現在の設定タブ
@@ -116,47 +176,12 @@ const Settings = {
   render() {
     const cont = document.getElementById('settings-content');
     if (!cont) return;
-    const isChild = localStorage.getItem('cfg_share_mode') === 'client';
-    const tabDefs = {
-      wards: ['fa-hospital', '病棟マスタ', 'global', '全体'],
-      beds: ['fa-bed', '病床マスタ', 'global', '全体'],
-      bed_types: ['fa-tags', '病床タイプ', 'global', '全体'],
-      map: ['fa-map', 'マップ配置', 'global', '全体'],
-      rooms: ['fa-x-ray', '検査室マスタ', 'global', '全体'],
-      exam_types: ['fa-notes-medical', '検査種別', 'global', '全体'],
-      staffs: ['fa-user-nurse', 'スタッフ', 'global', '全体'],
-      speech_templates: ['fa-bullhorn', 'アナウンス定型文', 'global', '全体'],
-      status_customize: ['fa-sliders-h', 'ステータスカスタマイズ', 'global', '全体'],
-      import: ['fa-file-import', '取り込み設定', 'parent', '親機'],
-      schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
-      notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
-      network: ['fa-network-wired', '共有・ネットワーク設定', 'terminal', '端末'],
-    };
-    const groups = isChild
-      ? [
-          ['端末・接続', ['network', 'notifications']],
-          ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
-          ['親機機能', ['import', 'schedule_feeds']],
-        ]
-      : [
-          ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
-          ['親機機能', ['import', 'schedule_feeds']],
-          ['端末・接続/保守', ['network', 'notifications']],
-        ];
-    const renderTabButton = id => {
-      const [icon, label, badgeClass, badgeLabel] = tabDefs[id];
-      return `
-        <button class="settings-tab-btn ${this._activeTab === id ? 'active' : ''}" data-stab="${id}">
-          <i class="fas ${icon}"></i> ${label}<span class="stab-badge stab-badge--${badgeClass}">${badgeLabel}</span>
-        </button>
-      `;
-    };
     cont.innerHTML = `
       <div class="settings-tabs">
-        ${groups.map(([label, ids], idx) => `
+        ${this._getTabGroups().map(([label, ids], idx) => `
           ${idx ? '<span class="stab-sep"></span>' : ''}
           <span class="stab-group-label">${label}</span>
-          ${ids.map(renderTabButton).join('')}
+          ${ids.map(id => this._renderTabButton(id)).join('')}
         `).join('')}
       </div>
       <div id="settings-tab-body"></div>
@@ -170,6 +195,21 @@ const Settings = {
     this._renderTab();
   },
 
+  _getTabGroups() {
+    return localStorage.getItem('cfg_share_mode') === 'client'
+      ? SETTINGS_TAB_GROUPS.child
+      : SETTINGS_TAB_GROUPS.parent;
+  },
+
+  _renderTabButton(id) {
+    const [icon, label, badgeClass, badgeLabel] = SETTINGS_TAB_DEFS[id];
+    return `
+      <button class="settings-tab-btn ${this._activeTab === id ? 'active' : ''}" data-stab="${id}">
+        <i class="fas ${icon}"></i> ${label}<span class="stab-badge stab-badge--${badgeClass}">${badgeLabel}</span>
+      </button>
+    `;
+  },
+
   _renderTab() {
     const body = document.getElementById('settings-tab-body');
     if (!body) return;
@@ -180,19 +220,25 @@ const Settings = {
       this._mapKeydownHandler = null;
     }
 
-    if (this._activeTab === 'beds')          this._renderBeds(body);
-    if (this._activeTab === 'bed_types')     this._renderBedTypes(body);
-    if (this._activeTab === 'map')           this._renderMapEditor(body);
-    if (this._activeTab === 'rooms')         this._renderRooms(body);
-    if (this._activeTab === 'exam_types')    this._renderExamTypes(body);
-    if (this._activeTab === 'staffs')        this._renderStaffs(body);
-    if (this._activeTab === 'wards')         this._renderWards(body);
-    if (this._activeTab === 'import')        this._renderImportSettings(body);
-    if (this._activeTab === 'notifications') this._renderNotificationSettings(body);
-    if (this._activeTab === 'speech_templates') this._renderSpeechTemplates(body);
-    if (this._activeTab === 'schedule_feeds') this._renderScheduleFeeds(body);
-    if (this._activeTab === 'network')       this._renderNetworkSettings(body);
-    if (this._activeTab === 'status_customize') this._renderStatusCustomize(body);
+    const renderers = {
+      beds: '_renderBeds',
+      bed_types: '_renderBedTypes',
+      map: '_renderMapEditor',
+      rooms: '_renderRooms',
+      exam_types: '_renderExamTypes',
+      staffs: '_renderStaffs',
+      wards: '_renderWards',
+      import: '_renderImportSettings',
+      notifications: '_renderNotificationSettings',
+      speech_templates: '_renderSpeechTemplates',
+      schedule_feeds: '_renderScheduleFeeds',
+      network: '_renderNetworkSettings',
+      status_customize: '_renderStatusCustomize',
+    };
+    const renderer = renderers[this._activeTab];
+    if (renderer && typeof this[renderer] === 'function') {
+      this[renderer](body);
+    }
 
     this._injectCategoryBanner(body);
   },
@@ -200,36 +246,16 @@ const Settings = {
   // 設定タブ種別バナーを先頭に挿入
   _injectCategoryBanner(body) {
     const isChild = localStorage.getItem('cfg_share_mode') === 'client';
-    const categories = {
-      wards: 'global', beds: 'global', bed_types: 'global',
-      map: 'global', rooms: 'global', exam_types: 'global',
-      staffs: 'global', speech_templates: 'global',
-      status_customize: 'global',
-      import: 'parent-only', schedule_feeds: 'parent-only',
-      notifications: 'terminal', network: 'terminal',
-    };
-    const category = categories[this._activeTab];
+    const category = SETTINGS_TAB_CATEGORIES[this._activeTab];
     if (!category) return;
 
-    let icon, title, desc, cls;
-    if (category === 'global') {
-      icon = 'fa-globe'; cls = 'settings-category-banner--global';
-      title = '全体共通設定';
-      desc  = 'この設定は親機に保存され、全端末に反映されます。';
-    } else if (category === 'terminal') {
-      icon = 'fa-laptop'; cls = 'settings-category-banner--terminal';
-      title = '端末固有設定';
-      desc  = 'この設定はこの端末にのみ適用されます。他の端末には影響しません。';
-    } else {
-      icon = 'fa-server'; cls = 'settings-category-banner--parent-only';
-      title = '親機専用機能';
-      desc  = isChild
-        ? '実際の処理（ファイル監視・取り込み）は親機で実行されます。設定自体は子機からも変更できます。'
-        : 'この機能は親機でのみ実行されます。';
-    }
+    const meta = SETTINGS_CATEGORY_META[category];
+    const desc = category === 'parent-only'
+      ? (isChild ? meta.childDesc : meta.parentDesc)
+      : meta.desc;
     const banner = document.createElement('div');
-    banner.className = `settings-category-banner ${cls}`;
-    banner.innerHTML = `<i class="fas ${icon}"></i><span><strong>${title}</strong> — ${desc}</span>`;
+    banner.className = `settings-category-banner ${meta.cls}`;
+    banner.innerHTML = `<i class="fas ${meta.icon}"></i><span><strong>${meta.title}</strong> — ${desc}</span>`;
     body.insertBefore(banner, body.firstChild);
   },
 };

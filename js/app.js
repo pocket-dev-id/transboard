@@ -313,6 +313,73 @@ const ParentServerMonitor = {
   },
 };
 
+const DevicePresence = {
+  secondsSince(device, now = Date.now()) {
+    const lastSeen = new Date(device.lastSeen || device.last_seen || 0).getTime();
+    return lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
+  },
+
+  summarize(devices, {
+    now = Date.now(),
+    currentWardId = '',
+    parentVersion = '',
+    hasConnectionProblem = false,
+    connectionReason = null,
+    error = null,
+  } = {}) {
+    const safeDevices = Array.isArray(devices) ? devices : [];
+    const currentWard = String(currentWardId || '');
+    const parentAppVersion = parentVersion ? String(parentVersion) : '';
+    const secondsSince = device => this.secondsSince(device, now);
+    const isDelayed = device => {
+      const seconds = secondsSince(device);
+      return seconds !== null && seconds > 20;
+    };
+    const isVersionMismatch = device => {
+      const deviceVersion = device.appVersion ? String(device.appVersion) : '';
+      return deviceVersion && parentAppVersion && deviceVersion !== parentAppVersion;
+    };
+    const isExam = device => device.page === 'exam-room';
+    const isWardDashboard = device => device.page === 'ward-dashboard';
+    const isCurrentWard = device => currentWard && String(device.wardId || '') === currentWard;
+    const delayedCount = safeDevices.filter(isDelayed).length;
+    const mismatchCount = safeDevices.filter(isVersionMismatch).length;
+    const stateClass = error || hasConnectionProblem
+      ? 'danger'
+      : (delayedCount || mismatchCount ? 'warn' : (safeDevices.length ? 'ok' : 'muted'));
+
+    return {
+      devices: safeDevices,
+      total: safeDevices.length,
+      currentWardCount: safeDevices.filter(isCurrentWard).length,
+      examCount: safeDevices.filter(isExam).length,
+      wardPageCount: safeDevices.filter(isWardDashboard).length,
+      unknownCount: safeDevices.filter(device => !isCurrentWard(device) && !isExam(device)).length,
+      delayedCount,
+      mismatchCount,
+      stateClass,
+      childNote: hasConnectionProblem
+        ? (connectionReason === 'unauthorized' ? ' / トークン不一致' : ' / 親機再接続中')
+        : '',
+      warningNote: mismatchCount ? ` / 版違い${mismatchCount}` : (delayedCount ? ` / 遅延${delayedCount}` : ''),
+      title: this.formatTitle(safeDevices, secondsSince, error),
+    };
+  },
+
+  formatTitle(devices, secondsSince, error) {
+    if (error) return '接続端末一覧を取得できませんでした';
+    return devices.slice(0, 10).map(device => {
+      const name = device.name || device.deviceId || device.id || '端末';
+      const page = device.page || device.mode || '-';
+      const ward = device.wardId || '-';
+      const seconds = secondsSince(device);
+      const seen = seconds === null ? '不明' : `${seconds}秒前`;
+      const version = device.appVersion ? ` / v${device.appVersion}` : '';
+      return `${name}: ${page} / ${ward} / ${seen}${version}`;
+    }).join('\n') || '接続端末はありません';
+  },
+};
+
 const App = {
 
   async init() {
@@ -1162,67 +1229,28 @@ const App = {
   },
 
   _renderDevicePresence(devices, error) {
-    const now = Date.now();
-    const safeDevices = Array.isArray(devices) ? devices : [];
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const isChild = shareMode === 'client' || shareMode === 'child';
-    const currentWardId = String(AppState.currentWardId || '');
-    const parentVersion = AppState.appVersion ? String(AppState.appVersion) : '';
-    const secondsSince = d => {
-      const lastSeen = new Date(d.lastSeen || d.last_seen || 0).getTime();
-      return lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
-    };
-    const isDelayed = d => {
-      const seconds = secondsSince(d);
-      return seconds !== null && seconds > 20;
-    };
-    const isVersionMismatch = d => {
-      const version = d.appVersion ? String(d.appVersion) : '';
-      return version && parentVersion && version !== parentVersion;
-    };
-    const isExam = d => d.page === 'exam-room';
-    const isWardDashboard = d => d.page === 'ward-dashboard';
-    const isCurrentWard = d => currentWardId && String(d.wardId || '') === currentWardId;
-    const total = safeDevices.length;
-    const delayedCount = safeDevices.filter(isDelayed).length;
-    const mismatchCount = safeDevices.filter(isVersionMismatch).length;
-    const currentWardCount = safeDevices.filter(isCurrentWard).length;
-    const examCount = safeDevices.filter(isExam).length;
-    const wardPageCount = safeDevices.filter(isWardDashboard).length;
-    const unknownCount = safeDevices.filter(d => !isCurrentWard(d) && !isExam(d)).length;
-    const hasConnectionProblem = isChild && this._connectionLost;
-    const stateClass = error || hasConnectionProblem
-      ? 'danger'
-      : (delayedCount || mismatchCount ? 'warn' : (total ? 'ok' : 'muted'));
-    const detailTitle = error
-      ? '接続端末一覧を取得できませんでした'
-      : safeDevices.slice(0, 10).map(d => {
-          const name = d.name || d.deviceId || d.id || '端末';
-          const page = d.page || d.mode || '-';
-          const ward = d.wardId || '-';
-          const seconds = secondsSince(d);
-          const seen = seconds === null ? '不明' : `${seconds}秒前`;
-          const version = d.appVersion ? ` / v${d.appVersion}` : '';
-          return `${name}: ${page} / ${ward} / ${seen}${version}`;
-        }).join('\n') || '接続端末はありません';
+    const summary = DevicePresence.summarize(devices, {
+      currentWardId: AppState.currentWardId,
+      parentVersion: AppState.appVersion,
+      hasConnectionProblem: isChild && this._connectionLost,
+      connectionReason: this._connectionLostReason,
+      error,
+    });
 
     const wardEl = document.getElementById('device-presence-display');
     if (wardEl) {
-      const childNote = hasConnectionProblem
-        ? (this._connectionLostReason === 'unauthorized' ? ' / トークン不一致' : ' / 親機再接続中')
-        : '';
-      const warnNote = mismatchCount ? ` / 版違い${mismatchCount}` : (delayedCount ? ` / 遅延${delayedCount}` : '');
-      wardEl.className = `device-presence-chip ${stateClass}`;
-      wardEl.title = detailTitle;
-      wardEl.innerHTML = `<i class="fas fa-network-wired"></i> 接続端末: ${total}台 / この病棟 ${currentWardCount} / 検査室 ${examCount} / 不明 ${unknownCount}${warnNote}${childNote}`;
+      wardEl.className = `device-presence-chip ${summary.stateClass}`;
+      wardEl.title = summary.title;
+      wardEl.innerHTML = `<i class="fas fa-network-wired"></i> 接続端末: ${summary.total}台 / この病棟 ${summary.currentWardCount} / 検査室 ${summary.examCount} / 不明 ${summary.unknownCount}${summary.warningNote}${summary.childNote}`;
     }
 
     const examEl = document.getElementById('exam-device-presence');
     if (examEl) {
-      const warnNote = mismatchCount ? ` / 版違い${mismatchCount}` : (delayedCount ? ` / 遅延${delayedCount}` : '');
-      examEl.className = `device-presence-chip ${stateClass}`;
-      examEl.title = detailTitle;
-      examEl.innerHTML = `<i class="fas fa-network-wired"></i> 病棟端末 ${wardPageCount}台 / 検査室端末 ${examCount}台${warnNote}`;
+      examEl.className = `device-presence-chip ${summary.stateClass}`;
+      examEl.title = summary.title;
+      examEl.innerHTML = `<i class="fas fa-network-wired"></i> 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`;
     }
   },
 
