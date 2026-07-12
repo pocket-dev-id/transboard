@@ -10,8 +10,12 @@ const Wizard = {
   open() {
     const gs = id => AppState.systemSettings?.find(s => s.id === id)?.value;
     this.config = {
-      share_mode:                   gs('share_mode')                   || 'parent',
-      parent_ip:                    gs('parent_ip')                    || '',
+      // 稼働モード・親機IPはこの端末自身のローカル設定。子機では AppState.systemSettings が
+      // 親機からリモート取得した値（＝常に'parent'）になるため、gs()を使うとウィザードを
+      // 再度開いたときに子機なのに親機が選択された状態で表示されてしまう。
+      // localStorageの値（未設定なら初回起動とみなしローカルDBのgs()にフォールバック）を優先する。
+      share_mode:                   localStorage.getItem('cfg_share_mode') || gs('share_mode') || 'parent',
+      parent_ip:                    localStorage.getItem('cfg_parent_ip')  || gs('parent_ip')  || '',
       api_token:                    localStorage.getItem('cfg_api_token') || '',
       import_connection_type:       gs('import_connection_type')       || 'csv',
       import_directory:             gs('import_directory')             || '',
