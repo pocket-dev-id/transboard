@@ -58,9 +58,6 @@
       <button id="btn-fullscreen" class="btn-icon" title="フルスクリーン切替">
         <i class="fas fa-expand"></i>
       </button>
-      <button id="btn-refresh" class="btn-icon" title="データ更新">
-        <i class="fas fa-sync-alt"></i>
-      </button>
       <button id="btn-system-reset" class="btn-icon" title="システムリセット" style="background:rgba(220,38,38,.3);border-color:rgba(220,38,38,.5);">
         <i class="fas fa-database"></i>
       </button>
@@ -77,6 +74,7 @@
       <div id="sync-info-bar" style="display: flex; justify-content: space-between; font-size: 11px; color: #718096; margin-bottom: 8px; padding: 0 4px; flex-wrap: wrap; gap: 8px;">
         <span id="sync-time-display" style="display: none;"><i class="fas fa-sync-alt"></i> 最終同期: --:--:--</span>
         <span id="import-time-display" style="display: none;"><i class="fas fa-file-import"></i> 最終取り込み: 未取得</span>
+        <span id="device-presence-display" class="device-presence-chip muted"><i class="fas fa-network-wired"></i> 接続端末: 確認中</span>
       </div>
 
       <!-- サマリーバー -->
@@ -200,6 +198,7 @@
           <input type="checkbox" id="chk-exam-show-patient-names" style="cursor: pointer; transform: scale(1.1);">
           <span>患者名を表示</span>
         </label>
+        <div id="exam-device-presence" class="device-presence-chip muted"><i class="fas fa-network-wired"></i> 接続端末: 確認中</div>
       </div>
       <div id="exam-room-summary-container"></div>
       <div id="exam-room-queue"></div>

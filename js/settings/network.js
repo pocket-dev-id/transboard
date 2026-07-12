@@ -77,8 +77,36 @@ Object.assign(Settings, {
 
     const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
     const alwaysOnTop  = localStorage.getItem('cfg_always_on_top') === 'true';
+    const isClientMode = currentMode === 'client';
+    const modeGuideItems = isClientMode
+      ? [
+          ['fa-plug', '親機への接続', '親機IP・APIトークン・接続テストを確認します。', 'client-config-section'],
+          ['fa-desktop', 'この端末の表示', '画面サイズ、通知音、自動更新など、このPCだけの設定を調整します。', 'terminal-behavior-section'],
+          ['fa-globe', '全体共通設定', '病棟・病床・ステータスなど、親機配下の全端末に反映される設定です。', 'settings-tab-body'],
+        ]
+      : [
+          ['fa-server', '子機接続の準備', '子機へ伝えるIP、APIトークン、接続機器一覧を確認します。', 'parent-config-section'],
+          ['fa-file-import', '親機で実行する処理', '取り込み、スケジュール、更新配信、バックアップは親機で管理します。', 'update-section'],
+          ['fa-lock', '共通パスコード', '設定画面を開くための親機・子機共通パスコードを管理します。', 'admin-passcode-section'],
+        ];
+    const modeGuideHtml = `
+      <div class="settings-panel settings-role-guide" style="margin-bottom:16px;">
+        <div class="settings-panel-header" style="margin-bottom:8px;">
+          <h3><i class="fas ${isClientMode ? 'fa-laptop-medical' : 'fa-server'}"></i> ${isClientMode ? '子機でよく使う設定' : '親機でよく使う設定'}</h3>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+          ${modeGuideItems.map(([icon, title, desc, target]) => `
+            <button class="settings-guide-card" data-scroll-target="${target}" type="button">
+              <i class="fas ${icon}"></i>
+              <span><strong>${title}</strong><small>${desc}</small></span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+    `;
 
     body.innerHTML = `
+      ${modeGuideHtml}
       ${encStatus && !encStatus.available ? `
       <div class="settings-panel" style="margin-bottom:16px; background:#fef2f2; border:1px solid #fca5a5;">
         <div style="display:flex; align-items:flex-start; gap:10px; padding:4px;">
@@ -94,7 +122,7 @@ Object.assign(Settings, {
       </div>
       ` : ''}
       <!-- 端末動作設定 -->
-      <div class="settings-panel" style="margin-bottom:16px;">
+      <div class="settings-panel" id="terminal-behavior-section" style="margin-bottom:16px;">
         <div class="settings-panel-header">
           <h3><i class="fas fa-desktop"></i> 端末動作設定</h3>
         </div>
@@ -214,7 +242,7 @@ Object.assign(Settings, {
           </div>
 
           <!-- アプリの更新・配信 -->
-          <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
+          <div id="update-section" style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-arrow-circle-up"></i> アプリの更新
               <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; font-weight:800;">個別設定（PCごと）</span>
@@ -355,7 +383,7 @@ Object.assign(Settings, {
           </div>
 
           <!-- 管理者パスコードの設定 (全体同期) -->
-          <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
+          <div id="admin-passcode-section" style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-lock"></i> 設定画面保護パスコード
               <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
@@ -364,7 +392,7 @@ Object.assign(Settings, {
               <label style="font-size:12.5px; font-weight:700; color:#4a5568;">管理者パスコード（数字4桁など）</label>
               <input type="password" id="cfg-admin-passcode" placeholder="${adminPasscode ? '●●●● (変更する場合のみ入力)' : '例: 0000'}" style="width:100%; max-width:200px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700;">
               <div style="font-size:11px; color:#718096; margin-top:4px;">
-                ※空欄のまま保存すると現在のパスコードを維持します。パスコードはSHA-256でハッシュ化して保存されます。変更内容はすべての端末で同期されます。
+                ※設定画面を開くための親機・子機共通パスコードです。空欄のまま保存すると現在のパスコードを維持します。パスコードはSHA-256でハッシュ化して保存され、同じ親機配下の端末へ同期されます。
               </div>
             </div>
           </div>
@@ -489,6 +517,13 @@ Object.assign(Settings, {
         </div>
       </div>
     `;
+
+    body.querySelectorAll('.settings-guide-card').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = document.getElementById(btn.dataset.scrollTarget);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
 
     if (currentMode === 'parent') this._renderDeviceList(body);
 
@@ -1055,7 +1090,12 @@ Object.assign(Settings, {
       <div id="connected-devices-panel" style="margin-top:14px; padding-top:14px; border-top:1px dashed #cbd5e0;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
           <h4 style="margin:0; font-size:13px; color:#2d3748; display:flex; align-items:center; gap:8px;"><i class="fas fa-laptop-medical"></i> 接続機器一覧</h4>
-          <button class="btn btn-outline btn-sm" id="btn-refresh-devices"><i class="fas fa-sync-alt"></i> 更新</button>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:11px; color:#718096;">5秒ごとに自動更新</span>
+            <button class="btn btn-outline btn-sm" id="btn-refresh-devices" title="接続機器一覧を再読み込み" aria-label="接続機器一覧を再読み込み" style="width:30px; height:28px; padding:0; justify-content:center;">
+              <i class="fas fa-sync-alt"></i>
+            </button>
+          </div>
         </div>
         <div id="connected-devices-body" style="font-size:12px; color:#4a5568;">読み込み中...</div>
       </div>
@@ -1138,7 +1178,14 @@ Object.assign(Settings, {
     };
 
     const refreshBtn = document.getElementById('btn-refresh-devices');
-    if (refreshBtn) refreshBtn.onclick = renderRows;
+    if (refreshBtn) refreshBtn.onclick = async () => {
+      const icon = refreshBtn.querySelector('i');
+      refreshBtn.disabled = true;
+      if (icon) icon.classList.add('fa-spin');
+      await renderRows();
+      if (icon) icon.classList.remove('fa-spin');
+      refreshBtn.disabled = false;
+    };
     if (this._deviceListTimer) clearInterval(this._deviceListTimer);
     renderRows();
     this._deviceListTimer = setInterval(renderRows, 5000);

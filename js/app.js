@@ -66,6 +66,9 @@ const PasscodeHash = {
 
 const PasscodeModal = {
   _onSuccess: null,
+  SESSION_TIMEOUT_MS: 5 * 60 * 1000,
+  _sessionTimer: null,
+  _lastActivityAt: 0,
 
   open(onSuccess) {
     this._onSuccess = onSuccess;
@@ -87,6 +90,49 @@ const PasscodeModal = {
     const overlay = document.getElementById('passcode-modal-overlay');
     if (overlay) overlay.classList.add('hidden');
     this._onSuccess = null;
+  },
+
+  unlock() {
+    window.isAdminSession = true;
+    this._lastActivityAt = Date.now();
+    this._scheduleSessionTimeout();
+  },
+
+  lock({ redirect = false, notify = false } = {}) {
+    window.isAdminSession = false;
+    this._lastActivityAt = 0;
+    if (this._sessionTimer) {
+      clearTimeout(this._sessionTimer);
+      this._sessionTimer = null;
+    }
+    if (notify && typeof UI !== 'undefined') {
+      UI.toast('設定画面のロックを再度有効にしました', 'info');
+    }
+    if (redirect && typeof UI !== 'undefined') {
+      UI.switchPage('ward-dashboard');
+    }
+  },
+
+  isSessionValid() {
+    if (!window.isAdminSession || !this._lastActivityAt) return false;
+    return (Date.now() - this._lastActivityAt) < this.SESSION_TIMEOUT_MS;
+  },
+
+  markActivity() {
+    if (!window.isAdminSession) return;
+    const settingsPage = document.getElementById('page-settings');
+    if (!settingsPage?.classList.contains('active')) return;
+    this._lastActivityAt = Date.now();
+    this._scheduleSessionTimeout();
+  },
+
+  _scheduleSessionTimeout() {
+    if (this._sessionTimer) clearTimeout(this._sessionTimer);
+    this._sessionTimer = setTimeout(() => {
+      if (!this.isSessionValid()) {
+        this.lock({ redirect: true, notify: true });
+      }
+    }, this.SESSION_TIMEOUT_MS + 250);
   },
 
   async getRequiredPasscode() {
@@ -133,7 +179,7 @@ const PasscodeModal = {
     const ok = await PasscodeHash.verify(inputVal, requiredPasscode);
     if (ok) {
       PasscodeHash.recordAttempt(false);
-      window.isAdminSession = true;
+      this.unlock();
       const onSuccess = this._onSuccess;
       this.close();
       if (onSuccess) onSuccess();
@@ -141,7 +187,7 @@ const PasscodeModal = {
       PasscodeHash.recordAttempt(true);
       const errMsg = document.getElementById('passcode-error-msg');
       if (errMsg) {
-        const remaining = this.MAX_ATTEMPTS - (PasscodeHash.getRateState().attempts || 0);
+        const remaining = PasscodeHash.MAX_ATTEMPTS - (PasscodeHash.getRateState().attempts || 0);
         errMsg.textContent = remaining > 0
           ? `パスコードが違います（残り${remaining}回）`
           : `試行回数超過。1分間ロックされます`;
@@ -171,6 +217,10 @@ const PasscodeModal = {
         }
       };
     }
+
+    ['click', 'keydown', 'input', 'change'].forEach(type => {
+      document.addEventListener(type, () => this.markActivity(), true);
+    });
   }
 };
 
@@ -346,7 +396,7 @@ const App = {
       btn.addEventListener('click', () => {
         const targetPage = btn.dataset.page;
         
-        if (targetPage === 'settings' && !window.isAdminSession) {
+        if (targetPage === 'settings' && !PasscodeModal.isSessionValid()) {
           // パスコードによる設定画面全体の保護 (カスタムHTMLモーダルを使用)
           const passcodeSetting = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
           let requiredPasscode = '0000'; // デフォルトフォールバック
@@ -357,14 +407,17 @@ const App = {
           if (requiredPasscode) {
             PasscodeModal.open(() => {
               UI.switchPage(targetPage);
+              PasscodeModal.markActivity();
             });
             return; // 認証完了するまでページ遷移を待機する
           } else {
-            window.isAdminSession = true;
+            PasscodeModal.unlock();
           }
         }
         
         UI.switchPage(targetPage);
+        if (targetPage === 'settings') PasscodeModal.markActivity();
+        this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
       });
     });
 
@@ -426,19 +479,10 @@ const App = {
       localStorage.setItem('current_ward_id', AppState.currentWardId);
       await this.refreshData();
       WardDashboard.render();
+      this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
       if (Settings && ['beds', 'map', 'staffs'].includes(Settings._activeTab)) {
         Settings.render();
       }
-    });
-
-    // 更新ボタン
-    document.getElementById('btn-refresh').addEventListener('click', async () => {
-      const icon = document.querySelector('#btn-refresh i');
-      icon.style.animation = 'spin .5s linear infinite';
-      await this.refreshData();
-      WardDashboard.render();
-      icon.style.animation = '';
-      UI.toast('データを更新しました', 'info');
     });
 
     // システムリセットボタン
@@ -870,6 +914,7 @@ const App = {
 
     // アプリ更新チェック（親機は自身の配信フォルダ、子機は親機を参照）
     this._startUpdateCheck();
+    this._startDevicePresenceMonitor();
 
     console.log('[App] 初期化完了');
   },
@@ -918,6 +963,9 @@ const App = {
   _heartbeatFailures: 0,
   _pollInFlight: false,
   _pollFailures: 0,
+  _devicePresenceTimer: null,
+  _devicePresenceInFlight: false,
+  _connectedDevicesSnapshot: [],
   _refreshPromise: null,
   _refreshKey: null,
 
@@ -1030,6 +1078,7 @@ const App = {
     } else {
       if (banner) banner.remove();
     }
+    this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
   },
 
   _startHeartbeat() {
@@ -1087,6 +1136,94 @@ const App = {
       }, delayMs);
     };
     scheduleHeartbeat(this._jitterDelay(1000, 0.8));
+  },
+
+  _startDevicePresenceMonitor() {
+    if (this._devicePresenceTimer) clearInterval(this._devicePresenceTimer);
+    const refresh = () => this._refreshDevicePresence().catch(() => {});
+    setTimeout(refresh, this._jitterDelay(1200, 0.5));
+    this._devicePresenceTimer = setInterval(refresh, 5000);
+  },
+
+  async _refreshDevicePresence() {
+    if (this._devicePresenceInFlight) return;
+    this._devicePresenceInFlight = true;
+    try {
+      const result = await API.getConnectedDevices();
+      const devices = Array.isArray(result) ? result : (result?.devices || []);
+      this._connectedDevicesSnapshot = devices;
+      this._renderDevicePresence(devices, null);
+    } catch (e) {
+      console.warn('[DevicePresence] failed:', e);
+      this._renderDevicePresence(this._connectedDevicesSnapshot || [], e);
+    } finally {
+      this._devicePresenceInFlight = false;
+    }
+  },
+
+  _renderDevicePresence(devices, error) {
+    const now = Date.now();
+    const safeDevices = Array.isArray(devices) ? devices : [];
+    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const isChild = shareMode === 'client' || shareMode === 'child';
+    const currentWardId = String(AppState.currentWardId || '');
+    const parentVersion = AppState.appVersion ? String(AppState.appVersion) : '';
+    const secondsSince = d => {
+      const lastSeen = new Date(d.lastSeen || d.last_seen || 0).getTime();
+      return lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
+    };
+    const isDelayed = d => {
+      const seconds = secondsSince(d);
+      return seconds !== null && seconds > 20;
+    };
+    const isVersionMismatch = d => {
+      const version = d.appVersion ? String(d.appVersion) : '';
+      return version && parentVersion && version !== parentVersion;
+    };
+    const isExam = d => d.page === 'exam-room';
+    const isWardDashboard = d => d.page === 'ward-dashboard';
+    const isCurrentWard = d => currentWardId && String(d.wardId || '') === currentWardId;
+    const total = safeDevices.length;
+    const delayedCount = safeDevices.filter(isDelayed).length;
+    const mismatchCount = safeDevices.filter(isVersionMismatch).length;
+    const currentWardCount = safeDevices.filter(isCurrentWard).length;
+    const examCount = safeDevices.filter(isExam).length;
+    const wardPageCount = safeDevices.filter(isWardDashboard).length;
+    const unknownCount = safeDevices.filter(d => !isCurrentWard(d) && !isExam(d)).length;
+    const hasConnectionProblem = isChild && this._connectionLost;
+    const stateClass = error || hasConnectionProblem
+      ? 'danger'
+      : (delayedCount || mismatchCount ? 'warn' : (total ? 'ok' : 'muted'));
+    const detailTitle = error
+      ? '接続端末一覧を取得できませんでした'
+      : safeDevices.slice(0, 10).map(d => {
+          const name = d.name || d.deviceId || d.id || '端末';
+          const page = d.page || d.mode || '-';
+          const ward = d.wardId || '-';
+          const seconds = secondsSince(d);
+          const seen = seconds === null ? '不明' : `${seconds}秒前`;
+          const version = d.appVersion ? ` / v${d.appVersion}` : '';
+          return `${name}: ${page} / ${ward} / ${seen}${version}`;
+        }).join('\n') || '接続端末はありません';
+
+    const wardEl = document.getElementById('device-presence-display');
+    if (wardEl) {
+      const childNote = hasConnectionProblem
+        ? (this._connectionLostReason === 'unauthorized' ? ' / トークン不一致' : ' / 親機再接続中')
+        : '';
+      const warnNote = mismatchCount ? ` / 版違い${mismatchCount}` : (delayedCount ? ` / 遅延${delayedCount}` : '');
+      wardEl.className = `device-presence-chip ${stateClass}`;
+      wardEl.title = detailTitle;
+      wardEl.innerHTML = `<i class="fas fa-network-wired"></i> 接続端末: ${total}台 / この病棟 ${currentWardCount} / 検査室 ${examCount} / 不明 ${unknownCount}${warnNote}${childNote}`;
+    }
+
+    const examEl = document.getElementById('exam-device-presence');
+    if (examEl) {
+      const warnNote = mismatchCount ? ` / 版違い${mismatchCount}` : (delayedCount ? ` / 遅延${delayedCount}` : '');
+      examEl.className = `device-presence-chip ${stateClass}`;
+      examEl.title = detailTitle;
+      examEl.innerHTML = `<i class="fas fa-network-wired"></i> 病棟端末 ${wardPageCount}台 / 検査室端末 ${examCount}台${warnNote}`;
+    }
   },
 
   syncWardSelect() {

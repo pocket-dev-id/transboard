@@ -116,52 +116,48 @@ const Settings = {
   render() {
     const cont = document.getElementById('settings-content');
     if (!cont) return;
+    const isChild = localStorage.getItem('cfg_share_mode') === 'client';
+    const tabDefs = {
+      wards: ['fa-hospital', '病棟マスタ', 'global', '全体'],
+      beds: ['fa-bed', '病床マスタ', 'global', '全体'],
+      bed_types: ['fa-tags', '病床タイプ', 'global', '全体'],
+      map: ['fa-map', 'マップ配置', 'global', '全体'],
+      rooms: ['fa-x-ray', '検査室マスタ', 'global', '全体'],
+      exam_types: ['fa-notes-medical', '検査種別', 'global', '全体'],
+      staffs: ['fa-user-nurse', 'スタッフ', 'global', '全体'],
+      speech_templates: ['fa-bullhorn', 'アナウンス定型文', 'global', '全体'],
+      status_customize: ['fa-sliders-h', 'ステータスカスタマイズ', 'global', '全体'],
+      import: ['fa-file-import', '取り込み設定', 'parent', '親機'],
+      schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
+      notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
+      network: ['fa-network-wired', '共有・ネットワーク設定', 'terminal', '端末'],
+    };
+    const groups = isChild
+      ? [
+          ['端末・接続', ['network', 'notifications']],
+          ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+          ['親機機能', ['import', 'schedule_feeds']],
+        ]
+      : [
+          ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+          ['親機機能', ['import', 'schedule_feeds']],
+          ['端末・接続/保守', ['network', 'notifications']],
+        ];
+    const renderTabButton = id => {
+      const [icon, label, badgeClass, badgeLabel] = tabDefs[id];
+      return `
+        <button class="settings-tab-btn ${this._activeTab === id ? 'active' : ''}" data-stab="${id}">
+          <i class="fas ${icon}"></i> ${label}<span class="stab-badge stab-badge--${badgeClass}">${badgeLabel}</span>
+        </button>
+      `;
+    };
     cont.innerHTML = `
       <div class="settings-tabs">
-        <span class="stab-group-label">マスタ管理</span>
-        <button class="settings-tab-btn ${this._activeTab==='wards'?'active':''}" data-stab="wards">
-          <i class="fas fa-hospital"></i> 病棟マスタ<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='beds'?'active':''}" data-stab="beds">
-          <i class="fas fa-bed"></i> 病床マスタ<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='bed_types'?'active':''}" data-stab="bed_types">
-          <i class="fas fa-tags"></i> 病床タイプ<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='map'?'active':''}" data-stab="map">
-          <i class="fas fa-map"></i> マップ配置<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='rooms'?'active':''}" data-stab="rooms">
-          <i class="fas fa-x-ray"></i> 検査室マスタ<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='exam_types'?'active':''}" data-stab="exam_types">
-          <i class="fas fa-notes-medical"></i> 検査種別<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='staffs'?'active':''}" data-stab="staffs">
-          <i class="fas fa-user-nurse"></i> スタッフ<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <span class="stab-sep"></span>
-        <span class="stab-group-label">表示・通知</span>
-        <button class="settings-tab-btn ${this._activeTab==='import'?'active':''}" data-stab="import">
-          <i class="fas fa-file-import"></i> 取り込み設定<span class="stab-badge stab-badge--parent">親機</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='notifications'?'active':''}" data-stab="notifications">
-          <i class="fas fa-bell"></i> 通知音設定<span class="stab-badge stab-badge--terminal">端末</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='speech_templates'?'active':''}" data-stab="speech_templates">
-          <i class="fas fa-bullhorn"></i> アナウンス定型文<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='schedule_feeds'?'active':''}" data-stab="schedule_feeds">
-          <i class="fas fa-calendar-alt"></i> スケジュール取り込み<span class="stab-badge stab-badge--parent">親機</span>
-        </button>
-        <span class="stab-sep"></span>
-        <span class="stab-group-label">システム</span>
-        <button class="settings-tab-btn ${this._activeTab==='status_customize'?'active':''}" data-stab="status_customize">
-          <i class="fas fa-sliders-h"></i> ステータスカスタマイズ<span class="stab-badge stab-badge--global">全体</span>
-        </button>
-        <button class="settings-tab-btn ${this._activeTab==='network'?'active':''}" data-stab="network">
-          <i class="fas fa-network-wired"></i> 共有・ネットワーク設定<span class="stab-badge stab-badge--terminal">端末</span>
-        </button>
+        ${groups.map(([label, ids], idx) => `
+          ${idx ? '<span class="stab-sep"></span>' : ''}
+          <span class="stab-group-label">${label}</span>
+          ${ids.map(renderTabButton).join('')}
+        `).join('')}
       </div>
       <div id="settings-tab-body"></div>
     `;
@@ -208,6 +204,7 @@ const Settings = {
       wards: 'global', beds: 'global', bed_types: 'global',
       map: 'global', rooms: 'global', exam_types: 'global',
       staffs: 'global', speech_templates: 'global',
+      status_customize: 'global',
       import: 'parent-only', schedule_feeds: 'parent-only',
       notifications: 'terminal', network: 'terminal',
     };
