@@ -112,6 +112,53 @@ function safeWriteFile(targetPath, content) {
 }
 
 let DB_FILE = getDBPath();
+const DB_BACKUP_MIN_INTERVAL_MS = 30000;
+let dbBackupTimer = null;
+let lastDbBackupAt = 0;
+let dbBackupInFlight = false;
+
+function scheduleDbBackup() {
+  const backupPath = DB_FILE + '.bak';
+  if (!fs.existsSync(backupPath)) {
+    try {
+      fs.copyFileSync(DB_FILE, backupPath);
+      lastDbBackupAt = Date.now();
+    } catch (err) {
+      console.warn('[DB] 初回バックアップ作成に失敗:', err.message);
+    }
+    return;
+  }
+
+  if (dbBackupInFlight) {
+    if (!dbBackupTimer) {
+      dbBackupTimer = setTimeout(() => {
+        dbBackupTimer = null;
+        scheduleDbBackup();
+      }, 1000);
+    }
+    return;
+  }
+
+  const runBackup = () => {
+    dbBackupTimer = null;
+    dbBackupInFlight = true;
+    fs.copyFile(DB_FILE, backupPath, err => {
+      dbBackupInFlight = false;
+      if (err) {
+        console.warn('[DB] バックアップ更新に失敗:', err.message);
+        return;
+      }
+      lastDbBackupAt = Date.now();
+    });
+  };
+
+  const elapsed = Date.now() - lastDbBackupAt;
+  if (elapsed >= DB_BACKUP_MIN_INTERVAL_MS) {
+    runBackup();
+  } else if (!dbBackupTimer) {
+    dbBackupTimer = setTimeout(runBackup, DB_BACKUP_MIN_INTERVAL_MS - elapsed);
+  }
+}
 
 // 起動時に前回クラッシュで残ったtmpファイルをクリーンアップする
 function cleanupStaleTmpFiles() {
@@ -485,7 +532,7 @@ function writeDB(data) {
 
     // 書き込み成功後にローリングバックアップを更新する
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
-    try { fs.copyFileSync(DB_FILE, DB_FILE + '.bak'); } catch {}
+    scheduleDbBackup();
 
     // メモリキャッシュを最新の状態（復号化された形）に更新する
     dbCache = JSON.parse(JSON.stringify(data));
@@ -1481,7 +1528,7 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
       if (from !== undefined && !isSafeSignalingId(from)) return { success: false, message: 'Invalid "from" field' };
 
       const msgId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const entry = { msg: { ...msg, msgId }, timestamp: Date.now() };
+      const entry = { msg: { ...msg, msgId }, timestamp: Date.now(), ackedBy: Object.create(null) };
 
       if (BROADCAST_TYPES.has(msg.type)) {
         // ブロードキャストキュー（消費しない）
@@ -1510,7 +1557,9 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
   if (action === 'poll') {
     if (method !== 'GET') return { success: false, message: 'Method Not Allowed' };
     const id = searchParams.get('id');
+    const client = searchParams.get('client') || id;
     if (!isSafeSignalingId(id)) return { success: false, message: 'Missing or invalid "id" parameter' };
+    if (!isSafeSignalingId(client)) return { success: false, message: 'Missing or invalid "client" parameter' };
 
     const now = Date.now();
     const EXPIRATION_MS = 30000;
@@ -1522,7 +1571,12 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
         item => (now - item.timestamp) < EXPIRATION_MS
       );
     }
-    const bcMessages = (webrtcSignalingQueue[bcKey] || []).map(item => item.msg);
+    const bcItems = (webrtcSignalingQueue[bcKey] || []).filter(item => {
+      if (!item.ackedBy) item.ackedBy = Object.create(null);
+      return !item.ackedBy[client];
+    });
+    bcItems.forEach(item => { item.ackedBy[client] = now; });
+    const bcMessages = bcItems.map(item => item.msg);
 
     // ユニキャストキュー：取得して消費する
     const ucItems = webrtcSignalingQueue[id] || [];
@@ -1546,6 +1600,14 @@ const ALLOWED_TABLES = new Set([
 
 // 患者情報（氏名・ID）を含むテーブル。外部HTTPアクセス時はAPIトークン必須（セキュリティ: A-2）
 const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs']);
+const ACTIVE_TRANSFER_STATUSES = new Set([
+  'DEPART_REGISTERED',
+  'MOVING',
+  'ARRIVED',
+  'IN_EXAM',
+  'NEARLY_DONE',
+  'PICKUP_REQUIRED',
+]);
 
 // 共通のデータベース操作処理関数
 async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null) {
@@ -1553,7 +1615,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
 
   // URL解析 (例: "tables/transfer_events?limit=200" や "tables/beds/bed-701")
   const cleanUrl = url.replace(/^\//, '').replace(/^tables\//, '');
-  const urlParts = cleanUrl.split('?')[0].split('/');
+  const [urlPath, queryString] = cleanUrl.split('?');
+  const searchParams = new URLSearchParams(queryString || '');
+  const urlParts = urlPath.split('/');
   const table = urlParts[0];
   const id = urlParts[1];
 
@@ -1631,6 +1695,18 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
   const list = db[table];
 
   if (method === 'GET') {
+    if (table === 'transfer_events' && id === 'ward-status') {
+      const wardId = searchParams.get('ward_id') || '';
+      const todayMs = Number(searchParams.get('today_ms') || 0);
+      const scoped = wardId ? list.filter(e => e.ward_id === wardId) : list;
+      const activeEvents = scoped.filter(e => ACTIVE_TRANSFER_STATUSES.has(e.current_status));
+      const todayEvents = scoped.filter(e => {
+        if (ACTIVE_TRANSFER_STATUSES.has(e.current_status)) return true;
+        return Number.isFinite(todayMs) && todayMs > 0 && e.departed_at != null && e.departed_at >= todayMs;
+      });
+      return { success: true, activeEvents, todayEvents };
+    }
+
     if (id) {
       const item = list.find(x => String(x.id) === String(id));
       if (!item) {

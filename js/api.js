@@ -79,6 +79,11 @@ const API = {
     return this._fetch(`tables/${table}?${qs}`);
   },
 
+  async getWardStatusEvents(wardId, todayMs) {
+    const qs = new URLSearchParams({ ward_id: wardId || '', today_ms: String(todayMs || 0) }).toString();
+    return this._fetch(`tables/transfer_events/ward-status?${qs}`);
+  },
+
   async getOne(table, id) {
     return this._fetch(`tables/${table}/${id}`);
   },
@@ -353,23 +358,24 @@ const API = {
     }, API_SIGNALING_TIMEOUT_MS).then(r => r.json());
   },
 
-  async webrtcPoll(myId) {
+  async webrtcPoll(myId, clientId = '') {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+    const qs = new URLSearchParams({ id: myId, client: clientId || myId }).toString();
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetchWithTimeout(`http://${parentIp}:3005/api/webrtc/poll?id=${encodeURIComponent(myId)}`, {}, API_SIGNALING_TIMEOUT_MS)
+      return fetchWithTimeout(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {}, API_SIGNALING_TIMEOUT_MS)
         .then(r => r.json());
     }
 
     if (window.electronAPI && window.electronAPI.webrtcRequest) {
       return window.electronAPI.webrtcRequest({
-        url: `/webrtc/poll?id=${encodeURIComponent(myId)}`,
+        url: `/webrtc/poll?${qs}`,
         options: { method: 'GET' }
       });
     }
 
-    return fetchWithTimeout(`/api/webrtc/poll?id=${encodeURIComponent(myId)}`, {}, API_SIGNALING_TIMEOUT_MS)
+    return fetchWithTimeout(`/api/webrtc/poll?${qs}`, {}, API_SIGNALING_TIMEOUT_MS)
       .then(r => r.json());
   },
 

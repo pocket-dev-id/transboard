@@ -197,26 +197,45 @@ const AppEnv = {
 const ParentServerMonitor = {
   _degraded: false,
   _interval: null,
+  _failures: 0,
 
   init() {
     const mode = localStorage.getItem('cfg_share_mode');
     if (mode !== 'client' && mode !== 'child') return;
-    this._check();
-    this._interval = setInterval(() => this._check(), 30000);
+    if (this._interval) clearTimeout(this._interval);
+    this._failures = 0;
+    this._schedule(1000 + Math.floor(Math.random() * 3000));
+  },
+
+  _delay(baseMs, ratio = 0.2) {
+    const jitter = baseMs * ratio;
+    return Math.max(1000, Math.round(baseMs + ((Math.random() * 2 - 1) * jitter)));
+  },
+
+  _schedule(delayMs) {
+    this._interval = setTimeout(async () => {
+      const ok = await this._check();
+      this._failures = ok ? 0 : Math.min(this._failures + 1, 5);
+      const baseDelay = this._failures ? Math.min(120000, 30000 * Math.pow(2, this._failures - 1)) : 30000;
+      this._schedule(this._delay(baseDelay));
+    }, delayMs);
   },
 
   async _check() {
     const parentIp = localStorage.getItem('cfg_parent_ip');
-    if (!parentIp) return;
+    if (!parentIp) return true;
     try {
       const res = await fetch(`http://${parentIp}:3005/api/tables/wards`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         if (this._degraded) this._setDegraded(false);
+        return true;
       } else {
         this._setDegraded(true);
+        return false;
       }
     } catch {
       this._setDegraded(true);
+      return false;
     }
   },
 
@@ -240,7 +259,7 @@ const ParentServerMonitor = {
   },
 
   destroy() {
-    if (this._interval) clearInterval(this._interval);
+    if (this._interval) clearTimeout(this._interval);
   },
 };
 
@@ -896,7 +915,21 @@ const App = {
   _connectionLost: false,
   _heartbeatTimer: null,
   _heartbeatInFlight: false,
+  _heartbeatFailures: 0,
   _pollInFlight: false,
+  _pollFailures: 0,
+  _refreshPromise: null,
+  _refreshKey: null,
+
+  _jitterDelay(baseMs, ratio = 0.15) {
+    const jitter = baseMs * ratio;
+    return Math.max(250, Math.round(baseMs + ((Math.random() * 2 - 1) * jitter)));
+  },
+
+  _backoffDelay(baseMs, failures, maxMs) {
+    const capped = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, failures - 1)));
+    return this._jitterDelay(capped, 0.25);
+  },
 
   _renderAppVersion() {
     let el = document.getElementById('app-version-badge');
@@ -1025,18 +1058,35 @@ const App = {
           appVersion: AppState.appVersion || '',
           page: document.querySelector('.tab-btn.active')?.dataset.page || ''
         });
-        this._setConnectionStatus(res !== null);
+        const ok = res !== null;
+        this._setConnectionStatus(ok);
+        return ok;
       } catch (e) {
         console.warn('[Heartbeat] failed:', e);
         this._setConnectionStatus(false);
+        return false;
       } finally {
         this._heartbeatInFlight = false;
       }
     };
 
-    sendHeartbeat();
-    if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
-    this._heartbeatTimer = setInterval(sendHeartbeat, 10000);
+    if (this._heartbeatTimer) clearTimeout(this._heartbeatTimer);
+    this._heartbeatFailures = 0;
+    const scheduleHeartbeat = (delayMs) => {
+      this._heartbeatTimer = setTimeout(async () => {
+        const ok = await sendHeartbeat();
+        if (ok === false) {
+          this._heartbeatFailures = Math.min(this._heartbeatFailures + 1, 6);
+        } else if (ok === true) {
+          this._heartbeatFailures = 0;
+        }
+        const nextDelay = this._heartbeatFailures
+          ? this._backoffDelay(10000, this._heartbeatFailures, 60000)
+          : this._jitterDelay(10000);
+        scheduleHeartbeat(nextDelay);
+      }, delayMs);
+    };
+    scheduleHeartbeat(this._jitterDelay(1000, 0.8));
   },
 
   syncWardSelect() {
@@ -1100,27 +1150,32 @@ const App = {
   },
 
   async refreshData() {
+    const wardId = AppState.currentWardId;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
+    const refreshKey = `${wardId || ''}:${todayMs}`;
+    if (this._refreshPromise) {
+      if (this._refreshKey === refreshKey) return this._refreshPromise;
+      return this._refreshPromise.then(() => this.refreshData());
+    }
+    this._refreshKey = refreshKey;
+    this._refreshPromise = this._refreshDataOnce(wardId, todayMs).finally(() => {
+      this._refreshPromise = null;
+      this._refreshKey = null;
+    });
+    return this._refreshPromise;
+  },
+
+  async _refreshDataOnce(wardId, todayMs) {
     try {
-      const wardId = AppState.currentWardId;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayMs = today.getTime();
-      const [eventsRes, systemSettings] = await Promise.all([
-        API.getAll('transfer_events'),
+      const [eventStatus, systemSettings] = await Promise.all([
+        API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data).catch(() => [])
       ]);
-      const events = eventsRes.data || [];
-      const activeEvents = events.filter(e =>
-        e.ward_id === wardId &&
-        CONFIG.ACTIVE_STATUSES.includes(e.current_status)
-      );
-      const todayEvents = events.filter(e => {
-        if (e.ward_id !== wardId) return false;
-        if (CONFIG.ACTIVE_STATUSES.includes(e.current_status)) return true;
-        return e.departed_at != null && e.departed_at >= todayMs;
-      });
-      AppState.activeEvents = activeEvents;
-      AppState.todayEvents = todayEvents;
+      if (AppState.currentWardId !== wardId) return false;
+      AppState.activeEvents = eventStatus.activeEvents || [];
+      AppState.todayEvents = eventStatus.todayEvents || [];
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
@@ -1128,37 +1183,55 @@ const App = {
       this._setConnectionStatus(true);
       // 動的表示設定（フォント・ズーム・カードサイズ・テーマ）を即時反映
       await this.applySystemVisualSettings();
+      return true;
     } catch (e) {
       console.error('[App] データ更新失敗:', e);
       const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
       if (shareMode === 'client' || shareMode === 'child') {
         this._setConnectionStatus(false, e?.unauthorized ? 'unauthorized' : 'network');
       }
+      return false;
     }
   },
 
   startPolling() {
-    if (AppState.pollTimer) clearInterval(AppState.pollTimer);
-    AppState.pollTimer = setInterval(async () => {
-      if (this._pollInFlight) return;
+    if (AppState.pollTimer) clearTimeout(AppState.pollTimer);
+    this._pollFailures = 0;
+    const tick = async () => {
+      let ok = true;
+      if (this._pollInFlight) {
+        AppState.pollTimer = setTimeout(tick, this._jitterDelay(CONFIG.POLL_INTERVAL));
+        return;
+      }
       this._pollInFlight = true;
       try {
         const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
-        await this.refreshData();
+        ok = await this.refreshData();
 
-        if (currentPage === 'ward-dashboard') {
-          WardDashboard.render();
-        } else if (currentPage === 'exam-room') {
-          ExamRoom._renderQueue();
-        } else if (currentPage === 'timeline') {
-          Timeline.render();
+        if (ok) {
+          if (currentPage === 'ward-dashboard') {
+            WardDashboard.render();
+          } else if (currentPage === 'exam-room') {
+            ExamRoom._renderQueue();
+          } else if (currentPage === 'timeline') {
+            Timeline.render();
+          }
+
+          this._checkNotifications();
         }
-
-        this._checkNotifications();
+      } catch (e) {
+        ok = false;
+        console.error('[App] ポーリング処理に失敗:', e);
       } finally {
         this._pollInFlight = false;
+        this._pollFailures = ok ? 0 : Math.min(this._pollFailures + 1, 6);
+        const nextDelay = this._pollFailures
+          ? this._backoffDelay(CONFIG.POLL_INTERVAL, this._pollFailures, 60000)
+          : this._jitterDelay(CONFIG.POLL_INTERVAL);
+        AppState.pollTimer = setTimeout(tick, nextDelay);
       }
-    }, CONFIG.POLL_INTERVAL);
+    };
+    AppState.pollTimer = setTimeout(tick, this._jitterDelay(CONFIG.POLL_INTERVAL));
   },
 
   async _resetAllActiveEvents() {

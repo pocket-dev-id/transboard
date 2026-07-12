@@ -28,6 +28,8 @@ const CallPanel = {
   // 受信済みメッセージIDの管理（重複処理防止）
   _seenMsgIds: new Set(),
   _pollInFlight: false,
+  _pollFailures: 0,
+  _nextPollAt: 0,
 
   // 再接続タイマー & チャット履歴
   reconnectTimeout: null,
@@ -243,6 +245,15 @@ const CallPanel = {
     }
   },
 
+  getClientId() {
+    let id = localStorage.getItem('_device_id');
+    if (!id) {
+      id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      localStorage.setItem('_device_id', id);
+    }
+    return id;
+  },
+
   getNameById(id) {
     if (id.startsWith('ward-')) {
       const w = AppState.wards.find(x => x.id === id);
@@ -255,19 +266,29 @@ const CallPanel = {
   startListening() {
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = setInterval(async () => {
+      const now = Date.now();
+      if (now < this._nextPollAt) return;
+      let pollOk = true;
       // WebRTC設定の取得
       const webrtcSetting = AppState.systemSettings?.find(s => s.id === 'enable_webrtc_call');
       if (webrtcSetting && webrtcSetting.value === 'false') {
+        this._nextPollAt = Date.now() + 5000;
         return; // WebRTC通話が無効の場合はポーリングを行わない
       }
 
       const myId = this.getMyId();
-      if (!myId) return;
+      if (!myId) {
+        this._nextPollAt = Date.now() + 1500;
+        return;
+      }
 
-      if (this._pollInFlight) return;
+      if (this._pollInFlight) {
+        this._nextPollAt = Date.now() + 500;
+        return;
+      }
       this._pollInFlight = true;
       try {
-        const res = await API.webrtcPoll(myId);
+        const res = await API.webrtcPoll(myId, this.getClientId());
         if (res && res.success && res.messages) {
           for (const msg of res.messages) {
             if (msg.msgId) {
@@ -283,11 +304,15 @@ const CallPanel = {
           }
         }
       } catch (e) {
+        pollOk = false;
         console.error('[WebRTC Poll Error]', e);
       } finally {
         this._pollInFlight = false;
+        this._pollFailures = pollOk ? 0 : Math.min(this._pollFailures + 1, 5);
+        const baseDelay = this._pollFailures ? Math.min(15000, 1500 * Math.pow(2, this._pollFailures - 1)) : 1500;
+        this._nextPollAt = Date.now() + Math.round(baseDelay + (Math.random() * 500));
       }
-    }, 1500);
+    }, 500);
   },
 
   async handleSignalingMessage(msg) {
