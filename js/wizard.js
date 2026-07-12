@@ -464,8 +464,39 @@ const Wizard = {
         clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
-          logLines.push(`  結果: 成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
-          if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件を確認）</span>`;
+          logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
+
+          // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
+          // 患者データ（beds等）はトークン必須。ここで検証しないと
+          // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
+          const token = document.getElementById('wizard-api-token')?.value.trim() || '';
+          if (token) {
+            const c2 = new AbortController();
+            const t2 = setTimeout(() => c2.abort(), 4000);
+            try {
+              const res2 = await fetch(`http://${parentIp}:3005/api/tables/beds`, {
+                headers: { 'X-API-Token': token }, signal: c2.signal
+              });
+              clearTimeout(t2);
+              if (res2.ok) {
+                logLines.push(`  トークン検証: 成功 status=${res2.status}`);
+                if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件・APIトークン認証もOK）</span>`;
+              } else if (res2.status === 401) {
+                logLines.push(`  トークン検証: 失敗 status=401（トークン不一致）`);
+                if (result) result.innerHTML = `<span style="color:#d97706"><i class="fas fa-key"></i> ネットワークは正常ですが、<b>APIトークンが親機と一致しません</b>。親機の「共有・ネットワーク設定」画面のトークンをコピーし直してください</span>`;
+              } else {
+                logLines.push(`  トークン検証: HTTPエラー status=${res2.status}`);
+                if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証でHTTPエラー ${res2.status}</span>`;
+              }
+            } catch (e2) {
+              clearTimeout(t2);
+              logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
+              if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証中にエラー（${UI.escapeHTML(e2.message || e2.name)}）</span>`;
+            }
+          } else {
+            logLines.push('  トークン検証: スキップ（未入力）');
+            if (result) result.innerHTML = `<span style="color:#d97706"><i class="fas fa-exclamation-triangle"></i> 疎通は成功（病棟 ${data.data?.length ?? '?'}件）。ただし<b>APIトークンが未入力</b>のため、患者データの取得はできません。親機のトークンを入力してください</span>`;
+          }
         } else {
           logLines.push(`  結果: HTTPエラー status=${res.status}`);
           if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${res.status}</span>`;
