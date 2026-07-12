@@ -20,7 +20,12 @@ const API = {
         const res = await fetch(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
         if (res.status === 204) return null;
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+        if (!res.ok) {
+          const err = new Error(data.message || `HTTP ${res.status}`);
+          // 401 = APIトークン不一致。ネットワーク断と区別して表示できるようフラグを立てる
+          if (res.status === 401 || data.unauthorized) err.unauthorized = true;
+          throw err;
+        }
         return data;
       } catch (e) {
         console.error('[Client API Error]', url, e);

@@ -705,8 +705,39 @@ Object.assign(Settings, {
 
           if (res.ok) {
             const data = await res.json();
-            logLines.push(`  結果: 成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
-            UI.toast(`✅ 接続に成功しました！ 親機の病棟データ (${data.data?.length || 0}件) を正常に検出。`, 'success');
+            logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
+
+            // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
+            // 患者データ（beds等）はトークン必須。ここで検証しないと
+            // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
+            const token = document.getElementById('cfg-api-token')?.value.trim() || '';
+            if (token) {
+              const c2 = new AbortController();
+              const t2 = setTimeout(() => c2.abort(), 4000);
+              try {
+                const res2 = await fetch(`http://${parentIp}:3005/api/tables/beds`, {
+                  headers: { 'X-API-Token': token }, signal: c2.signal
+                });
+                clearTimeout(t2);
+                if (res2.ok) {
+                  logLines.push(`  トークン検証: 成功 status=${res2.status}`);
+                  UI.toast(`✅ 接続に成功しました！ 病棟 ${data.data?.length || 0}件・APIトークン認証もOK。`, 'success');
+                } else if (res2.status === 401) {
+                  logLines.push(`  トークン検証: 失敗 status=401（トークン不一致）`);
+                  UI.toast(`⚠ ネットワークは正常ですが、APIトークンが親機と一致しません。親機の「共有・ネットワーク設定」画面のトークンをコピーし直してください。`, 'warning', 10000);
+                } else {
+                  logLines.push(`  トークン検証: HTTPエラー status=${res2.status}`);
+                  UI.toast(`❌ トークン検証でHTTPエラー ${res2.status}`, 'danger');
+                }
+              } catch (e2) {
+                clearTimeout(t2);
+                logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
+                UI.toast(`❌ トークン検証中にエラー（${e2.message || e2.name}）`, 'danger');
+              }
+            } else {
+              logLines.push('  トークン検証: スキップ（未入力）');
+              UI.toast(`⚠ 疎通は成功（病棟 ${data.data?.length || 0}件）。ただしAPIトークンが未入力のため、患者データの取得はできません。`, 'warning', 10000);
+            }
           } else {
             logLines.push(`  結果: HTTPエラー status=${res.status}`);
             UI.toast(`❌ 接続失敗: HTTPエラー ${res.status}`, 'danger');

@@ -973,17 +973,24 @@ const App = {
     // 成功時はメインプロセス側でインストーラが起動しアプリが終了する
   },
 
-  _setConnectionStatus(ok) {
-    if (ok === !this._connectionLost) return;
+  _connectionLostReason: null,
+
+  _setConnectionStatus(ok, reason = 'network') {
+    // 状態も理由も変わっていなければ何もしない（理由が変わったらバナー文言を更新する）
+    if (ok === !this._connectionLost && (ok || reason === this._connectionLostReason)) return;
     this._connectionLost = !ok;
+    this._connectionLostReason = ok ? null : reason;
     let banner = document.getElementById('connection-lost-banner');
     if (!ok) {
       if (!banner) {
         banner = document.createElement('div');
         banner.id = 'connection-lost-banner';
-        banner.innerHTML = '<i class="fas fa-exclamation-triangle"></i> 親機との接続が切断されました。ネットワークを確認してください。';
         document.body.appendChild(banner);
       }
+      // 401（トークン不一致）はネットワーク断ではないため、原因が分かる文言に切り替える
+      banner.innerHTML = reason === 'unauthorized'
+        ? '<i class="fas fa-key"></i> APIトークンが親機と一致しません。設定 → 共有・ネットワーク設定 でトークンを確認してください。'
+        : '<i class="fas fa-exclamation-triangle"></i> 親機との接続が切断されました。ネットワークを確認してください。';
     } else {
       if (banner) banner.remove();
     }
@@ -1076,7 +1083,11 @@ const App = {
       EventRetentionManager.run().catch(e => console.warn('[App] イベントクリーンアップ失敗:', e));
     } catch (e) {
       console.error('[App] マスタ読み込み失敗:', e);
-      UI.toast('マスタデータの読み込みに失敗しました', 'danger');
+      if (e?.unauthorized) {
+        UI.toast('APIトークンが親機と一致しないため、患者データを取得できません。設定 → 共有・ネットワーク設定 でトークンを確認してください', 'danger', 8000);
+      } else {
+        UI.toast('マスタデータの読み込みに失敗しました', 'danger');
+      }
     }
   },
 
@@ -1101,7 +1112,7 @@ const App = {
       console.error('[App] データ更新失敗:', e);
       const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
       if (shareMode === 'client' || shareMode === 'child') {
-        this._setConnectionStatus(false);
+        this._setConnectionStatus(false, e?.unauthorized ? 'unauthorized' : 'network');
       }
     }
   },
