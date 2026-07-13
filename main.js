@@ -2353,8 +2353,21 @@ function redactPatientData(dbObj) {
   return clone;
 }
 
+// 平文エクスポートに認証情報を残さないためのマスク対象（SMBパスワード・ODBC接続文字列・APIトークン・管理者パスコード）
+const EXPORT_REDACTED_SETTING_IDS = [...SENSITIVE_SETTING_IDS, 'admin_passcode'];
+function redactCredentials(dbObj) {
+  if (Array.isArray(dbObj.system_settings)) {
+    dbObj.system_settings.forEach(s => {
+      if (EXPORT_REDACTED_SETTING_IDS.includes(s.id) && s.value) {
+        s.value = '[REDACTED]';
+      }
+    });
+  }
+  return dbObj;
+}
+
 // IPC通信でデータベースをバックアップファイルとして保存する
-// mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報を除去）
+// mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報・認証情報を除去）
 ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } = {}) => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
   if (mode === 'encrypted' && !password) {
@@ -2368,16 +2381,17 @@ ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } 
   });
   if (!filePath) return { success: false, message: 'Cancelled' };
   try {
-    // 現在のDBファイル（暗号化済みの可能性あり）を復号して平文JSONを取得
-    const rawFileContent = fs.readFileSync(DB_FILE, 'utf8');
-    const plaintextJson = decryptDbFileContent(rawFileContent);
+    // readDB()でファイル全体の暗号化に加え、SMBパスワード/ODBC接続文字列/APIトークンの
+    // フィールド単位暗号化（safeStorage・同一PC専用）も復号した完全な平文オブジェクトを得る。
+    // ここを素通りすると、暗号化バックアップの中に他PC専用のsafeStorage暗号文がそのまま残り、
+    // 別PCへ復元した際にこれらの値だけ復号できず空文字になってしまう。
+    const dbObj = readDB();
 
     let outputContent;
     if (mode === 'redacted') {
-      const dbObj = JSON.parse(plaintextJson);
-      outputContent = JSON.stringify(redactPatientData(dbObj), null, 2);
+      outputContent = JSON.stringify(redactCredentials(redactPatientData(dbObj)), null, 2);
     } else {
-      outputContent = encryptBackupContent(plaintextJson, password);
+      outputContent = encryptBackupContent(JSON.stringify(dbObj), password);
     }
     fs.writeFileSync(filePath, outputContent, 'utf8');
     return { success: true, filePath };

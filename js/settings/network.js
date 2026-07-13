@@ -465,8 +465,8 @@ Object.assign(Settings, {
           </div>
           ` : ''}
 
-          <!-- データベースのバックアップと復元 (Desktop専用) -->
-          ${window.electronAPI ? `
+          <!-- データベースのバックアップと復元 (Desktop・親機専用) -->
+          ${window.electronAPI && currentMode === 'parent' ? `
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-database"></i> データベースのバックアップと復元
