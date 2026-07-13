@@ -73,7 +73,10 @@ Object.assign(Settings, {
 
   _openBedTypeForm(type) {
     const isNew = !type;
+    const old = document.getElementById('bed-type-form-overlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
+    overlay.id = 'bed-type-form-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" style="max-width:420px;">
@@ -310,7 +313,10 @@ Object.assign(Settings, {
               <option value="${type.code}" ${currentType === type.code ? 'selected' : ''}>${type.name}</option>
     `).join('');
 
+    const old = document.getElementById('bed-form-overlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
+    overlay.id = 'bed-form-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" style="max-width:420px;">
@@ -950,7 +956,10 @@ Object.assign(Settings, {
 
   _openRoomForm(room) {
     const isNew = !room;
+    const old = document.getElementById('room-form-overlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
+    overlay.id = 'room-form-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" style="max-width:440px;">
@@ -1103,7 +1112,10 @@ Object.assign(Settings, {
   _openStaffForm(staff) {
     const isNew = !staff;
     const wardId = AppState.currentWardId;
+    const old = document.getElementById('staff-form-overlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
+    overlay.id = 'staff-form-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" style="max-width:400px;">
@@ -1282,7 +1294,10 @@ Object.assign(Settings, {
 
   _openWardForm(ward) {
     const isNew = !ward;
+    const old = document.getElementById('ward-form-overlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
+    overlay.id = 'ward-form-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" style="max-width:440px;">
@@ -1626,7 +1641,10 @@ Object.assign(Settings, {
 
   _openExamTypeForm(type) {
     const isNew = !type;
+    const old = document.getElementById('exam-type-form-overlay');
+    if (old) old.remove();
     const overlay = document.createElement('div');
+    overlay.id = 'exam-type-form-overlay';
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" style="max-width:400px;">

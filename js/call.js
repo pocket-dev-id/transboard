@@ -48,17 +48,77 @@ const CallPanel = {
     high:   { width: 1280, height: 720, frameRate: 30,  maxBitrateBps: 1_500_000 },
   },
 
-  _getMediaConstraints() {
-    const preset = this.VIDEO_QUALITY_PRESETS[this._videoQualityPreset] || this.VIDEO_QUALITY_PRESETS.medium;
+  // 選択中の画質プリセット(width/height/frameRateのideal指定)をそのままカメラに要求すると、
+  // 一部のWindows向けWebカメラ(MediaFoundation/DirectShowドライバ)は解像度と組み合わせた
+  // 低フレームレート(low: 10fps, medium: 15fps)に対応するモードを持たず OverconstrainedError で
+  // getUserMedia全体が失敗する(高画質=30fpsはカメラのネイティブモードと一致しやすく成功する)。
+  // 制約を段階的に緩めながら再試行し、それでも失敗した場合のみ諦める
+  async _acquireLocalStream(isVideo) {
     const audioConstraints = this._selectedAudioInput
       ? { deviceId: { exact: this._selectedAudioInput } }
       : true;
-    const videoConstraints = this.isVideoCall
-      ? { width: { ideal: preset.width }, height: { ideal: preset.height },
-          frameRate: { ideal: preset.frameRate },
-          ...(this._selectedVideoInput ? { deviceId: { exact: this._selectedVideoInput } } : {}) }
-      : false;
-    return { audio: audioConstraints, video: videoConstraints };
+
+    if (!isVideo) {
+      return navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: false });
+    }
+
+    return this._getUserMediaWithFallback(audioConstraints, this._videoConstraintAttempts());
+  },
+
+  // 現在の画質プリセット/選択カメラから、制約を段階的に緩めた候補リストを生成する
+  _videoConstraintAttempts() {
+    const preset = this.VIDEO_QUALITY_PRESETS[this._videoQualityPreset] || this.VIDEO_QUALITY_PRESETS.medium;
+    const deviceConstraint = this._selectedVideoInput ? { deviceId: { exact: this._selectedVideoInput } } : {};
+    return [
+      { width: { ideal: preset.width }, height: { ideal: preset.height }, frameRate: { ideal: preset.frameRate }, ...deviceConstraint },
+      { width: { ideal: preset.width }, height: { ideal: preset.height }, ...deviceConstraint },
+      { ...deviceConstraint },
+      true,
+    ];
+  },
+
+  // audioConstraintsを固定したまま、videoAttemptsを順に試して最初に成功したストリームを返す。
+  // 選択中の画質プリセット(width/height/frameRateのideal指定)をそのままカメラに要求すると、
+  // 一部のWindows向けWebカメラ(MediaFoundation/DirectShowドライバ)は解像度と組み合わせた
+  // 低フレームレート(low: 10fps, medium: 15fps)に対応するモードを持たず OverconstrainedError で
+  // getUserMedia全体が失敗する(高画質=30fpsはカメラのネイティブモードと一致しやすく成功する)。
+  // 制約を段階的に緩めながら再試行し、それでも失敗した場合のみ諦める
+  async _getUserMediaWithFallback(audioConstraints, videoAttempts) {
+    let lastErr = null;
+    for (const videoConstraints of videoAttempts) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: audioConstraints, video: videoConstraints });
+      } catch (e) {
+        lastErr = e;
+        // 権限拒否・デバイス未検出はリトライしても無意味なので即座に投げ直す。
+        // 制約が満たせない(OverconstrainedError)場合のみ次の緩和候補を試す
+        if (e.name !== 'OverconstrainedError' && e.name !== 'NotReadableError') throw e;
+        console.warn('[WebRTC] getUserMedia制約緩和リトライ:', e.name, videoConstraints);
+      }
+    }
+    throw lastErr;
+  },
+
+  // getUserMediaの失敗理由をエラー名から判別し、原因に応じたメッセージを返す
+  // （以前は全失敗を「マイクへのアクセス拒否」と表示しており、実際は解像度/フレームレートが
+  // カメラの対応モードと合わずOverconstrainedErrorになっているケースを見誤らせていた）
+  _mediaErrorMessage(e) {
+    switch (e?.name) {
+      case 'NotAllowedError':
+      case 'PermissionDeniedError':
+        return 'マイク・カメラへのアクセスが許可されていません。OSの設定を確認してください';
+      case 'NotFoundError':
+      case 'DevicesNotFoundError':
+        return 'マイクまたはカメラが見つかりません。接続を確認してください';
+      case 'NotReadableError':
+      case 'TrackStartError':
+        return 'マイクまたはカメラが他のアプリで使用中の可能性があります';
+      case 'OverconstrainedError':
+      case 'ConstraintNotSatisfiedError':
+        return 'カメラがこのビデオ品質設定に対応していません。設定の「ビデオ品質」を変更してください';
+      default:
+        return 'マイク・カメラの取得中にエラーが発生しました: ' + (e?.message || e?.name || '不明なエラー');
+    }
   },
 
   _audioCtx: null,
@@ -615,7 +675,7 @@ const CallPanel = {
 
     try {
       // 1. マイク・カメラ取得（品質プリセット適用）
-      this.localStream = await navigator.mediaDevices.getUserMedia(this._getMediaConstraints());
+      this.localStream = await this._acquireLocalStream(this.isVideoCall);
 
       // 2. PeerConnection 作成
       this.createPeerConnection();
@@ -650,7 +710,7 @@ const CallPanel = {
 
     } catch (e) {
       console.error('[WebRTC] Start Call Error:', e);
-      this.cleanupCall('マイクへのアクセスが拒否されたか、マイクが見つかりません');
+      this.cleanupCall(this._mediaErrorMessage(e));
     }
   },
 
@@ -725,7 +785,7 @@ const CallPanel = {
     this.showConnectedDialog(callerId);
 
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia(this._getMediaConstraints());
+      this.localStream = await this._acquireLocalStream(this.isVideoCall);
 
       this.createPeerConnection();
 
@@ -759,7 +819,7 @@ const CallPanel = {
 
     } catch (e) {
       console.error('[WebRTC] Accept Call Error:', e);
-      this.cleanupCall('マイクが見つからないか、応答処理中にエラーが発生しました');
+      this.cleanupCall(this._mediaErrorMessage(e));
     }
   },
 
@@ -951,12 +1011,7 @@ const CallPanel = {
     if (this.peerConnection && this.localStream) {
       const preset = this.VIDEO_QUALITY_PRESETS[this._videoQualityPreset];
       try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { width: { ideal: preset.width }, height: { ideal: preset.height },
-            frameRate: { ideal: preset.frameRate },
-            ...(this._selectedVideoInput ? { deviceId: { exact: this._selectedVideoInput } } : {}) }
-        });
+        const newStream = await this._getUserMediaWithFallback(false, this._videoConstraintAttempts());
         const newTrack = newStream.getVideoTracks()[0];
         const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
         if (sender && newTrack) {
