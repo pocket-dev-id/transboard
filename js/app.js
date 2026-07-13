@@ -1279,21 +1279,30 @@ const App = {
     return this._refreshPromise;
   },
 
+  _lastMasterRefresh: 0,
+
   async _refreshDataOnce(wardId, todayMs) {
     try {
+      // 病床マップは在室中の患者情報(is_present/patient_name)などbedsマスタを直接参照するため、
+      // アクティブな移送イベントが無い病床の状態を子機に反映するにはbedsの再取得が必要
+      // （以前はloadMasters()時にしか取得されず、入退室のみの更新が子機のマップに反映されなかった）。
+      // ただしbedsはステータスほど頻繁に変化しないため、毎ポーリング(5秒)ではなく
+      // MASTER_POLL_INTERVAL(既定30秒)間隔に間引いて取得する
+      const dueForMasterRefresh = (Date.now() - this._lastMasterRefresh) >= CONFIG.MASTER_POLL_INTERVAL;
+
       const [eventStatus, systemSettings, beds] = await Promise.all([
         API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data).catch(() => []),
-        // 病床マップは在室中の患者情報(is_present/patient_name)などbedsマスタを直接参照するため、
-        // アクティブな移送イベントが無い病床の状態を子機にリアルタイム反映するにはここでの再取得が必要
-        // （以前はloadMasters()時にしか取得されず、入退室のみの更新が子機のマップに反映されなかった）
-        API.getAllBeds().catch(() => null)
+        dueForMasterRefresh ? API.getAllBeds().catch(() => null) : Promise.resolve(null)
       ]);
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
       AppState.systemSettings = systemSettings;
-      if (beds) AppState.beds = beds;
+      if (beds) {
+        AppState.beds = beds;
+        this._lastMasterRefresh = Date.now();
+      }
       AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
 
