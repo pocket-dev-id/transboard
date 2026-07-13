@@ -280,6 +280,9 @@ const Wizard = {
             <option value="light"         ${this.config.theme_style === 'light'         ? 'selected' : ''}>標準ライト</option>
             <option value="dark"          ${this.config.theme_style === 'dark'          ? 'selected' : ''}>ダーク</option>
             <option value="blue"          ${this.config.theme_style === 'blue'          ? 'selected' : ''}>メディカルブルー</option>
+            <option value="apple"         ${this.config.theme_style === 'apple'         ? 'selected' : ''}>Apple (Human Interface)</option>
+            <option value="material"      ${this.config.theme_style === 'material'      ? 'selected' : ''}>Google (Material Design)</option>
+            <option value="fluent"        ${this.config.theme_style === 'fluent'        ? 'selected' : ''}>Microsoft (Fluent 2)</option>
             <option value="high-contrast" ${this.config.theme_style === 'high-contrast' ? 'selected' : ''}>高コントラスト</option>
             <option value="cvd"           ${this.config.theme_style === 'cvd'           ? 'selected' : ''}>色覚サポート (CVD対応)</option>
           </select>
@@ -332,7 +335,7 @@ const Wizard = {
     const modeLabel   = this.config.share_mode === 'parent' ? '親機モード' : '子機モード';
     const connLabels  = { csv: 'CSVファイル連携', odbc: 'ODBCデータベース連携', none: '手動入力' };
     const admLabels   = { csv: 'CSVインポート', manual: '手動登録', hybrid: 'ハイブリッド' };
-    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
+    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', apple: 'Apple (Human Interface)', material: 'Google (Material Design)', fluent: 'Microsoft (Fluent 2)', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
 
     const rows = [
       ['稼働モード',     modeLabel],
