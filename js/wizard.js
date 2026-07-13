@@ -461,10 +461,7 @@ const Wizard = {
         `  navigator.onLine=${navigator.onLine}`,
       ];
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
+        const res = await parentFetch(url, {}, 4000);
         if (res.ok) {
           const data = await res.json();
           logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
@@ -474,13 +471,10 @@ const Wizard = {
           // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
           const token = document.getElementById('wizard-api-token')?.value.trim() || '';
           if (token) {
-            const c2 = new AbortController();
-            const t2 = setTimeout(() => c2.abort(), 4000);
             try {
-              const res2 = await fetch(`http://${parentIp}:3005/api/tables/beds`, {
-                headers: { 'X-API-Token': token }, signal: c2.signal
-              });
-              clearTimeout(t2);
+              const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
+                headers: { 'X-API-Token': token }
+              }, 4000);
               if (res2.ok) {
                 logLines.push(`  トークン検証: 成功 status=${res2.status}`);
                 if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件・APIトークン認証もOK）</span>`;
@@ -492,7 +486,6 @@ const Wizard = {
                 if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証でHTTPエラー ${res2.status}</span>`;
               }
             } catch (e2) {
-              clearTimeout(t2);
               logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
               if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証中にエラー（${UI.escapeHTML(e2.message || e2.name)}）</span>`;
             }

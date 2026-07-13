@@ -735,11 +735,7 @@ Object.assign(Settings, {
         ];
         try {
           // テストフェッチ（親機側のwardsマスタを取得してみる）
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000); // 4秒タイムアウト
-
-          const res = await fetch(url, { signal: controller.signal });
-          clearTimeout(timeoutId);
+          const res = await parentFetch(url, {}, 4000);
 
           if (res.ok) {
             const data = await res.json();
@@ -750,13 +746,10 @@ Object.assign(Settings, {
             // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
             const token = document.getElementById('cfg-api-token')?.value.trim() || '';
             if (token) {
-              const c2 = new AbortController();
-              const t2 = setTimeout(() => c2.abort(), 4000);
               try {
-                const res2 = await fetch(`http://${parentIp}:3005/api/tables/beds`, {
-                  headers: { 'X-API-Token': token }, signal: c2.signal
-                });
-                clearTimeout(t2);
+                const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
+                  headers: { 'X-API-Token': token }
+                }, 4000);
                 if (res2.ok) {
                   logLines.push(`  トークン検証: 成功 status=${res2.status}`);
                   UI.toast(`✅ 接続に成功しました！ 病棟 ${data.data?.length || 0}件・APIトークン認証もOK。`, 'success');
@@ -768,7 +761,6 @@ Object.assign(Settings, {
                   UI.toast(`❌ トークン検証でHTTPエラー ${res2.status}`, 'danger');
                 }
               } catch (e2) {
-                clearTimeout(t2);
                 logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
                 UI.toast(`❌ トークン検証中にエラー（${e2.message || e2.name}）`, 'danger');
               }

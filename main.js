@@ -14,6 +14,10 @@ const { Readable } = require('stream');
 // 子機(file://)から親機のプライベートIPへのfetchがパーミッション要求扱いになり、
 // 既定拒否のパーミッションハンドラにブロックされて親子間の同期が全断するため、
 // 院内LAN専用アプリとして従来通りの挙動に固定する。app.whenReady() より前に呼ぶ必要がある。
+// 【フォールバック】実機で本フラグだけではLNAブロックを回避できないケースが確認されたため、
+// 子機→親機のHTTP通信自体をレンダラーのfetch()からメインプロセス(Node httpモジュール)経由に
+// 変更し、ブラウザのネットワークサービス層を経由しないようにした（parent-http-request参照）。
+// このフラグはPNAプリフライト等の副次的な影響を避けるための保険として残す。
 app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks');
 
 let mainWindow;
@@ -1833,6 +1837,55 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
 ipcMain.handle('webrtc-request', async (event, { url, options }) => {
   const method = (options.method || 'GET').toUpperCase();
   return processWebrtcRequest(method, url, options.body || '');
+});
+
+// 子機(レンダラーのfile://ページ)からの親機へのHTTPリクエストをメインプロセス経由で中継する。
+// ChromiumのLocal Network Access(LNA)はレンダラーのfetch()をサブリソースとしてブロックし得るが、
+// メインプロセス(Node.js)のhttpモジュールはブラウザのネットワークサービス層を経由しないためLNAの対象外。
+// disable-featuresフラグだけでは環境によりLNAを完全に無効化できない実機報告があったための恒久対策。
+function parentHttpRequest({ url, method = 'GET', headers = {}, body, timeoutMs = 8000 }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    let req;
+    try {
+      req = http.request(url, { method, headers, timeout: timeoutMs }, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          finish({
+            ok: true,
+            status: res.statusCode,
+            headers: res.headers,
+            bodyText: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      });
+    } catch (e) {
+      finish({ ok: false, status: 0, error: e.message || 'REQUEST_ERROR' });
+      return;
+    }
+
+    req.on('timeout', () => {
+      req.destroy();
+      finish({ ok: false, status: 0, error: 'TIMEOUT' });
+    });
+    req.on('error', (e) => {
+      finish({ ok: false, status: 0, error: e.message || 'NETWORK_ERROR' });
+    });
+
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+ipcMain.handle('parent-http-request', async (event, opts) => {
+  return parentHttpRequest(opts);
 });
 
 // アプリバージョンを返す

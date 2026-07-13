@@ -275,7 +275,7 @@ const ParentServerMonitor = {
     const parentIp = localStorage.getItem('cfg_parent_ip');
     if (!parentIp) return true;
     try {
-      const res = await fetch(`http://${parentIp}:3005/api/tables/wards`, { signal: AbortSignal.timeout(5000) });
+      const res = await parentFetch(`http://${parentIp}:3005/api/tables/wards`, {}, 5000);
       if (res.ok) {
         if (this._degraded) this._setDegraded(false);
         return true;
