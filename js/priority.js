@@ -60,31 +60,36 @@ const Priority = {
       const remText = UI.formatRemaining(remaining);
       const pickupTime = UI.formatTime(event.estimated_pickup_at);
       timeHtml = `
-        <div class="priority-time ${remClass}">
+        <span class="priority-time ${remClass}">
           <i class="fas fa-clock"></i> ${pickupTime}（${remText}）
-        </div>`;
+        </span>`;
     }
 
     let icHtml = '';
     if (event.patient_ic_tag_id) {
-      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; margin-right:4px;" title="ICカードID: ${event.patient_ic_tag_id}"><i class="fas fa-id-card"></i> IC</span>`;
+      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd;" title="ICカードID: ${event.patient_ic_tag_id}"><i class="fas fa-id-card"></i> IC</span>`;
     }
 
+    const patientName = bed ? UI.getPatientName(bed.patient_name) : null;
+    const patientHtml = patientName
+      ? `<span class="priority-patient-name">${UI.escapeHTML(patientName)}</span>`
+      : '';
+
+    const examInfo = `${examType ? examType.name : '--'}${examRoom ? ' / ' + examRoom.name : ''}`;
+    const departInfo = event.departed_at ? UI.formatTime(event.departed_at) + '出棟' : '';
+    const escortInfo = event.escort_staff_id
+      ? `<span class="priority-escort"><i class="fas fa-user-nurse"></i> ${UI.escapeHTML(AppState.getStaffById(event.escort_staff_id)?.name || '--')}</span>`
+      : '';
+
     return `
-      <div class="priority-item ${itemClass}" data-bed-id="${bed ? bed.id : ''}" style="cursor:pointer;">
-        <div class="priority-item-header">
-          <span class="priority-bed-num">${bed ? UI.formatBedName(bed) : '?'}</span>
-          <div style="display:flex; gap:4px; align-items:center;">
-            ${icHtml}
-            ${UI.statusBadge(status)}
-          </div>
-        </div>
-        <div class="priority-exam-info">
-          ${examType ? examType.name : '--'} ${examRoom ? '/ ' + examRoom.name : ''}
-          ${event.departed_at ? ' | ' + UI.formatTime(event.departed_at) + '出棟' : ''}
-        </div>
+      <div class="priority-item priority-row ${itemClass}" data-bed-id="${bed ? bed.id : ''}">
+        <span class="priority-bed-num">${bed ? UI.formatBedName(bed) : '?'}</span>
+        ${UI.statusBadge(status)}
+        ${patientHtml}
+        <span class="priority-exam-info">${examInfo}${departInfo ? ' | ' + departInfo : ''}</span>
         ${timeHtml}
-        ${event.escort_staff_id ? `<div class="text-xs text-muted"><i class="fas fa-user-nurse"></i> ${AppState.getStaffById(event.escort_staff_id)?.name || '--'}</div>` : ''}
+        ${escortInfo}
+        ${icHtml}
       </div>
     `;
   },

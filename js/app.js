@@ -456,7 +456,8 @@ const App = {
           }
           BedMap.render();
         }
-        
+        Priority.renderPriorityList();
+
         // 検査室のトグルとも連動させる
         const examChk = document.getElementById('chk-exam-show-patient-names');
         if (examChk) {
@@ -1550,8 +1551,17 @@ const App = {
           if (lastLog) {
             const d = new Date(lastLog.timestamp);
             const timeStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-            const isSuccess = lastLog.status === 'success';
-            const statusLabel = isSuccess ? '<span style="color:#16a34a; font-weight:800;">(成功)</span>' : '<span style="color:#dc2626; font-weight:800;">(失敗)</span>';
+            // 'warning'(一部スキップ等)は失敗ではなく部分成功のため、'失敗'と区別して表示する
+            // （実際に取り込みが成功しているのに「削除なし・リアルタイム読み込み」設定下で
+            // スキップ行があるだけで(失敗)表示になり、混乱を招いていた）
+            let statusLabel;
+            if (lastLog.status === 'success') {
+              statusLabel = '<span style="color:#16a34a; font-weight:800;">(成功)</span>';
+            } else if (lastLog.status === 'warning') {
+              statusLabel = '<span style="color:#d97706; font-weight:800;">(一部スキップ)</span>';
+            } else {
+              statusLabel = '<span style="color:#dc2626; font-weight:800;">(失敗)</span>';
+            }
             importDisp.innerHTML = `<i class="fas fa-file-import"></i> 最終取り込み: <strong style="font-family:'Roboto Mono', monospace;">${timeStr}</strong> ${statusLabel}`;
             importDisp.style.display = 'inline-block';
           } else {
