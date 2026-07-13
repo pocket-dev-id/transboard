@@ -1281,14 +1281,19 @@ const App = {
 
   async _refreshDataOnce(wardId, todayMs) {
     try {
-      const [eventStatus, systemSettings] = await Promise.all([
+      const [eventStatus, systemSettings, beds] = await Promise.all([
         API.getWardStatusEvents(wardId, todayMs),
-        API.getAll('system_settings').then(res => res.data).catch(() => [])
+        API.getAll('system_settings').then(res => res.data).catch(() => []),
+        // 病床マップは在室中の患者情報(is_present/patient_name)などbedsマスタを直接参照するため、
+        // アクティブな移送イベントが無い病床の状態を子機にリアルタイム反映するにはここでの再取得が必要
+        // （以前はloadMasters()時にしか取得されず、入退室のみの更新が子機のマップに反映されなかった）
+        API.getAllBeds().catch(() => null)
       ]);
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
       AppState.systemSettings = systemSettings;
+      if (beds) AppState.beds = beds;
       AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
 
