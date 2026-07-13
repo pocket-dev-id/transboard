@@ -1184,22 +1184,28 @@ const CallPanel = {
     // 全画面ボタン
     const fsBtn = document.getElementById('webrtc-btn-fullscreen');
     if (fsBtn) {
+      // アイコンの更新はfullscreenchangeイベント側だけで行う(requestFullscreen()が
+      // Electron側のパーミッション拒否などで失敗しても、ここで無条件にアイコンだけ
+      // 切り替えてしまうと「見た目は全画面ボタンを押した後なのに実際は全画面になって
+      // いない」という状態になるため)
+      this._onFullscreenChange = () => {
+        fsBtn.innerHTML = document.fullscreenElement
+          ? '<i class="fas fa-compress"></i>'
+          : '<i class="fas fa-expand"></i>';
+      };
       fsBtn.onclick = () => {
         const container = document.getElementById('webrtc-video-container');
         if (!container) return;
         if (!document.fullscreenElement) {
-          container.requestFullscreen().catch(() => {});
-          fsBtn.innerHTML = '<i class="fas fa-compress"></i>';
+          container.requestFullscreen().catch((e) => {
+            console.error('[WebRTC] Fullscreen failed:', e);
+            UI.toast('全画面表示に切り替えられませんでした', 'danger');
+          });
         } else {
           document.exitFullscreen().catch(() => {});
-          fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
         }
       };
-      document.addEventListener('fullscreenchange', () => {
-        if (!document.fullscreenElement && fsBtn) {
-          fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
-        }
-      }, { once: true });
+      document.addEventListener('fullscreenchange', this._onFullscreenChange);
     }
 
     // チャットのバインド
@@ -1222,6 +1228,14 @@ const CallPanel = {
     this.stopRingTone();
     this.stopCallTimer();
     this._stopStatsPolling();
+
+    if (this._onFullscreenChange) {
+      document.removeEventListener('fullscreenchange', this._onFullscreenChange);
+      this._onFullscreenChange = null;
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);

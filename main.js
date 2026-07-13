@@ -630,17 +630,20 @@ function createWindow() {
     }
   });
 
-  // マイク・カメラ・クリップボード書き込み・ローカルネットワークアクセスの
+  // マイク・カメラ・クリップボード書き込み・ローカルネットワークアクセス・全画面表示の
   // パーミッション要求を明示的に許可する。
   // - clipboard-sanitized-write/clipboard-read: APIトークン等の「コピー」ボタン用。
   //   新しいChromiumでは navigator.clipboard.writeText() もこのハンドラ経由で判定される。
   // - local-network-access: Electron 41 (Chromium 146) で導入されたLNA制限用の保険
   //   （実際の無効化は app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks')
   //   で行っているが、将来そのフラグが廃止された場合に備えてここでも明示許可する）
+  // - fullscreen: ビデオ通話ダイアログ内のElement.requestFullscreen()用。setPermissionRequestHandler
+  //   を設置した時点でallowlist外の全パーミッションが拒否されるようになるため、'fullscreen'を
+  //   含めないとビデオ映像エリアの全画面ボタンが常にrequestFullscreen()失敗で無反応になる。
   // 注: setPermissionCheckHandler は設定しない。checkハンドラ未設定時の既定は「許可」
   // であり、拒否デフォルトのcheckハンドラを設けると fullscreen 等これまで暗黙に
   // 通っていた同期判定まで壊してしまうため（requestハンドラのみで制御する）。
-  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write', 'clipboard-read', 'local-network-access']);
+  const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write', 'clipboard-read', 'local-network-access', 'fullscreen']);
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(ALLOWED_PERMISSIONS.has(permission));
   });
