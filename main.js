@@ -2548,6 +2548,19 @@ function getActiveDevices() {
   return Object.values(connectedDevices).filter(d => (now - d.lastSeen) < DEVICE_TIMEOUT_MS);
 }
 
+// 接続機器レジストリの定期クリーンアップ（切断・再インストール等で使われなくなった
+// deviceIdがconnectedDevicesに残り続けメモリを圧迫するのを防ぐ。表示側の
+// getActiveDevicesは読み取り時にフィルタするだけで削除しないため、別途GCする）
+const DEVICE_ENTRY_MAX_AGE_MS = 10 * 60 * 1000; // 10分無応答でレジストリから削除
+setInterval(() => {
+  const now = Date.now();
+  for (const deviceId in connectedDevices) {
+    if ((now - connectedDevices[deviceId].lastSeen) >= DEVICE_ENTRY_MAX_AGE_MS) {
+      delete connectedDevices[deviceId];
+    }
+  }
+}, 60000); // 60秒毎に実行
+
 // APIトークンの生成・確保（セキュリティ: 患者データを含むテーブルへの外部アクセス保護）
 // 未設定の場合のみランダムトークンを生成して保存する（既存トークンは維持）
 function ensureApiToken() {
