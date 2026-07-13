@@ -372,6 +372,9 @@ Object.assign(Settings, {
                   <option value="light" ${themeStyle === 'light' ? 'selected' : ''}>標準ライトテーマ</option>
                   <option value="dark" ${themeStyle === 'dark' ? 'selected' : ''}>ダークテーマ (Sleek Dark)</option>
                   <option value="blue" ${themeStyle === 'blue' ? 'selected' : ''}>メディカルブルーテーマ</option>
+                  <option value="apple" ${themeStyle === 'apple' ? 'selected' : ''}>Apple (Human Interface)</option>
+                  <option value="material" ${themeStyle === 'material' ? 'selected' : ''}>Google (Material Design)</option>
+                  <option value="fluent" ${themeStyle === 'fluent' ? 'selected' : ''}>Microsoft (Fluent 2)</option>
                   <option value="high-contrast" ${themeStyle === 'high-contrast' ? 'selected' : ''}>高コントラスト (白黒・黄)</option>
                   <option value="cvd" ${themeStyle === 'cvd' ? 'selected' : ''}>色覚サポートテーマ (CVD対応)</option>
                 </select>
