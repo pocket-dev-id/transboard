@@ -159,7 +159,8 @@ const ExamRoom = {
     try {
       const events = await API.getEventsForExamRoom(roomId);
       const relevant = events.filter(ev =>
-        ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE'].includes(ev.current_status)
+        CONFIG.ACTIVE_STATUSES.includes(ev.current_status) &&
+        ev.current_status !== 'PICKUP_REQUIRED'
       );
 
       const matchEvent = relevant.find(ev => ev.patient_ic_tag_id === icValue);
@@ -169,14 +170,8 @@ const ExamRoom = {
         return;
       }
 
-      const statusActions = {
-        DEPART_REGISTERED: { nextStatus: 'ARRIVED', message: '到着にしますか？' },
-        MOVING: { nextStatus: 'ARRIVED', message: '到着にしますか？' },
-        ARRIVED: { nextStatus: 'PICKUP_REQUIRED', message: '終了（迎え要）にしますか？' },
-        IN_EXAM: { nextStatus: 'PICKUP_REQUIRED', message: '終了（迎え要）にしますか？' },
-      };
-
-      const action = statusActions[matchEvent.current_status];
+      const actions = CONFIG.getAllowedActions(matchEvent.current_status, CONFIG.STATUS_SCOPE.EXAM);
+      const action = actions[0];
       if (!action) {
         UI.toast('このステータスではICカードによる自動更新はできません', 'info');
         UI.playScanSound(false);
@@ -186,13 +181,17 @@ const ExamRoom = {
       const bed = AppState.getBedById(matchEvent.bed_id);
       const bedName = bed ? UI.formatBedName(bed) : '患者';
       const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
-      if (!confirm(`${bedName}（現在: ${currentLabel}）を${action.message}`)) {
+      const nextLabel = CONFIG.STATUS_LABEL[action.toStatus] || action.toStatus;
+      const optionsText = actions.length > 1
+        ? `\n候補: ${actions.map(a => CONFIG.STATUS_LABEL[a.toStatus] || a.toStatus).join(' / ')}`
+        : '';
+      if (!confirm(`${bedName}（現在: ${currentLabel}）を${nextLabel}にしますか？${optionsText}`)) {
         UI.playScanSound(false);
         return;
       }
 
-      await API.updateEventStatus(matchEvent.id, action.nextStatus);
-      const label = CONFIG.STATUS_LABEL[action.nextStatus];
+      await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM);
+      const label = CONFIG.STATUS_LABEL[action.toStatus];
       UI.toast(`[ICスキャン] ${bedName} → ${label}`, 'success');
       UI.playScanSound(true);
       this._pendingFlashEventId = matchEvent.id;
@@ -237,9 +236,7 @@ const ExamRoom = {
 
     try {
       const events = await API.getEventsForExamRoom(roomId);
-      const relevant = events.filter(e =>
-        ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'].includes(e.current_status)
-      );
+      const relevant = events.filter(e => CONFIG.ACTIVE_STATUSES.includes(e.current_status));
 
       // 患者名表示のクラスを設定 (CSS側のフォールバック用)
       const nameChk = document.getElementById('chk-exam-show-patient-names');
@@ -295,11 +292,11 @@ const ExamRoom = {
       let pickupCount = 0;
 
       relevant.forEach(e => {
-        if (['DEPART_REGISTERED', 'MOVING'].includes(e.current_status)) {
+        if (e.current_status === 'DEPART_REGISTERED' || (!CONFIG.isStatusHidden('MOVING') && e.current_status === 'MOVING')) {
           inTransitCount++;
-        } else if (e.current_status === 'ARRIVED') {
+        } else if (!CONFIG.isStatusHidden('ARRIVED') && e.current_status === 'ARRIVED') {
           waitingCount++;
-        } else if (['IN_EXAM', 'NEARLY_DONE'].includes(e.current_status)) {
+        } else if (e.current_status === 'IN_EXAM' || (!CONFIG.isStatusHidden('NEARLY_DONE') && e.current_status === 'NEARLY_DONE')) {
           inExamCount++;
         } else if (e.current_status === 'PICKUP_REQUIRED') {
           pickupCount++;
@@ -468,7 +465,7 @@ const ExamRoom = {
       ? (showNames ? (bed.patient_id || '') : '＊＊＊＊') 
       : '';
 
-    const actions = CONFIG.EXAM_ROOM_ACTIONS[event.current_status] || [];
+    const actions = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.EXAM);
     const actionBtns = actions.map(a =>
       `<button class="btn ${a.cls} btn-sm" data-exam-action="${a.toStatus}" data-event-id="${event.id}">
         ${a.label}
@@ -559,7 +556,7 @@ const ExamRoom = {
                   AppState.todayEvents.find(e => e.id === eventId);
 
     try {
-      await API.updateEventStatus(eventId, newStatus);
+      await API.updateEventStatus(eventId, newStatus, {}, CONFIG.STATUS_SCOPE.EXAM);
       const label = CONFIG.STATUS_LABEL[newStatus];
       UI.toast(`${label} に更新しました`, 'success');
       UI.playScanSound(true);
@@ -585,8 +582,12 @@ const ExamRoom = {
     }
 
     const activeStatuses = new Set(CONFIG.ACTIVE_STATUSES);
-    const movingSet  = new Set(['DEPART_REGISTERED', 'MOVING']);
-    const examSet    = new Set(['ARRIVED', 'IN_EXAM', 'NEARLY_DONE']);
+    const movingSet  = new Set(['DEPART_REGISTERED', ...(CONFIG.isStatusHidden('MOVING') ? [] : ['MOVING'])]);
+    const examSet    = new Set([
+      ...(CONFIG.isStatusHidden('ARRIVED') ? [] : ['ARRIVED']),
+      'IN_EXAM',
+      ...(CONFIG.isStatusHidden('NEARLY_DONE') ? [] : ['NEARLY_DONE']),
+    ]);
     const pickupSet  = new Set(['PICKUP_REQUIRED']);
 
     const cards = AppState.examRooms.map(room => {

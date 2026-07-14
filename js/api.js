@@ -218,7 +218,7 @@ const API = {
     return this.create('transfer_events', data);
   },
 
-  async updateEventStatus(eventId, newStatus, extraFields = {}) {
+  async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD) {
     const now = Date.now();
     const statusTimeMap = {
       MOVING: 'departed_at',
@@ -243,6 +243,10 @@ const API = {
       const current = await this.getOne('transfer_events', eventId);
       if (current && current.current_status) fromStatus = current.current_status;
     } catch (e) { /* 取得失敗時はnullのまま */ }
+
+    if (fromStatus && !CONFIG.isTransitionAllowed(fromStatus, newStatus, scope)) {
+      throw new Error(`Invalid status transition: ${fromStatus} -> ${newStatus}`);
+    }
 
     const updated = await this.patch('transfer_events', eventId, patch);
     // ログを記録

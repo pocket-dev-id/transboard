@@ -130,7 +130,7 @@ Object.assign(Settings, {
       <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:14px;">
         <input type="checkbox" class="hidden-status-chk" data-status="${sid}"
           ${hiddenStatuses.includes(sid) ? 'checked' : ''}>
-        <span><strong>${DEFAULT_LABELS[sid]}</strong>（${sid}）への遷移ボタンを非表示</span>
+        <span><strong>${DEFAULT_LABELS[sid]}</strong>（${sid}）を使用しない中間ステータスとして扱う</span>
       </label>`).join('');
 
     body.innerHTML = `
@@ -232,8 +232,8 @@ Object.assign(Settings, {
         </div>
 
         <div class="settings-section">
-          <h4 class="settings-section-title"><i class="fas fa-eye-slash"></i> 遷移ボタンの非表示化</h4>
-          <p style="font-size:12px; color:#64748b; margin-bottom:8px;">使用しないステータスへの遷移ボタンを非表示にできます。<br>例: 検査室到着（ARRIVED）を使わず移動中から直接検査中に遷移する運用フロー。</p>
+          <h4 class="settings-section-title"><i class="fas fa-eye-slash"></i> 使用しない中間ステータス</h4>
+          <p style="font-size:12px; color:#64748b; margin-bottom:8px;">選択した中間ステータスは運用フローから除外されます。病棟・検査室・ICスキャン・子機からの更新にも反映され、可能な場合は次の有効なステータスへ直接進めます。<br>例: 検査室到着（ARRIVED）を使わず移動中から直接検査中に遷移する運用フロー。</p>
           ${hiddenCheckboxes}
           <div style="margin-top:12px;">
             <button class="btn btn-primary btn-sm" id="btn-save-hidden-statuses"><i class="fas fa-save"></i> 非表示設定を保存</button>
@@ -373,6 +373,13 @@ Object.assign(Settings, {
       body.querySelectorAll('.hidden-status-chk:checked').forEach(chk => hidden.push(chk.dataset.status));
       try {
         await saveSetting('hidden_statuses', hidden);
+        if (typeof WardDashboard !== 'undefined') WardDashboard.render();
+        if (typeof ExamRoom !== 'undefined') ExamRoom.render();
+        if (typeof Timeline !== 'undefined') Timeline.render();
+        if (typeof Priority !== 'undefined') {
+          Priority.renderSummary();
+          Priority.renderPriorityList();
+        }
         UI.toast('非表示設定を保存しました', 'success');
       } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); }
     };

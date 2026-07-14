@@ -1612,6 +1612,63 @@ const ACTIVE_TRANSFER_STATUSES = new Set([
   'NEARLY_DONE',
   'PICKUP_REQUIRED',
 ]);
+const HIDEABLE_TRANSFER_STATUSES = new Set(['MOVING', 'ARRIVED', 'NEARLY_DONE']);
+const WARD_STATUS_ACTIONS = {
+  DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
+  MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
+  ARRIVED: ['IN_EXAM', 'CANCELLED'],
+  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'CANCELLED'],
+  NEARLY_DONE: ['PICKUP_REQUIRED', 'CANCELLED'],
+  PICKUP_REQUIRED: ['RETURNED', 'CANCELLED'],
+  RETURNED: [],
+  CANCELLED: [],
+};
+const EXAM_STATUS_ACTIONS = {
+  DEPART_REGISTERED: ['ARRIVED'],
+  MOVING: ['ARRIVED'],
+  ARRIVED: ['IN_EXAM'],
+  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED'],
+  NEARLY_DONE: ['PICKUP_REQUIRED'],
+  PICKUP_REQUIRED: [],
+};
+
+function getHiddenTransferStatuses(db) {
+  const setting = (db.system_settings || []).find(s => s.id === 'hidden_statuses');
+  if (!setting || !setting.value) return new Set();
+  try {
+    const parsed = JSON.parse(setting.value);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter(status => HIDEABLE_TRANSFER_STATUSES.has(status)));
+  } catch {
+    return new Set();
+  }
+}
+
+function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIONS) {
+  const hidden = getHiddenTransferStatuses(db);
+  const result = [];
+  const seen = new Set();
+  const visit = (targets) => {
+    targets.forEach(status => {
+      if (hidden.has(status)) {
+        visit(actionMap[status] || []);
+        return;
+      }
+      if (seen.has(status)) return;
+      seen.add(status);
+      result.push(status);
+    });
+  };
+  visit(actionMap[fromStatus] || []);
+  return result;
+}
+
+function isTransferStatusTransitionAllowed(fromStatus, toStatus, db) {
+  if (!fromStatus || !toStatus) return false;
+  if (fromStatus === toStatus) return true;
+  return getAllowedTransferTargets(fromStatus, db, WARD_STATUS_ACTIONS).includes(toStatus) ||
+    getAllowedTransferTargets(fromStatus, db, EXAM_STATUS_ACTIONS).includes(toStatus);
+}
 
 // 共通のデータベース操作処理関数
 async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null) {
@@ -1733,6 +1790,16 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     const index = list.findIndex(x => String(x.id) === String(data.id));
     if (index !== -1) {
+      if (
+        table === 'transfer_events' &&
+        Object.prototype.hasOwnProperty.call(data, 'current_status') &&
+        !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
+      ) {
+        return {
+          success: false,
+          message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
+        };
+      }
       list[index] = { ...list[index], ...data };
       console.log(`[DB] POST (Update instead of duplicate): table=${table}, id=${data.id}`);
     } else {
@@ -1769,6 +1836,20 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       if (!Array.isArray(bulkData)) {
         return { success: false, message: 'Body must be an array for bulk updates' };
       }
+      if (table === 'transfer_events') {
+        for (const patchItem of bulkData) {
+          if (!Object.prototype.hasOwnProperty.call(patchItem, 'current_status')) continue;
+          const targetId = patchItem.id;
+          const index = list.findIndex(x => String(x.id) === String(targetId));
+          if (index === -1) continue;
+          if (!isTransferStatusTransitionAllowed(list[index].current_status, patchItem.current_status, db)) {
+            return {
+              success: false,
+              message: `Invalid status transition: ${list[index].current_status} -> ${patchItem.current_status}`,
+            };
+          }
+        }
+      }
       const updatedItems = [];
       bulkData.forEach(patchItem => {
         const targetId = patchItem.id;
@@ -1793,6 +1874,16 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (index === -1) {
       console.warn(`[DB] PATCH Not Found: table=${table}, id=${id}`);
       return { success: false, message: 'Not Found' };
+    }
+    if (
+      table === 'transfer_events' &&
+      Object.prototype.hasOwnProperty.call(data, 'current_status') &&
+      !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
+    ) {
+      return {
+        success: false,
+        message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
+      };
     }
     list[index] = { ...list[index], ...data };
     if (!writeDB(db)) {
