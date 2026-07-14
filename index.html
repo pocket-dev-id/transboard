@@ -89,7 +89,7 @@
         <div class="summary-card" id="summary-escort">
           <div class="summary-icon"><i class="fas fa-user-nurse"></i></div>
           <div class="summary-body">
-            <div class="summary-value" id="cnt-escort">0</div>
+            <div class="summary-value" id="cnt-escort">0<span class="summary-value-sub" id="cnt-escort-standby" title="検査中などで病棟へ戻り手離れしているスタッフの人数"></span></div>
             <div class="summary-label">付き添い中</div>
           </div>
         </div>
@@ -176,6 +176,12 @@
             <span class="panel-sub">迎えが必要な順に表示</span>
           </div>
           <div id="priority-list"></div>
+
+          <!-- スタッフ稼働状況: 付き添いの手離れ/迎え移動を一目で確認できるようにする -->
+          <div class="panel-header" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--clr-border);">
+            <h2 style="font-size:13px;"><i class="fas fa-user-nurse"></i> スタッフ稼働状況</h2>
+          </div>
+          <div id="staff-status-panel"></div>
         </div>
       </div>
 

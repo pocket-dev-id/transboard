@@ -255,6 +255,7 @@ select, input { font-family: inherit; }
 .summary-card.warning .summary-icon { background: #fef3c7; color: #d97706; }
 .summary-card.danger .summary-icon { background: #fecaca; color: #b91c1c; }
 .summary-value { font-size: 19px; font-weight: 800; line-height: 1; }
+.summary-value-sub { font-size: 10px; font-weight: 700; color: var(--clr-text-muted); margin-left: 3px; }
 .summary-label { font-size: 10.5px; color: var(--clr-text-muted); margin-top: 1px; }
 
 /* ---------- ダッシュボードレイアウト ---------- */
@@ -394,6 +395,9 @@ select, input { font-family: inherit; }
   font-size: calc(var(--bed-card-info-sz) - 1px);
   color: var(--clr-text-muted);
 }
+/* 実際に付き添い移動中(MOVING/PICKUP_REQUIRED)は強調、検査中等の病棟待機中は控えめに表示する */
+.bed-staff-badge--active { color: #1d4ed8; font-weight: 800; }
+.bed-staff-badge--standby { color: var(--clr-text-muted); font-style: italic; }
 .bed-pulse-dot {
   position: absolute;
   top: 6px;
@@ -481,6 +485,8 @@ select, input { font-family: inherit; }
 .priority-patient-name { font-size: 12px; font-weight: 700; color: var(--clr-text); }
 .priority-exam-info { font-size: 11.5px; color: var(--clr-text-muted); }
 .priority-escort { font-size: 11px; color: var(--clr-text-muted); }
+.priority-escort--active { color: #1d4ed8; font-weight: 800; }
+.priority-escort--standby { color: var(--clr-text-muted); font-style: italic; }
 .priority-time {
   font-size: 12px;
   font-weight: 700;
@@ -2671,6 +2677,43 @@ body.theme-high-contrast .btn-primary {
   color: #64748b;
 }
 .device-presence-chip i { flex-shrink: 0; }
+
+/* スタッフ稼働状況チップ(付き添い中/病棟待機/空き) */
+#staff-status-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.staff-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid #cbd5e0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.staff-status-chip-label { font-weight: 800; opacity: .85; }
+.staff-status-chip.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+.staff-status-chip.standby {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+.staff-status-chip.free {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
 
 
 .app-version-badge {

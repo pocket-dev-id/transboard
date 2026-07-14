@@ -90,6 +90,9 @@ const CONFIG = {
   // 「進行中」表示対象
   ACTIVE_STATUSES: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
 
+  // 付き添いスタッフが実際に患者と一緒に移動している区間（それ以外は病棟へ戻って手離れしている想定）
+  ESCORT_ACTIVE_STATUSES: ['MOVING', 'PICKUP_REQUIRED'],
+
   // 迎え要件のしきい値 (分)
   SOON_THRESHOLD_MIN: 15,
 

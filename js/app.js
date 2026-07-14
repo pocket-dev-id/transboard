@@ -7,6 +7,7 @@ const WardDashboard = {
     BedMap.render();
     Priority.renderSummary();
     Priority.renderPriorityList();
+    Priority.renderStaffStatus();
     Timeline.render();
   },
 };

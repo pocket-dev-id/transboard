@@ -173,9 +173,10 @@ const BedModal = {
       `<option value="${r.id}">${r.name}（${r.floor}）</option>`
     ).join('');
 
+    const busyStaffIds = AppState.getBusyEscortStaffIds();
     const staffOptions = `<option value="">（なし）</option>` +
       AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s =>
-        `<option value="${s.id}">${s.name}</option>`
+        `<option value="${s.id}">${s.name}${busyStaffIds.has(s.id) ? '（⚠付き添い中）' : ''}</option>`
       ).join('');
 
     // 患者IC登録設定が有効かどうか
@@ -334,7 +335,10 @@ const BedModal = {
             <div class="label">付き添い看護師</div>
             <div class="value" style="display:flex; align-items:center; gap:4px;">
               <select id="m-escort-staff" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px; font-weight: bold; width: 120px;">
-                ${`<option value="">（なし）</option>` + AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s => `<option value="${s.id}" ${event.escort_staff_id === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+                ${`<option value="">（なし）</option>` + AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s => {
+                  const isBusy = AppState.getBusyEscortStaffIds(event.id).has(s.id);
+                  return `<option value="${s.id}" ${event.escort_staff_id === s.id ? 'selected' : ''}>${s.name}${isBusy ? '（⚠付き添い中）' : ''}</option>`;
+                }).join('')}
               </select>
               <button class="btn btn-primary" id="btn-update-escort-staff" style="padding: 3px 6px; font-size: 11px; width: auto; height: auto; min-width: 0; line-height: 1;">変更</button>
             </div>
@@ -519,6 +523,16 @@ const BedModal = {
         const staffSelect = document.getElementById('m-escort-staff');
         if (!staffSelect) return;
         const newStaffId = staffSelect.value || null;
+
+        if (newStaffId && newStaffId !== event.escort_staff_id && AppState.getBusyEscortStaffIds(event.id).has(newStaffId)) {
+          const staffName = AppState.getStaffById(newStaffId)?.name || '選択したスタッフ';
+          const ok = await UI.confirmModal(`${staffName}さんは現在別の患者に付き添い中です。それでも割り当てますか？`, {
+            title: '付き添いスタッフの重複',
+            type: 'warning',
+            confirmLabel: '割り当てる'
+          });
+          if (!ok) return;
+        }
 
         updateStaffBtn.disabled = true;
         updateStaffBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -712,6 +726,16 @@ const BedModal = {
     if (!examTypeId || !examRoomId) {
       UI.toast('検査種別と検査室は必須です', 'warning');
       return;
+    }
+
+    if (escortStaffId && AppState.getBusyEscortStaffIds().has(escortStaffId)) {
+      const staffName = AppState.getStaffById(escortStaffId)?.name || '選択したスタッフ';
+      const ok = await UI.confirmModal(`${staffName}さんは現在別の患者に付き添い中です。それでも割り当てますか？`, {
+        title: '付き添いスタッフの重複',
+        type: 'warning',
+        confirmLabel: '割り当てる'
+      });
+      if (!ok) return;
     }
 
     const btn = document.getElementById('btn-depart-submit');
