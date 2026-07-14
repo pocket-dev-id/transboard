@@ -8,6 +8,18 @@ const Priority = {
     const s = AppState.getSummary();
     document.getElementById('cnt-depart').textContent = s.depart;
     document.getElementById('cnt-escort').textContent = s.escortActive;
+    const activeStaffList = document.getElementById('active-staff-list');
+    if (activeStaffList) {
+      if (s.activeStaffs && s.activeStaffs.length > 0) {
+        activeStaffList.textContent = s.activeStaffs
+          .map(item => `${item.staff.name}${item.count > 1 ? `(${item.count})` : ''}`)
+          .join('、');
+        activeStaffList.title = activeStaffList.textContent;
+      } else {
+        activeStaffList.textContent = '出ている人なし';
+        activeStaffList.title = '';
+      }
+    }
     document.getElementById('cnt-pickup').textContent = s.pickup;
     document.getElementById('cnt-soon').textContent = s.soon;
     document.getElementById('cnt-delay').textContent = s.delay;

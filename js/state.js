@@ -122,13 +122,24 @@ const AppState = {
     const soonMs = CONFIG.SOON_THRESHOLD_MIN * 60 * 1000;
 
     let depart = 0, escortActive = 0, escortStandby = 0, pickup = 0, soon = 0, delay = 0;
+    const activeStaffMap = new Map();
     for (const e of events) {
       if (CONFIG.DEPART_STATUSES.includes(e.current_status)) depart++;
       if (e.escort_staff_id) {
         // 付き添いスタッフは検査中は病棟へ戻り手離れしている想定のため、
         // 実際に患者と一緒に移動している区間(MOVING/PICKUP_REQUIRED)とそれ以外(病棟待機中)を分けて数える
-        if (CONFIG.ESCORT_ACTIVE_STATUSES.includes(e.current_status)) escortActive++;
-        else escortStandby++;
+        if (CONFIG.ESCORT_ACTIVE_STATUSES.includes(e.current_status)) {
+          escortActive++;
+          const staff = this.getStaffById(e.escort_staff_id);
+          if (staff) {
+            if (!activeStaffMap.has(staff.id)) {
+              activeStaffMap.set(staff.id, { staff, count: 0 });
+            }
+            activeStaffMap.get(staff.id).count++;
+          }
+        } else {
+          escortStandby++;
+        }
       }
       if (e.current_status === 'PICKUP_REQUIRED') pickup++;
       if (e.estimated_pickup_at) {
@@ -137,7 +148,9 @@ const AppState = {
         if (remaining < 0 && e.current_status !== 'RETURNED' && e.current_status !== 'CANCELLED') delay++;
       }
     }
-    return { depart, escortActive, escortStandby, pickup, soon, delay };
+    const activeStaffs = Array.from(activeStaffMap.values())
+      .sort((a, b) => a.staff.name.localeCompare(b.staff.name, 'ja', { numeric: true }));
+    return { depart, escortActive, escortStandby, pickup, soon, delay, activeStaffs };
   },
 
   // 現在「実際に付き添い中(病棟を離れて患者と一緒に移動している)」スタッフIDの集合を返す。
