@@ -2678,6 +2678,13 @@ body.theme-high-contrast .btn-primary {
 }
 .device-presence-chip i { flex-shrink: 0; }
 
+/* 親機単独運用モード: 子機・多端末前提のUIを隠す（検査室タブ・病棟間通話ボタン・接続端末チップ） */
+body.standalone-mode .tab-btn[data-page="exam-room"],
+body.standalone-mode #btn-call-toggle,
+body.standalone-mode #device-presence-display {
+  display: none !important;
+}
+
 /* スタッフ稼働状況チップ(付き添い中/病棟待機/空き) */
 #staff-status-panel {
   display: flex;

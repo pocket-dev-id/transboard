@@ -93,6 +93,9 @@ const CONFIG = {
   // 付き添いスタッフが実際に患者と一緒に移動している区間（それ以外は病棟へ戻って手離れしている想定）
   ESCORT_ACTIVE_STATUSES: ['MOVING', 'PICKUP_REQUIRED'],
 
+  // 移送ステータスの前進順序。遷移ボタン非表示(hidden_statuses)時に「次に使う状態」を求めるのに使う
+  STATUS_PROGRESSION: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED'],
+
   // 迎え要件のしきい値 (分)
   SOON_THRESHOLD_MIN: 15,
 

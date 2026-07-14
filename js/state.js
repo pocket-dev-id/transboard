@@ -200,4 +200,24 @@ const AppState = {
     const raw = this.getSettingRaw(id);
     return raw == null ? fallback : raw !== 'false';
   },
+
+  // ---------- 遷移ボタン非表示（hidden_statuses） ----------
+  // 「使用しないステータス」への遷移を全画面で一貫して扱うための共有ヘルパー。
+  // 各画面で個別に getSettingJSON('hidden_statuses') をフィルタしていたのを統一する。
+  isStatusHidden(statusCode) {
+    return this.getSettingJSON('hidden_statuses', []).includes(statusCode);
+  },
+
+  // STATUS_PROGRESSION 上で fromStatus の「次以降」で最初に非表示でない状態を返す。
+  // 例: ARRIVED を非表示にしている場合、MOVING の次可視は IN_EXAM になる。
+  // 前進先が全て非表示/末尾なら null を返す。
+  getNextVisibleStatus(fromStatus) {
+    const order = CONFIG.STATUS_PROGRESSION || [];
+    const idx = order.indexOf(fromStatus);
+    if (idx === -1) return null;
+    for (let i = idx + 1; i < order.length; i++) {
+      if (!this.isStatusHidden(order[i])) return order[i];
+    }
+    return null;
+  },
 };

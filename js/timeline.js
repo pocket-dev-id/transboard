@@ -89,10 +89,9 @@ const TimelineContextMenu = {
 
   show(event, x, y) {
     const el = this._ensureEl();
-    const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
     const actionLabels = AppState.getSettingJSON('action_button_labels', {});
     const nexts = (this.NEXT[event.current_status] || [])
-      .filter(n => !hiddenStatuses.includes(n.to))
+      .filter(n => !AppState.isStatusHidden(n.to))
       .map(n => {
         const customLabel = actionLabels[`${event.current_status}:${n.to}`];
         const label = customLabel || this._resolveDefaultLabel(event.current_status, n.to);

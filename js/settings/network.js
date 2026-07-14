@@ -19,6 +19,7 @@ Object.assign(Settings, {
 
     const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const currentParentIp = localStorage.getItem('cfg_parent_ip') || '';
+    const isStandaloneMode = currentMode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true';
 
     // WebRTC音声通話の有効設定を取得
     const webrtcSetting = AppState.systemSettings?.find(s => s.id === 'enable_webrtc_call') || { value: 'true' };
@@ -218,26 +219,40 @@ Object.assign(Settings, {
 
           <!-- 親機用：ローカルIP表示 -->
           <div id="parent-config-section" style="border-top:1px solid #e2e8f0; padding-top:16px; display:${currentMode === 'parent' ? 'block' : 'none'};">
-            <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
-              <i class="fas fa-info-circle"></i> 子機から接続するための情報
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用情報</span>
-            </h4>
-            <p style="font-size:11px; color:#718096; margin:0 0 8px 0;">子機PCを設定する際は、この親機PCの以下のいずれかのIPアドレスを接続先に指定してください：</p>
-            <ul style="font-size:12px; line-height:1.6; margin:0; padding-left:20px; color:#4a5568;">
-              ${ipListHtml}
-            </ul>
-            <div style="margin-top:10px; font-size:11px; color:#718096;">
-              ※共有ポート番号はデフォルトで <code style="background:#edf2f7; padding:1px 4px; border-radius:3px; font-weight:700;">3005</code> を使用します。<br>
-              ※子機から接続できない場合は、この親機PCのWindowsファイアウォールでポート3005の受信規則が許可されているか確認してください。
+            <!-- 単独運用モードのトグル -->
+            <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px 14px; margin-bottom:16px;">
+              <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
+                <input type="checkbox" id="chk-standalone-mode" ${isStandaloneMode ? 'checked' : ''} style="margin-top:3px;">
+                <div>
+                  <strong style="color:#075985;"><i class="fas fa-desktop"></i> 単独運用モード（この1台だけで運用）</strong>
+                  <div style="font-size:11px; color:#0369a1; margin-top:2px;">子機を使わず、この親機1台で全工程を完結させる運用です。接続端末の表示・病棟間通話・検査室画面など、複数台前提の機能を隠してシンプルにします。あとから子機を追加する場合はOFFにしてください。</div>
+                </div>
+              </label>
             </div>
-            <div style="margin-top:14px; padding-top:14px; border-top:1px dashed #fca5a5;">
-              <label style="font-size:12px; font-weight:700; color:#991b1b;">APIトークン（患者情報保護用・子機に設定する値）</label>
-              <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-                <input type="text" id="cfg-api-token-display" readonly style="flex:1; max-width:420px; padding:8px; border:1px solid #fca5a5; border-radius:6px; font-family:monospace; font-size:12px; background:#fef2f2;" value="${AppState.systemSettings?.find(s => s.id === 'api_token')?.value || '(初回起動時に自動生成されます)'}">
-                <button class="btn btn-outline btn-sm" id="btn-copy-api-token" title="コピー"><i class="fas fa-copy"></i></button>
-                <button class="btn btn-outline btn-sm" id="btn-regen-api-token" title="再生成（全子機で再設定が必要になります）"><i class="fas fa-sync-alt"></i></button>
+
+            <!-- 子機オンボーディング情報（単独運用モードでは非表示） -->
+            <div id="parent-share-onboarding" style="display:${isStandaloneMode ? 'none' : 'block'};">
+              <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
+                <i class="fas fa-info-circle"></i> 子機から接続するための情報
+                <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用情報</span>
+              </h4>
+              <p style="font-size:11px; color:#718096; margin:0 0 8px 0;">子機PCを設定する際は、この親機PCの以下のいずれかのIPアドレスを接続先に指定してください：</p>
+              <ul style="font-size:12px; line-height:1.6; margin:0; padding-left:20px; color:#4a5568;">
+                ${ipListHtml}
+              </ul>
+              <div style="margin-top:10px; font-size:11px; color:#718096;">
+                ※共有ポート番号はデフォルトで <code style="background:#edf2f7; padding:1px 4px; border-radius:3px; font-weight:700;">3005</code> を使用します。<br>
+                ※子機から接続できない場合は、この親機PCのWindowsファイアウォールでポート3005の受信規則が許可されているか確認してください。
               </div>
-              <p style="font-size:11px; color:#991b1b; margin:6px 0 0 0;">このトークンを各子機PCの「共有・ネットワーク設定」画面に入力してください。再生成すると、全ての子機で入力し直しが必要になります。</p>
+              <div style="margin-top:14px; padding-top:14px; border-top:1px dashed #fca5a5;">
+                <label style="font-size:12px; font-weight:700; color:#991b1b;">APIトークン（患者情報保護用・子機に設定する値）</label>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                  <input type="text" id="cfg-api-token-display" readonly style="flex:1; max-width:420px; padding:8px; border:1px solid #fca5a5; border-radius:6px; font-family:monospace; font-size:12px; background:#fef2f2;" value="${AppState.systemSettings?.find(s => s.id === 'api_token')?.value || '(初回起動時に自動生成されます)'}">
+                  <button class="btn btn-outline btn-sm" id="btn-copy-api-token" title="コピー"><i class="fas fa-copy"></i></button>
+                  <button class="btn btn-outline btn-sm" id="btn-regen-api-token" title="再生成（全子機で再設定が必要になります）"><i class="fas fa-sync-alt"></i></button>
+                </div>
+                <p style="font-size:11px; color:#991b1b; margin:6px 0 0 0;">このトークンを各子機PCの「共有・ネットワーク設定」画面に入力してください。再生成すると、全ての子機で入力し直しが必要になります。</p>
+              </div>
             </div>
           </div>
 
@@ -528,7 +543,7 @@ Object.assign(Settings, {
       });
     });
 
-    if (currentMode === 'parent') this._renderDeviceList(body);
+    if (currentMode === 'parent' && !isStandaloneMode) this._renderDeviceList(body);
 
     // 役割ラジオの変更イベント
     body.querySelectorAll('input[name="network-mode"]').forEach(radio => {
@@ -540,6 +555,28 @@ Object.assign(Settings, {
         if (distPanel) distPanel.style.display = isClient ? 'none' : 'block';
       });
     });
+
+    // 単独運用モードのトグル
+    const standaloneChk = document.getElementById('chk-standalone-mode');
+    if (standaloneChk) {
+      standaloneChk.onchange = () => {
+        const on = standaloneChk.checked;
+        localStorage.setItem('cfg_standalone_mode', on ? 'true' : 'false');
+        // 子機オンボーディング情報の表示切替
+        const onboarding = document.getElementById('parent-share-onboarding');
+        if (onboarding) onboarding.style.display = on ? 'none' : 'block';
+        // 接続端末チップ・検査室タブ・通話ボタンの表示、ポーリングの開始/停止を即時反映
+        App._applyStandaloneMode();
+        App._startDevicePresenceMonitor();
+        if (on) {
+          if (this._deviceListTimer) { clearInterval(this._deviceListTimer); this._deviceListTimer = null; }
+          document.getElementById('connected-devices-panel')?.remove();
+        } else {
+          this._renderDeviceList(body);
+        }
+        UI.toast(on ? '単独運用モードをONにしました' : '単独運用モードをOFFにしました', 'info');
+      };
+    }
 
     // 端末動作設定 — スリープ抑制
     const preventSleepChk = body.querySelector('#chk-prevent-sleep');

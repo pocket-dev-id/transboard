@@ -183,16 +183,29 @@ const ExamRoom = {
         return;
       }
 
+      // 遷移先が非表示設定(使わない運用)なら、次に使う状態へ読み替える
+      let nextStatus = action.nextStatus;
+      if (AppState.isStatusHidden(nextStatus)) {
+        const redirected = AppState.getNextVisibleStatus(nextStatus);
+        if (!redirected) {
+          UI.toast('遷移先がすべて非表示設定のため、ICカードでは更新できません', 'info');
+          UI.playScanSound(false);
+          return;
+        }
+        nextStatus = redirected;
+      }
+
       const bed = AppState.getBedById(matchEvent.bed_id);
       const bedName = bed ? UI.formatBedName(bed) : '患者';
       const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
-      if (!confirm(`${bedName}（現在: ${currentLabel}）を${action.message}`)) {
+      const nextLabel = CONFIG.STATUS_LABEL[nextStatus] || nextStatus;
+      if (!confirm(`${bedName}（現在: ${currentLabel}）を「${nextLabel}」にしますか？`)) {
         UI.playScanSound(false);
         return;
       }
 
-      await API.updateEventStatus(matchEvent.id, action.nextStatus);
-      const label = CONFIG.STATUS_LABEL[action.nextStatus];
+      await API.updateEventStatus(matchEvent.id, nextStatus);
+      const label = CONFIG.STATUS_LABEL[nextStatus];
       UI.toast(`[ICスキャン] ${bedName} → ${label}`, 'success');
       UI.playScanSound(true);
       this._pendingFlashEventId = matchEvent.id;
@@ -449,6 +462,40 @@ const ExamRoom = {
     }
   },
 
+  // ステータス→検査室ボタンのラベル/クラスを EXAM_ROOM_ACTIONS 全体から逆引きする
+  _examMeta(status) {
+    for (const acts of Object.values(CONFIG.EXAM_ROOM_ACTIONS)) {
+      const hit = acts.find(a => a.toStatus === status);
+      if (hit) return { label: hit.label, cls: hit.cls };
+    }
+    return { label: CONFIG.STATUS_LABEL[status] || status, cls: 'btn-primary' };
+  },
+
+  // 遷移ボタン非表示(hidden_statuses)を尊重した検査室アクション一覧を返す。
+  // 遷移先が非表示なら「次に使う状態」へ読み替える（例: ARRIVED非表示なら 到着→検査開始）。
+  _visibleExamActions(currentStatus) {
+    const raw = CONFIG.EXAM_ROOM_ACTIONS[currentStatus] || [];
+    const seen = new Set();
+    const result = [];
+    for (const a of raw) {
+      let toStatus = a.toStatus;
+      let label = a.label;
+      let cls = a.cls;
+      if (AppState.isStatusHidden(toStatus)) {
+        const next = AppState.getNextVisibleStatus(toStatus);
+        if (!next) continue; // 前進先が全て非表示なら出さない
+        toStatus = next;
+        const meta = this._examMeta(next);
+        label = meta.label;
+        cls = meta.cls;
+      }
+      if (seen.has(toStatus)) continue;
+      seen.add(toStatus);
+      result.push({ toStatus, label, cls });
+    }
+    return result;
+  },
+
   _renderQueueCard(event) {
     const bed = AppState.getBedById(event.bed_id);
     const examType = AppState.getExamTypeById(event.exam_type_id);
@@ -468,7 +515,7 @@ const ExamRoom = {
       ? (showNames ? (bed.patient_id || '') : '＊＊＊＊') 
       : '';
 
-    const actions = CONFIG.EXAM_ROOM_ACTIONS[event.current_status] || [];
+    const actions = this._visibleExamActions(event.current_status);
     const actionBtns = actions.map(a =>
       `<button class="btn ${a.cls} btn-sm" data-exam-action="${a.toStatus}" data-event-id="${event.id}">
         ${a.label}

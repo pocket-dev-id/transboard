@@ -316,6 +316,25 @@ const ParentServerMonitor = {
 
 const App = {
 
+  // 親機単独運用モード（この1台だけで完結する運用）。子機との共有はしない前提で
+  // 接続端末表示・病棟間通話・検査室タブなど多端末前提のUIを隠す。share_mode の
+  // 接続ルーティングには影響しない端末ローカルの表示フラグ。
+  isStandalone() {
+    const mode = localStorage.getItem('cfg_share_mode') || 'parent';
+    return mode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true';
+  },
+
+  // bodyクラスで単独運用UI(検査室タブ・通話ボタン・接続端末チップの非表示)を一括制御する。
+  // 検査室ページを開いたまま単独ONにした場合は病棟ダッシュボードへ退避する。
+  _applyStandaloneMode() {
+    const standalone = this.isStandalone();
+    document.body.classList.toggle('standalone-mode', standalone);
+    if (standalone) {
+      const activePage = document.querySelector('.tab-btn.active')?.dataset.page;
+      if (activePage === 'exam-room') UI.switchPage('ward-dashboard');
+    }
+  },
+
   async init() {
     console.log('[App] 初期化開始...');
  
@@ -931,6 +950,9 @@ const App = {
       ).catch(() => {});
     }
 
+    // 単独運用モードのUI反映（検査室タブ・通話ボタン・接続端末チップの非表示）
+    this._applyStandaloneMode();
+
     // アプリ更新チェック（親機は自身の配信フォルダ、子機は親機を参照）
     this._startUpdateCheck();
     this._startDevicePresenceMonitor();
@@ -1159,6 +1181,8 @@ const App = {
 
   _startDevicePresenceMonitor() {
     if (this._devicePresenceTimer) clearInterval(this._devicePresenceTimer);
+    // 単独運用モードでは接続端末チップを表示しないため、5秒ごとのポーリング自体を止める
+    if (this.isStandalone()) return;
     const refresh = () => this._refreshDevicePresence().catch(() => {});
     setTimeout(refresh, this._jitterDelay(1200, 0.5));
     this._devicePresenceTimer = setInterval(refresh, 5000);
