@@ -312,10 +312,22 @@ select, input { font-family: inherit; }
 .legend-item.pickup-required { background: var(--clr-pickup); border-color: var(--clr-pickup-border); color: var(--clr-pickup-text); }
 .legend-item.returned { background: var(--clr-returned); border-color: var(--clr-returned-border); color: var(--clr-returned-text); }
 
+/* ズーム・パン操作: ビューポートをスクロール可能な固定高さに収め、内側のグリッドを
+   transform:scaleで拡大縮小する。ブラウザはtransformされた子要素の視覚的な大きさに
+   合わせてスクロール範囲を広げるため、追加のドラッグパン実装なしに標準スクロールで
+   パンできる */
+#bed-map-viewport {
+  overflow: auto;
+  max-height: 65vh;
+  border-radius: var(--radius);
+}
 #bed-map-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 8px;
+  transform: scale(var(--bedmap-zoom, 1));
+  transform-origin: top left;
+  transition: transform .15s ease;
 }
 
 /* 病床カード */
@@ -360,6 +372,24 @@ select, input { font-family: inherit; }
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+/* 迎え目安までの残り時間バー（出棟登録〜迎え目安までの経過割合を可視化） */
+.bed-timer-progress {
+  width: 100%;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+.bed-timer-progress-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 2px;
+  transition: width 1s linear;
+}
+.bed-timer-progress-fill.soon { background: #d97706; }
+.bed-timer-progress-fill.urgent { background: #ea580c; }
+.bed-timer-progress-fill.overdue { background: #dc2626; }
 .bed-staff-badge {
   font-size: calc(var(--bed-card-info-sz) - 1px);
   color: var(--clr-text-muted);
@@ -456,9 +486,9 @@ select, input { font-family: inherit; }
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.priority-time.overdue { color: #dc2626; }
-.priority-time.urgent { color: #ea580c; }
-.priority-time.soon { color: #d97706; }
+.priority-time.overdue, .bed-timer.overdue { color: #dc2626; }
+.priority-time.urgent, .bed-timer.urgent { color: #ea580c; }
+.priority-time.soon, .bed-timer.soon { color: #d97706; }
 
 /* ---------- ミニタイムライン ---------- */
 #mini-timeline-area {
@@ -1878,6 +1908,18 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
   border-color: #94a3b8;
   border-style: solid;
 }
+/* 複数選択(Ctrl+クリック)されたセル */
+.map-editor-cell.is-selected {
+  box-shadow: 0 0 0 3px #f59e0b inset;
+}
+.map-editor-cell.is-selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(245, 158, 11, 0.18);
+  border-radius: 4px;
+  pointer-events: none;
+}
 .map-cell-bed {
   display: flex;
   flex-direction: column;
@@ -1910,6 +1952,29 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
   gap: 6px;
 }
 #bed-map-grid.bed-map-grid-simple {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 8px;
+}
+/* 全病棟横断表示: 病棟ごとにセクションを積み重ねる */
+#bed-map-grid.bed-map-grid-allwards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bedmap-ward-section-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--clr-text);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--clr-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bedmap-ward-section-title i { color: var(--clr-primary); }
+.bedmap-ward-section-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
   gap: 8px;

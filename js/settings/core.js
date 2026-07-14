@@ -77,6 +77,7 @@ const Settings = {
     cells: {},   // "col,row" => { bedId } | { empty: true } | null
     dragBedId: null,
     wardId: null,
+    selected: new Set(), // 複数選択中のセル("col,row"キー)
   },
 
   _csvDataRows: [],

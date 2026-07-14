@@ -431,6 +431,8 @@ Object.assign(Settings, {
     // 履歴スタックの初期化
     this._historyStack = [];
     this._redoStack = [];
+    // 複数選択状態の初期化 ("col,row" キーのSet)
+    this._grid.selected = new Set();
 
     // グリッドサイズ調整
     const maxCol = Math.max(9, ...beds.map(b => b.map_col ?? 0));
@@ -446,6 +448,9 @@ Object.assign(Settings, {
             <button class="btn btn-outline btn-sm" id="map-undo" title="元に戻す (Ctrl+Z)" disabled><i class="fas fa-undo"></i> 元に戻す</button>
             <button class="btn btn-outline btn-sm" id="map-redo" title="やり直す (Ctrl+Y)" disabled><i class="fas fa-redo"></i> やり直す</button>
             <span style="border-left: 1px solid #cbd5e0; height: 16px; margin: 0 4px;"></span>
+            <button class="btn btn-outline btn-sm" id="map-clear-selection" title="選択を解除" disabled><i class="fas fa-times"></i> 選択解除</button>
+            <button class="btn btn-danger btn-sm" id="map-bulk-clear" title="選択したセルをまとめて消去" disabled><i class="fas fa-eraser"></i> 選択を消去 (<span id="map-selection-count">0</span>)</button>
+            <span style="border-left: 1px solid #cbd5e0; height: 16px; margin: 0 4px;"></span>
             <button class="btn btn-outline btn-sm" id="map-size-down-col" title="列を減らす"><i class="fas fa-minus"></i> 列</button>
             <button class="btn btn-outline btn-sm" id="map-size-up-col" title="列を増やす"><i class="fas fa-plus"></i> 列</button>
             <button class="btn btn-outline btn-sm" id="map-size-down-row" title="行を減らす"><i class="fas fa-minus"></i> 行</button>
@@ -459,6 +464,7 @@ Object.assign(Settings, {
           <i class="fas fa-info-circle"></i>
           左の病床リストから病床をドラッグしてグリッドにドロップします。配置済みの病床はグリッド上でドラッグ移動できます。
           右クリック（または長押し）で削除。「空マス」は廊下や壁として使えます。
+          Ctrl+クリックで複数セルを選択し、まとめて消去できます。同じ病室の病床は枠線で自動的にグルーピング表示されます。
         </p>
         <div class="map-editor-layout">
           <!-- 未配置の病床リスト -->
@@ -523,6 +529,10 @@ Object.assign(Settings, {
       } else if (e.ctrlKey && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         this._redo();
+      } else if (e.key === 'Escape') {
+        this._clearSelection();
+      } else if (e.key === 'Delete' && this._grid.selected.size > 0) {
+        this._bulkClearSelected();
       }
     };
     window.addEventListener('keydown', this._mapKeydownHandler);
@@ -532,6 +542,8 @@ Object.assign(Settings, {
 
     document.getElementById('map-undo').onclick = () => this._undo();
     document.getElementById('map-redo').onclick = () => this._redo();
+    document.getElementById('map-clear-selection').onclick = () => this._clearSelection();
+    document.getElementById('map-bulk-clear').onclick = () => this._bulkClearSelected();
 
     document.getElementById('map-size-up-col').onclick   = () => { this._saveStateToHistory(); this._grid.cols = Math.min(20, this._grid.cols + 1); this._drawMapEditor(); };
     document.getElementById('map-size-down-col').onclick = () => { this._saveStateToHistory(); this._grid.cols = Math.max(4, this._grid.cols - 1);  this._drawMapEditor(); };
@@ -633,6 +645,23 @@ Object.assign(Settings, {
         e.preventDefault();
         this._clearCell(c, r);
       });
+
+      // Ctrl(⌘)+クリックで複数選択のトグル。通常クリックは選択を解除する
+      cell.addEventListener('click', e => {
+        const key = `${c},${r}`;
+        if (e.ctrlKey || e.metaKey) {
+          if (this._grid.selected.has(key)) {
+            this._grid.selected.delete(key);
+            cell.classList.remove('is-selected');
+          } else {
+            this._grid.selected.add(key);
+            cell.classList.add('is-selected');
+          }
+          this._updateSelectionButtons();
+        } else if (this._grid.selected.size > 0) {
+          this._clearSelection();
+        }
+      });
     });
 
     // 配置済み病床のドラッグ（グリッド内移動）
@@ -650,29 +679,56 @@ Object.assign(Settings, {
     });
   },
 
+  // 病室グルーピング枠の色パレット(病室コードのハッシュ値で決定的に選ぶ)
+  _ROOM_PALETTE: ['#3b82f6', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#0d9488'],
+  _roomKeyOf(bed) {
+    return bed ? String(bed.room_code || bed.room_number || '').trim() : '';
+  },
+  _roomColor(roomKey) {
+    let hash = 0;
+    for (let i = 0; i < roomKey.length; i++) hash = (hash * 31 + roomKey.charCodeAt(i)) >>> 0;
+    return this._ROOM_PALETTE[hash % this._ROOM_PALETTE.length];
+  },
+
   _cellHTML(c, r, cell) {
     let inner = '';
     let extraCls = '';
+    let styleAttr = '';
+    const key = `${c},${r}`;
+    if (this._grid.selected?.has(key)) extraCls += ' is-selected';
 
     if (cell?.bedId) {
       const bed = AppState.getBedById(cell.bedId);
       inner = `
         <div class="map-cell-bed" draggable="true" data-col="${c}" data-row="${r}"
-             title="右クリックで削除">
+             title="右クリックで削除・Ctrl+クリックで複数選択">
           <i class="fas fa-bed"></i>
           <span>${bed ? bed.bed_number : '?'}</span>
           ${bed?.room_number ? `<span class="map-cell-room">${bed.room_number}</span>` : ''}
         </div>`;
-      extraCls = 'has-bed';
+      extraCls += ' has-bed';
+
+      // 同じ病室(room_code/room_number)の隣接病床とは境界線を消して、視覚的に1つの枠として繋げる
+      const roomKey = this._roomKeyOf(bed);
+      if (roomKey) {
+        const color = this._roomColor(roomKey);
+        const isSameRoomNeighbor = (dc, dr) => {
+          const nCell = this._grid.cells[`${c + dc},${r + dr}`];
+          if (!nCell?.bedId) return false;
+          return this._roomKeyOf(AppState.getBedById(nCell.bedId)) === roomKey;
+        };
+        const side = (on) => on ? '3px solid transparent' : `3px solid ${color}`;
+        styleAttr = ` style="border-top:${side(isSameRoomNeighbor(0, -1))};border-right:${side(isSameRoomNeighbor(1, 0))};border-bottom:${side(isSameRoomNeighbor(0, 1))};border-left:${side(isSameRoomNeighbor(-1, 0))};background:${color}22;"`;
+      }
     } else if (cell?.special === 'corridor') {
       inner = `<div class="map-cell-special corridor"><i class="fas fa-minus"></i><span>廊下</span></div>`;
-      extraCls = 'is-corridor';
+      extraCls += ' is-corridor';
     } else if (cell?.special === 'wall') {
       inner = `<div class="map-cell-special wall"><i class="fas fa-square"></i><span>壁</span></div>`;
-      extraCls = 'is-wall';
+      extraCls += ' is-wall';
     }
 
-    return `<div class="map-editor-cell ${extraCls}" data-col="${c}" data-row="${r}">${inner}</div>`;
+    return `<div class="map-editor-cell${extraCls}" data-col="${c}" data-row="${r}"${styleAttr}>${inner}</div>`;
   },
 
   _onDrop(col, row) {
@@ -728,6 +784,43 @@ Object.assign(Settings, {
     delete this._grid.cells[key];
     this._drawMapEditor();
     this._drawPalette();
+  },
+
+  // ──────────────────────────────────
+  //  複数選択・一括操作
+  // ──────────────────────────────────
+  _clearSelection() {
+    if (!this._grid.selected || this._grid.selected.size === 0) return;
+    this._grid.selected.clear();
+    document.querySelectorAll('.map-editor-cell.is-selected').forEach(el => el.classList.remove('is-selected'));
+    this._updateSelectionButtons();
+  },
+
+  _bulkClearSelected() {
+    if (!this._grid.selected || this._grid.selected.size === 0) return;
+    // 複数セルの消去を1回の履歴スナップショットにまとめ、Undoで一度に戻せるようにする
+    this._saveStateToHistory();
+    this._grid.selected.forEach(key => {
+      const cell = this._grid.cells[key];
+      if (cell?.bedId) {
+        const bed = AppState.getBedById(cell.bedId);
+        if (bed) { bed.map_col = null; bed.map_row = null; }
+      }
+      delete this._grid.cells[key];
+    });
+    this._grid.selected.clear();
+    this._drawMapEditor();
+    this._drawPalette();
+  },
+
+  _updateSelectionButtons() {
+    const count = this._grid.selected ? this._grid.selected.size : 0;
+    const clearBtn = document.getElementById('map-clear-selection');
+    const bulkBtn = document.getElementById('map-bulk-clear');
+    const countEl = document.getElementById('map-selection-count');
+    if (clearBtn) clearBtn.disabled = count === 0;
+    if (bulkBtn) bulkBtn.disabled = count === 0;
+    if (countEl) countEl.textContent = String(count);
   },
 
   // ──────────────────────────────────

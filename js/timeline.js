@@ -130,7 +130,8 @@ const TimelineContextMenu = {
         try {
           await API.updateEventStatus(event.id, newStatus);
           await App.refreshData();
-          Timeline.render();
+          // Timeline画面だけでなく病床マップ等からも呼ばれるため、ダッシュボード全体を再描画する
+          WardDashboard.render();
           UI.toast(`${bedName}: ${CONFIG.STATUS_LABEL?.[newStatus] || newStatus} に更新しました`, 'success');
         } catch (err) {
           UI.toast('ステータスの変更に失敗しました', 'danger');

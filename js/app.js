@@ -466,6 +466,9 @@ const App = {
       });
     }
 
+    // 病床マップのズーム・全病棟表示コントロール
+    BedMap.initControls();
+
     // 備考表示モードの切り替えイベント
     const remarksSelect = document.getElementById('sel-remarks-mode');
     if (remarksSelect) {
@@ -1291,10 +1294,14 @@ const App = {
       // MASTER_POLL_INTERVAL(既定30秒)間隔に間引いて取得する
       const dueForMasterRefresh = (Date.now() - this._lastMasterRefresh) >= CONFIG.MASTER_POLL_INTERVAL;
 
-      const [eventStatus, systemSettings, beds] = await Promise.all([
+      // 病床マップの全病棟表示モードがONの間だけ、病棟横断のアクティブイベントも取得する
+      const needAllWards = BedMap._allWardsMode;
+
+      const [eventStatus, systemSettings, beds, allWardsStatus] = await Promise.all([
         API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data).catch(() => []),
-        dueForMasterRefresh ? API.getAllBeds().catch(() => null) : Promise.resolve(null)
+        dueForMasterRefresh ? API.getAllBeds().catch(() => null) : Promise.resolve(null),
+        needAllWards ? API.getWardStatusEvents('', 0).catch(() => null) : Promise.resolve(null)
       ]);
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
@@ -1304,6 +1311,7 @@ const App = {
         AppState.beds = beds;
         this._lastMasterRefresh = Date.now();
       }
+      if (allWardsStatus) AppState.allWardsActiveEvents = allWardsStatus.activeEvents || [];
       AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
 
