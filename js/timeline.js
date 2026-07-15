@@ -64,10 +64,22 @@ const TimelineContextMenu = {
     ],
   },
 
+  // 遷移先ステータスごとの表示アイコン（NEXTマップと同じ対応。読み替え先の解決に使う）
+  STATUS_ICONS: {
+    MOVING: 'fa-walking',
+    ARRIVED: 'fa-hospital',
+    IN_EXAM: 'fa-flask',
+    NEARLY_DONE: 'fa-clock',
+    PICKUP_REQUIRED: 'fa-bell',
+    RETURNED: 'fa-check-circle',
+  },
+
   // CONFIG.ACTION_BUTTONS（実行時にカスタム設定で上書きされる）から遷移先に対応するデフォルトラベルを解決する
+  // ACTION_BUTTONSに無い組合せ（非表示ステータスの読み替えで生じる。例: DEPART_REGISTERED→ARRIVED）は
+  // 英字コードをそのまま出さずSTATUS_LABELへフォールバックする
   _resolveDefaultLabel(fromStatus, toStatus) {
     const btn = CONFIG.ACTION_BUTTONS[fromStatus]?.find(b => b.toStatus === toStatus);
-    return btn ? btn.label : toStatus;
+    return btn ? btn.label : (CONFIG.STATUS_LABEL?.[toStatus] || toStatus);
   },
 
   _ensureEl() {
@@ -90,13 +102,26 @@ const TimelineContextMenu = {
   show(event, x, y) {
     const el = this._ensureEl();
     const actionLabels = AppState.getSettingJSON('action_button_labels', {});
-    const nexts = (this.NEXT[event.current_status] || [])
-      .filter(n => !AppState.isStatusHidden(n.to))
-      .map(n => {
-        const customLabel = actionLabels[`${event.current_status}:${n.to}`];
-        const label = customLabel || this._resolveDefaultLabel(event.current_status, n.to);
-        return { ...n, label };
-      });
+    // 遷移先が非表示(使わない運用)なら「次に使う状態」へ読み替える。
+    // フィルタで消すだけだと MOVING非表示時のDEPART_REGISTERED が「キャンセル」しか
+    // 選べない行き止まりになるため（検査室画面の _visibleExamActions と同じ方針）
+    const seen = new Set();
+    const nexts = [];
+    for (const n of (this.NEXT[event.current_status] || [])) {
+      let to = n.to;
+      let icon = n.icon;
+      if (AppState.isStatusHidden(to)) {
+        const redirected = AppState.getNextVisibleStatus(to);
+        if (!redirected) continue;
+        to = redirected;
+        icon = this.STATUS_ICONS[to] || n.icon;
+      }
+      if (seen.has(to)) continue;
+      seen.add(to);
+      const customLabel = actionLabels[`${event.current_status}:${to}`];
+      const label = customLabel || this._resolveDefaultLabel(event.current_status, to);
+      nexts.push({ to, icon, danger: n.danger, label });
+    }
     const bed = AppState.getBedById(event.bed_id);
     const bedName = bed ? `${bed.bed_number}号床` : '?';
     const statusLabel = CONFIG.STATUS_LABEL?.[event.current_status] || event.current_status;
@@ -236,12 +261,24 @@ const Timeline = {
       { from:'pickup_ready_at',to:'returned_at',     cls:'seg-pickup',      color:'#dc2626', label:'迎え要' },
       { from:'returned_at',    to:'_returned_end',   cls:'seg-returned',    color:'#16a34a', label:'帰棟' },
     ];
+    // 遷移ボタン非表示(hidden_statuses)でステータスをスキップするとタイムスタンプが欠けるため、
+    // 区間終端がnullの場合は「それより後で最初に存在するタイムスタンプ」へ、それも無ければ
+    // 進行中イベントに限り now へフォールバックする（進行中区間が空白にならないようにする）
+    const TS_ORDER = ['departed_at', 'arrived_at', 'exam_started_at', 'nearly_done_at', 'pickup_ready_at', 'returned_at'];
+    const isOngoing = CONFIG.DEPART_STATUSES.includes(event.current_status);
+    const resolveEnd = (toField) => {
+      if (event[toField]) return event[toField];
+      for (let i = TS_ORDER.indexOf(toField) + 1; i < TS_ORDER.length; i++) {
+        if (event[TS_ORDER[i]]) return event[TS_ORDER[i]];
+      }
+      return isOngoing ? Date.now() : null;
+    };
     const now = Date.now();
     const segments = [];
 
     for (const p of pairs) {
       const fromMs = event[p.from]; if (!fromMs) continue;
-      let toMs = p.to === '_returned_end' ? fromMs + 30*60*1000 : (p.to ? event[p.to] : now);
+      const toMs = p.to === '_returned_end' ? fromMs + 30*60*1000 : resolveEnd(p.to);
       if (!toMs) continue;
       const sStart = Math.max(fromMs, winStart), sEnd = Math.min(toMs, winEnd);
       if (sStart >= winEnd || sEnd <= winStart) continue;

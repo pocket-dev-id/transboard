@@ -769,7 +769,9 @@ const BedModal = {
       await API.createEvent(eventData);
       await API.addStatusLog(eventId, null, 'DEPART_REGISTERED', 'nurse');
 
-      if (confirm('ステータスを移動中にしますか？')) {
+      // 移動中(MOVING)が非表示設定(使わない運用)の場合はプロンプト自体をスキップし、
+      // 出棟登録のままにする（登録直後に到着や検査開始へ自動前進させるのは実態と合わないため）
+      if (!AppState.isStatusHidden('MOVING') && confirm('ステータスを移動中にしますか？')) {
         await API.updateEventStatus(eventId, 'MOVING');
         UI.toast(`${bed.bed_number}号床を移動中にしました`, 'success');
       } else {
