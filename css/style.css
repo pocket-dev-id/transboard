@@ -976,7 +976,8 @@ select, input { font-family: inherit; }
 .modal-body { padding: 20px; }
 
 /* ---------- 確認ダイアログ（デザイン#5） ---------- */
-.confirm-modal-overlay { z-index: 400; }
+/* 確認ダイアログは常に一時的な最前面要素。phone-dialog(500)より上、パスコード(9999)より下 */
+.confirm-modal-overlay { z-index: 600; }
 .confirm-modal { width: 400px; }
 .confirm-modal-body { display: flex; align-items: flex-start; gap: 12px; }
 .confirm-modal-icon { font-size: 22px; color: var(--clr-warning); flex-shrink: 0; margin-top: 2px; }

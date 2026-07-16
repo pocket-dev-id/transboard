@@ -156,12 +156,24 @@ const UI = {
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
+      // 多重表示対応: 各confirmはスタックに積み、キー入力は最前面（＝最後に開いた）confirmだけが
+      // 処理する。ガードなしだと1回のEnter/Escapeが開いている全confirmのdocumentリスナーに届き、
+      // 見えていない下のダイアログまで同時に解決してしまう
+      this._confirmStack = this._confirmStack || [];
+      this._confirmStack.push(overlay);
+
       const cleanup = (result) => {
         document.removeEventListener('keydown', onKeydown);
+        const idx = this._confirmStack.indexOf(overlay);
+        if (idx !== -1) this._confirmStack.splice(idx, 1);
         overlay.remove();
         resolve(result);
       };
       const onKeydown = (e) => {
+        // 自分が最前面のconfirmでなければ無反応（閉じると次のconfirmが最前面に昇格する）
+        if (this._confirmStack[this._confirmStack.length - 1] !== overlay) return;
+        // 日本語IMEの変換確定Enterでの誤発火を防ぐ
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Escape') cleanup(false);
         if (e.key === 'Enter') cleanup(true);
       };
