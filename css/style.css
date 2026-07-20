@@ -2686,6 +2686,13 @@ body.standalone-mode #device-presence-display {
   display: none !important;
 }
 
+/* 検査時間実績テーブル */
+.exam-stats-table { font-size: 12px; }
+.exam-stats-table th { white-space: nowrap; }
+.exam-stats-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.exam-stats-over { color: #dc2626; font-weight: 800; }   /* 実績が標準を超過 */
+.exam-stats-under { color: #16a34a; font-weight: 800; }  /* 実績が標準より短い */
+
 /* スタッフ稼働状況チップ(付き添い中/病棟待機/空き) */
 #staff-status-panel {
   display: flex;
