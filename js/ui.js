@@ -426,6 +426,17 @@ const UI = {
       .replace(/'/g, '&#039;');
   },
 
+  // CSV数式インジェクション対策: =+-@で始まる値（マスタ名・病床番号等）は
+  // Excelで数式として実行され得るため、シングルクォートを前置して無害化する。
+  // 純粋な数値（例: -5, 12.5）は分析用途を損なわないためそのまま通す
+  sanitizeCsvValue(val) {
+    const s = String(val ?? '');
+    if (/^[=+\-@]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) {
+      return `'${s}`;
+    }
+    return s;
+  },
+
   formatBedName(bed) {
     if (!bed) return '?';
     let displayNo = bed.bed_number;

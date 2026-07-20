@@ -692,7 +692,9 @@ const CallPanel = {
 
     this.targetId = targetId;
     this.isCalling = true;
-    
+    // 破棄された過去の着信でバッファされたICE候補が新しい通話に混入しないようクリア
+    this._pendingCandidates = [];
+
     this.showCallingDialog(targetId);
     this.playRingBackTone();
 

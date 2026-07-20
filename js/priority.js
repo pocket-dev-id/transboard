@@ -105,7 +105,7 @@ const Priority = {
 
     let icHtml = '';
     if (event.patient_ic_tag_id) {
-      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd;" title="ICカードID: ${event.patient_ic_tag_id}"><i class="fas fa-id-card"></i> IC</span>`;
+      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
 
     const patientName = bed ? UI.getPatientName(bed.patient_name) : null;
@@ -113,7 +113,7 @@ const Priority = {
       ? `<span class="priority-patient-name">${UI.escapeHTML(patientName)}</span>`
       : '';
 
-    const examInfo = `${examType ? examType.name : '--'}${examRoom ? ' / ' + examRoom.name : ''}`;
+    const examInfo = `${examType ? UI.escapeHTML(examType.name) : '--'}${examRoom ? ' / ' + UI.escapeHTML(examRoom.name) : ''}`;
     const departInfo = event.departed_at ? UI.formatTime(event.departed_at) + '出棟' : '';
 
     // 付き添いスタッフは実際に移動中(MOVING/PICKUP_REQUIRED)か、検査中等で病棟待機中かで表示を変える

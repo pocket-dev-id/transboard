@@ -1895,10 +1895,11 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
   position: relative;
   cursor: default;
 }
+/* !important: 病室グルーピングのインライン枠線(style属性)に負けないようにする */
 .map-editor-cell.drag-over {
-  background: #eff6ff;
-  border-color: #3b82f6;
-  border-style: solid;
+  background: #eff6ff !important;
+  border-color: #3b82f6 !important;
+  border-style: solid !important;
 }
 .map-editor-cell.has-bed {
   border-style: solid;

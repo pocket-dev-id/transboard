@@ -545,10 +545,12 @@ Object.assign(Settings, {
     document.getElementById('map-clear-selection').onclick = () => this._clearSelection();
     document.getElementById('map-bulk-clear').onclick = () => this._bulkClearSelected();
 
-    document.getElementById('map-size-up-col').onclick   = () => { this._saveStateToHistory(); this._grid.cols = Math.min(20, this._grid.cols + 1); this._drawMapEditor(); };
-    document.getElementById('map-size-down-col').onclick = () => { this._saveStateToHistory(); this._grid.cols = Math.max(4, this._grid.cols - 1);  this._drawMapEditor(); };
-    document.getElementById('map-size-up-row').onclick   = () => { this._saveStateToHistory(); this._grid.rows = Math.min(16, this._grid.rows + 1); this._drawMapEditor(); };
-    document.getElementById('map-size-down-row').onclick = () => { this._saveStateToHistory(); this._grid.rows = Math.max(2, this._grid.rows - 1);  this._drawMapEditor(); };
+    // 行列リサイズ時は選択を解除する（縮小で範囲外になったキーが選択Setに残ると、
+    // 「選択を消去」が見えないセルの病床を未配置化してしまう）
+    document.getElementById('map-size-up-col').onclick   = () => { this._saveStateToHistory(); this._clearSelection(); this._grid.cols = Math.min(20, this._grid.cols + 1); this._drawMapEditor(); };
+    document.getElementById('map-size-down-col').onclick = () => { this._saveStateToHistory(); this._clearSelection(); this._grid.cols = Math.max(4, this._grid.cols - 1);  this._drawMapEditor(); };
+    document.getElementById('map-size-up-row').onclick   = () => { this._saveStateToHistory(); this._clearSelection(); this._grid.rows = Math.min(16, this._grid.rows + 1); this._drawMapEditor(); };
+    document.getElementById('map-size-down-row').onclick = () => { this._saveStateToHistory(); this._clearSelection(); this._grid.rows = Math.max(2, this._grid.rows - 1);  this._drawMapEditor(); };
     document.getElementById('map-save-all').onclick = () => this._saveMapLayout();
   },
 
@@ -876,6 +878,8 @@ Object.assign(Settings, {
     this._grid.cells = state.cells;
     this._grid.cols = state.cols;
     this._grid.rows = state.rows;
+    // Undo/Redoで盤面が変わるため選択状態はリセットする（範囲外キーの残留防止）
+    this._clearSelection();
     
     // AppState.bedsの同期
     const wardId = AppState.currentWardId;
@@ -1517,7 +1521,7 @@ Object.assign(Settings, {
   _generateCSV(headers, rows) {
     const escapeField = (val) => {
       if (val === null || val === undefined) return '';
-      let str = String(val);
+      let str = UI.sanitizeCsvValue(val);
       if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
         return '"' + str.replace(/"/g, '""') + '"';
       }
@@ -1601,6 +1605,8 @@ Object.assign(Settings, {
                 headers.forEach(h => {
                   const idx = csvHeaders.indexOf(h);
                   let val = row[idx] !== undefined ? row[idx].trim() : '';
+                  // エクスポート時の数式インジェクション対策(先頭'の前置)を取込時に復元する
+                  val = val.replace(/^'(?=[=+\-@])/, '');
                   
                   // Convert fields to expected types
                   if (h === 'map_col' || h === 'map_row' || h === 'sort_order' || h === 'standard_duration_min') {

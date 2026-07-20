@@ -936,6 +936,10 @@ Object.assign(Settings, {
         if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
           App.applySystemVisualSettings();
         }
+        // 稼働モード変更に伴う単独運用UIの再判定（parent(単独ON)→client切替時のbodyクラス残留を防ぐ）
+        if (typeof App !== 'undefined' && App._applyStandaloneMode) {
+          App._applyStandaloneMode();
+        }
 
         UI.toast('設定を保存しました。画面表示設定は即時適用され、ネットワーク共有設定は再起動後に有効になります。', 'success');
         

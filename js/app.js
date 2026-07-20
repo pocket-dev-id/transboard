@@ -1592,6 +1592,9 @@ const App = {
               statusLabel = '<span style="color:#16a34a; font-weight:800;">(成功)</span>';
             } else if (lastLog.status === 'warning') {
               statusLabel = '<span style="color:#d97706; font-weight:800;">(一部スキップ)</span>';
+            } else if (lastLog.status === 'archive_error') {
+              // データ取込自体は成功し、取込済みCSVのarchiveフォルダへの移動だけ失敗したケース
+              statusLabel = '<span style="color:#d97706; font-weight:800;">(取込成功・移動失敗)</span>';
             } else {
               statusLabel = '<span style="color:#dc2626; font-weight:800;">(失敗)</span>';
             }

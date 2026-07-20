@@ -8,10 +8,19 @@ const BedModal = {
   _pendingFlash: false,
 
   open(bedId) {
-    this.currentBedId = bedId;
     const bed = AppState.getBedById(bedId);
     if (!bed) return;
 
+    // 全病棟表示から他病棟の病床を開くのは禁止する。このモーダルは現在病棟の
+    // activeEventsしか参照しないため、他病棟の移送中の病床を「空き」と誤判定して
+    // 誤った病棟IDで二重の出棟登録ができてしまう（スタッフ/検査室の選択肢も現在病棟のもの）
+    if (bed.ward_id !== AppState.currentWardId) {
+      const ward = AppState.wards.find(w => w.id === bed.ward_id);
+      UI.toast(`${ward ? ward.name : '他病棟'}の病床です。操作するには病棟を切り替えてください`, 'info');
+      return;
+    }
+
+    this.currentBedId = bedId;
     const event = AppState.getActiveEventForBed(bedId);
     this.currentEventId = event ? event.id : null;
 

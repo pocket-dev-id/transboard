@@ -57,7 +57,9 @@ const BedMap = {
 
   // ── 全病棟を病棟ごとにセクション分けして横断表示 ──
   _renderAllWards(grid) {
-    grid.className = 'bed-map-grid-allwards';
+    // className再設定でrender()冒頭に付けた患者名マスク用クラスを消さないよう保持する
+    const masked = grid.classList.contains('hide-patient-names');
+    grid.className = 'bed-map-grid-allwards' + (masked ? ' hide-patient-names' : '');
     grid.style.gridTemplateColumns = '';
     grid.style.gridTemplateRows = '';
 
@@ -194,7 +196,7 @@ const BedMap = {
     }
 
     // グリッドを描画
-    grid.className = 'bed-map-grid-layout';
+    grid.className = 'bed-map-grid-layout' + (grid.classList.contains('hide-patient-names') ? ' hide-patient-names' : '');
     grid.style.gridTemplateColumns = `repeat(${cols}, minmax(72px, 1fr))`;
     grid.style.gridTemplateRows    = `repeat(${rows}, auto)`;
 
@@ -235,7 +237,7 @@ const BedMap = {
 
   // ── フォールバック: シンプル一覧表示 ──
   _renderSimple(grid, beds) {
-    grid.className = 'bed-map-grid-simple';
+    grid.className = 'bed-map-grid-simple' + (grid.classList.contains('hide-patient-names') ? ' hide-patient-names' : '');
     grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(90px, 1fr))';
     grid.style.gridTemplateRows = '';
 

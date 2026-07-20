@@ -265,7 +265,7 @@ const HistoryView = {
       });
 
       const csvContent = [headers, ...rows]
-        .map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+        .map(r => r.map(val => `"${UI.sanitizeCsvValue(val).replace(/"/g, '""')}"`).join(','))
         .join('\n');
 
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]); // UTF-8 Excel BOM
@@ -382,12 +382,13 @@ const ExamStats = {
         name = type ? type.name : r.key;
         const std = type ? type.standard_duration_min : null;
         if (std != null && r.avg.exam !== null) {
-          const diff = r.avg.exam - std;
+          // 色判定と表示のズレを避けるため、丸めた値で統一する
+          const diff = Math.round(r.avg.exam - std);
           const diffCls = diff >= 1 ? 'exam-stats-over' : (diff <= -1 ? 'exam-stats-under' : '');
-          standardCells = `<td>${std}分</td><td class="${diffCls}">${diff >= 0 ? '+' : ''}${Math.round(diff)}分</td>`;
-          // 反映提案: 乖離が大きくサンプルが十分な場合のみ
-          if (Math.abs(diff) >= this.SUGGEST_DIFF_MIN && r.examSamples >= this.SUGGEST_MIN_SAMPLES) {
-            actionCell = `<td><button class="btn btn-outline btn-sm btn-apply-standard" data-type-id="${UI.escapeHTML(r.key)}" data-avg="${Math.round(r.avg.exam)}" title="検査種別マスタの標準時間を実績平均に更新します" style="padding:2px 8px; font-size:11px; white-space:nowrap;"><i class="fas fa-sync-alt"></i> 実績平均に更新</button></td>`;
+          standardCells = `<td>${std}分</td><td class="${diffCls}">${diff >= 0 ? '+' : ''}${diff}分</td>`;
+          // 反映提案: 乖離が大きくサンプルが十分、かつ丸め後の平均が有効値(1分以上)の場合のみ
+          if (Math.abs(diff) >= this.SUGGEST_DIFF_MIN && r.examSamples >= this.SUGGEST_MIN_SAMPLES && Math.round(r.avg.exam) >= 1) {
+            actionCell = `<td><button class="btn btn-outline btn-sm btn-apply-standard" data-type-id="${UI.escapeHTML(r.key)}" data-avg="${Math.round(r.avg.exam)}" data-samples="${r.examSamples}" title="検査種別マスタの標準時間を実績平均に更新します" style="padding:2px 8px; font-size:11px; white-space:nowrap;"><i class="fas fa-sync-alt"></i> 実績平均に更新</button></td>`;
           } else {
             actionCell = '<td></td>';
           }
@@ -417,19 +418,22 @@ const ExamStats = {
     // 標準時間への反映ボタン
     container.querySelectorAll('.btn-apply-standard').forEach(btn => {
       btn.addEventListener('click', () => {
-        const apply = () => this._applyStandardDuration(btn.dataset.typeId, parseInt(btn.dataset.avg, 10));
+        const apply = () => this._applyStandardDuration(btn.dataset.typeId, parseInt(btn.dataset.avg, 10), parseInt(btn.dataset.samples, 10) || 0);
         if (window.isAdminSession) apply();
         else PasscodeModal.open(() => { apply(); });
       });
     });
   },
 
-  async _applyStandardDuration(typeId, avgMin) {
+  async _applyStandardDuration(typeId, avgMin, samples = 0) {
     const type = AppState.allExamTypes?.find(t => t.id === typeId) || AppState.examTypes?.find(t => t.id === typeId);
     if (!type || !Number.isFinite(avgMin) || avgMin <= 0) return;
+    // 標準時間は全病棟共通のため、根拠となった実績のスコープ(病棟・件数)を明示して判断材料にする
+    const ward = AppState.wards.find(w => w.id === AppState.currentWardId);
+    const basis = `${ward ? ward.name : '現在の病棟'}の実績${samples > 0 ? `${samples}件` : ''}の平均`;
     const ok = await UI.confirmModal(
-      `${type.name} の標準時間を ${type.standard_duration_min}分 → ${avgMin}分（実績平均）に更新しますか？`,
-      { title: '標準時間の更新', detail: '今後の出棟登録の所要時間の自動入力と検査室画面の超過警告に反映されます。', confirmLabel: '更新する' }
+      `${type.name} の標準時間を ${type.standard_duration_min}分 → ${avgMin}分（${basis}）に更新しますか？`,
+      { title: '標準時間の更新（全病棟共通）', detail: '今後の出棟登録の所要時間の自動入力と検査室画面の超過警告に、全病棟で反映されます。', confirmLabel: '更新する' }
     );
     if (!ok) return;
     try {
@@ -471,9 +475,11 @@ const ExamStats = {
         const type = AppState.getExamTypeById(e.exam_type_id);
         const room = AppState.getExamRoomById(e.exam_room_id);
         const m = this.computeMetrics(e);
-        const planned = e.expected_duration_min ?? '';
-        const planDiff = (m.exam !== null && Number.isFinite(e.expected_duration_min))
-          ? Math.round(m.exam - e.expected_duration_min) : '';
+        // 文字列で保存されているケースを考慮し数値化してから予定/予実差の両方に使う
+        const plannedNum = Number(e.expected_duration_min);
+        const planned = Number.isFinite(plannedNum) ? plannedNum : '';
+        const planDiff = (m.exam !== null && Number.isFinite(plannedNum))
+          ? Math.round(m.exam - plannedNum) : '';
         return [
           e.returned_at ? new Date(e.returned_at).toLocaleDateString('ja-JP') : '',
           bed ? bed.bed_number : '',
@@ -487,14 +493,17 @@ const ExamStats = {
       });
 
       const csvContent = [headers, ...rows]
-        .map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+        .map(r => r.map(val => `"${UI.sanitizeCsvValue(val).replace(/"/g, '""')}"`).join(','))
         .join('\n');
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
       const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.setAttribute('href', url);
-      link.setAttribute('download', `exam_time_stats_${new Date().toISOString().split('T')[0]}.csv`);
+      // ファイル名はローカル日付で生成する（toISOStringはUTCのため深夜に前日名になる）
+      const d = new Date();
+      const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      link.setAttribute('download', `exam_time_stats_${localDate}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
