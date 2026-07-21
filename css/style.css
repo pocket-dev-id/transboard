@@ -1512,18 +1512,27 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
    ============================================================ */
 .settings-tabs {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin-bottom: 16px;
   border-bottom: 2px solid var(--clr-border);
-  padding: 0 2px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
+  padding: 0 2px 6px;
+}
+/* 設定タブをカテゴリごとのまとまりで折り返し、横スクロールを不要にする */
+.stab-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+}
+.stab-group + .stab-group {
+  border-left: 1px solid var(--clr-border);
+  padding-left: 12px;
 }
 .settings-tab-btn {
   flex: 0 0 auto;
   white-space: nowrap;
-  padding: 10px 12px;
+  padding: 8px 11px;
   background: none;
   border: none;
   border-bottom: 3px solid transparent;
@@ -1539,21 +1548,11 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
   gap: 6px;
   margin-bottom: -2px;
 }
-.settings-tabs::-webkit-scrollbar { height: 6px; }
-.settings-tabs::-webkit-scrollbar-thumb {
-  background: rgba(100, 116, 139, 0.35);
-  border-radius: 999px;
-}
 .settings-tab-btn:hover { color: #3b82f6; }
 .settings-tab-btn.active {
   color: #3b82f6;
   border-bottom-color: #3b82f6;
   background: none;
-}
-/* 設定タブグループ区切り */
-.stab-sep {
-  display: inline-block; width: 1px; background: var(--clr-border);
-  align-self: stretch; margin: 6px 4px; flex-shrink: 0;
 }
 
 /* タブグループの見出しラベル（デザイン#4） */

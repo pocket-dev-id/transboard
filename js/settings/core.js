@@ -179,10 +179,11 @@ const Settings = {
     if (!cont) return;
     cont.innerHTML = `
       <div class="settings-tabs">
-        ${this._getTabGroups().map(([label, ids], idx) => `
-          ${idx ? '<span class="stab-sep"></span>' : ''}
-          <span class="stab-group-label">${label}</span>
-          ${ids.map(id => this._renderTabButton(id)).join('')}
+        ${this._getTabGroups().map(([label, ids]) => `
+          <div class="stab-group">
+            <span class="stab-group-label">${label}</span>
+            ${ids.map(id => this._renderTabButton(id)).join('')}
+          </div>
         `).join('')}
       </div>
       <div id="settings-tab-body"></div>
