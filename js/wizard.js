@@ -377,10 +377,10 @@ const Wizard = {
       </div>` : '';
 
     const standaloneNote = (this.config.share_mode === 'parent' && this.config.standalone) ? `
-      <div class="wiz-callout" style="background:#f0f9ff; border:1px solid #bae6fd;">
-        <i class="fas fa-desktop" style="color:#0369a1;"></i>
+      <div class="wiz-callout wiz-callout-info">
+        <i class="fas fa-desktop"></i>
         <div>
-          <strong style="color:#075985;">単独運用モード — この1台だけで運用します</strong><br>
+          <strong>単独運用モード — この1台だけで運用します</strong><br>
           <span style="font-size:11px; font-weight:400;">検査室画面・病棟間通話・接続端末表示は隠されます。全工程を病棟画面から操作してください。あとから子機を追加する場合は「共有・ネットワーク設定」でOFFにできます。</span>
         </div>
       </div>` : '';

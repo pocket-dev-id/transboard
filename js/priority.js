@@ -105,7 +105,7 @@ const Priority = {
 
     let icHtml = '';
     if (event.patient_ic_tag_id) {
-      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
+      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:10px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
 
     const patientName = bed ? UI.getPatientName(bed.patient_name) : null;

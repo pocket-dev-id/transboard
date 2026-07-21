@@ -220,12 +220,12 @@ Object.assign(Settings, {
           <!-- 親機用：ローカルIP表示 -->
           <div id="parent-config-section" style="border-top:1px solid #e2e8f0; padding-top:16px; display:${currentMode === 'parent' ? 'block' : 'none'};">
             <!-- 単独運用モードのトグル -->
-            <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px 14px; margin-bottom:16px;">
+            <div class="info-box" style="margin-bottom:16px;">
               <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
                 <input type="checkbox" id="chk-standalone-mode" ${isStandaloneMode ? 'checked' : ''} style="margin-top:3px;">
                 <div>
-                  <strong style="color:#075985;"><i class="fas fa-desktop"></i> 単独運用モード（この1台だけで運用）</strong>
-                  <div style="font-size:11px; color:#0369a1; margin-top:2px;">子機を使わず、この親機1台で全工程を完結させる運用です。接続端末の表示・病棟間通話・検査室画面など、複数台前提の機能を隠してシンプルにします。あとから子機を追加する場合はOFFにしてください。</div>
+                  <strong><i class="fas fa-desktop"></i> 単独運用モード（この1台だけで運用）</strong>
+                  <div class="info-box-sub">子機を使わず、この親機1台で全工程を完結させる運用です。接続端末の表示・病棟間通話・検査室画面など、複数台前提の機能を隠してシンプルにします。あとから子機を追加する場合はOFFにしてください。</div>
                 </div>
               </label>
             </div>

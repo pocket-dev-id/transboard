@@ -1707,6 +1707,16 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 .settings-table tr:hover td { background: #f8fafc; }
 .row--inactive { opacity: 0.5; }
 
+/* 情報ボックス（設定画面の補足枠。テーマに追従するようクラス化） */
+.info-box {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #075985;
+}
+.info-box .info-box-sub { font-size: 11px; color: #0369a1; margin-top: 2px; }
+
 /* 設定パネル汎用ヘルパー (UI #3) */
 .settings-section {
   border-top: 1px solid #e2e8f0;
@@ -2124,6 +2134,7 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 .wiz-hint code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 10.5px; }
 .wiz-callout { display: flex; gap: 8px; align-items: flex-start; border-radius: 7px; padding: 10px 14px; margin-top: 10px; font-size: 12px; }
 .wiz-callout-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.wiz-callout-info { background: #f0f9ff; border: 1px solid #bae6fd; color: #075985; }
 .wiz-sub-panel {
   margin-top: 12px; padding: 14px; background: rgba(0,0,0,.025);
   border: 1px solid var(--clr-border); border-radius: 8px;
@@ -2353,6 +2364,30 @@ body.theme-dark .tl-ctx-item:hover { background: #334155; }
 body.theme-dark .tl-ctx-item i { color: #94a3b8; }
 body.theme-dark .tl-ctx-divider { background: #334155; }
 
+/* 優先対応一覧の状態別ハイライト: ライトの淡色背景は白文字と衝突するため半透明の暗色へ */
+body.theme-dark .priority-item.priority-pickup { background: rgba(69, 10, 10, 0.5); border-color: rgba(220, 38, 38, 0.6); }
+body.theme-dark .priority-item.priority-nearly { background: rgba(67, 20, 7, 0.5); border-color: rgba(234, 88, 12, 0.6); }
+body.theme-dark .priority-item.priority-soon { background: rgba(66, 32, 6, 0.5); border-color: rgba(217, 119, 6, 0.6); }
+body.theme-dark .priority-escort--active { color: #93c5fd; }
+body.theme-dark .bed-staff-badge--active { color: #93c5fd; }
+/* スタッフ稼働チップ */
+body.theme-dark .staff-status-chip { background: rgba(30, 41, 59, 0.6); border-color: rgba(255, 255, 255, 0.12); color: #cbd5e0; }
+body.theme-dark .staff-status-chip.active { background: rgba(30, 58, 138, 0.5); border-color: #3b82f6; color: #93c5fd; }
+body.theme-dark .staff-status-chip.standby { background: rgba(66, 32, 6, 0.55); border-color: #ca8a04; color: #fde68a; }
+body.theme-dark .staff-status-chip.free { background: rgba(2, 44, 34, 0.55); border-color: #16a34a; color: #a7f3d0; }
+/* 経過時間バーのトラック（黒8%は暗背景で不可視） */
+body.theme-dark .bed-timer-progress { background: rgba(255, 255, 255, 0.14); }
+/* 検査時間実績の超過/短縮色を暗背景向けに明るく */
+body.theme-dark .exam-stats-over { color: #fca5a5; }
+body.theme-dark .exam-stats-under { color: #86efac; }
+/* 設定テーブルのホバー背景（ライト固定#f8fafcだと白文字が消える）と区切り線 */
+body.theme-dark .settings-table tr:hover td { background: rgba(255, 255, 255, 0.06); }
+body.theme-dark .settings-table td { border-bottom-color: rgba(255, 255, 255, 0.08); }
+/* 情報ボックス・ウィザード注記 */
+body.theme-dark .info-box,
+body.theme-dark .wiz-callout-info { background: rgba(30, 58, 138, 0.35); border-color: #3b82f6; color: #dbeafe; }
+body.theme-dark .info-box .info-box-sub { color: #bfdbfe; }
+
 /* --- メディカルブルーテーマ (.theme-blue) --- */
 body.theme-blue {
   --clr-bg: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
@@ -2498,6 +2533,24 @@ body.theme-high-contrast .btn-primary {
   background: #ffff00 !important;
   font-weight: 900;
 }
+/* 優先対応一覧・スタッフチップ・経過バー・情報ボックスを白黒に統一 */
+body.theme-high-contrast .priority-item.priority-pickup,
+body.theme-high-contrast .priority-item.priority-nearly,
+body.theme-high-contrast .priority-item.priority-soon { background: #000000; border-color: #ffffff; }
+body.theme-high-contrast .priority-escort--active { color: #ffff00; }
+body.theme-high-contrast .priority-escort--standby,
+body.theme-high-contrast .priority-exam-info { color: #ffffff; }
+body.theme-high-contrast .staff-status-chip,
+body.theme-high-contrast .staff-status-chip.active,
+body.theme-high-contrast .staff-status-chip.standby,
+body.theme-high-contrast .staff-status-chip.free { background: #000000; border-color: #ffffff; color: #ffffff; }
+body.theme-high-contrast .bed-timer-progress { background: rgba(255, 255, 255, 0.3); }
+body.theme-high-contrast .exam-stats-over,
+body.theme-high-contrast .exam-stats-under { color: #ffff00; }
+body.theme-high-contrast .settings-table tr:hover td { background: #1a1a1a; }
+body.theme-high-contrast .info-box,
+body.theme-high-contrast .wiz-callout-info { background: #000000; border-color: #ffffff; color: #ffffff; }
+body.theme-high-contrast .info-box .info-box-sub { color: #ffffff; }
 
 /* ---------- 付箋 (Sticky Note) ---------- */
 .sticky-note-card {
