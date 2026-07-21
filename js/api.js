@@ -369,7 +369,7 @@ const API = {
     if (shareMode === 'client' || shareMode === 'child') {
       return parentFetch(`http://${parentIp}:3005/api/webrtc/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-API-Token': localStorage.getItem('cfg_api_token') || '' },
         body: JSON.stringify(msg)
       }, API_SIGNALING_TIMEOUT_MS).then(r => r.json());
     }
@@ -398,8 +398,9 @@ const API = {
     const qs = new URLSearchParams({ id: myId, client: clientId || myId }).toString();
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {}, API_SIGNALING_TIMEOUT_MS)
-        .then(r => r.json());
+      return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {
+        headers: { 'X-API-Token': localStorage.getItem('cfg_api_token') || '' }
+      }, API_SIGNALING_TIMEOUT_MS).then(r => r.json());
     }
 
     if (window.electronAPI && window.electronAPI.webrtcRequest) {

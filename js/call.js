@@ -16,7 +16,9 @@ const CallPanel = {
   targetId: null,
   isCalling: false,
   isConnected: false,
+  isRinging: false,       // 着信ダイアログ表示中（応答前）
   isVideoCall: false,
+  _myCallId: null,        // 通話開始時に確定する自ID（通話中のタブ切替でIDが揺れないよう固定）
   callTimer: null,
   callDuration: 0,
   
@@ -305,6 +307,13 @@ const CallPanel = {
     }
   },
 
+  // 通話中のシグナリング送信に使う自ID。通話開始時に確定した _myCallId を優先し、
+  // 未確定時（着信ガードのbusy応答など）は現在のIDにフォールバックする。
+  // これにより通話中にタブ／検査室選択が変わっても from/to が揺れない
+  _signalingId() {
+    return this._myCallId || this.getMyId();
+  },
+
   getClientId() {
     let id = localStorage.getItem('_device_id');
     if (!id) {
@@ -392,20 +401,26 @@ const CallPanel = {
     console.log('[WebRTC Signaling] Received:', msg.type, 'from:', msg.from);
 
     if (msg.type === 'offer') {
-      if (this.peerConnection || this.isCalling || this.isConnected) {
-        // 通話相手からの古いoffer（ブロードキャストキューの再配信）に busy を返すと
-        // 確立済みの通話自体が切断されてしまうため、黙って無視する
+      // 本アプリは1対1通話。通話中・発信中・接続中に加えて「着信中(応答前=isRinging)」も
+      // busy対象に含める。これを怠ると着信中に届いた2件目のofferが最初の着信(targetId)を
+      // 上書きし、最初の発信者が無視されてしまう
+      if (this.peerConnection || this.isCalling || this.isConnected || this.isRinging) {
+        // 通話相手/着信中の相手からの古いoffer（ブロードキャストキューの再配信）に busy を返すと
+        // 確立済みの通話や着信自体が切断されてしまうため、黙って無視する
         if (msg.from === this.targetId) return;
         // それ以外の相手からの着信は話し中として拒否シグナル
         await API.webrtcSend({
-          from: this.getMyId(),
+          from: this._signalingId(),
           to: msg.from,
           type: 'busy'
         });
+        // 応答できなかった着信を自端末にも通知（相手にはbusyを返すだけで不可視だったため）
+        UI.toast(`${this.getNameById(msg.from)} から着信がありましたが、通話中のため応答できませんでした`, 'warning', 6000);
         return;
       }
       this.targetId = msg.from;
       this.isVideoCall = !!msg.video;
+      this.isRinging = true;
       this.showIncomingCallDialog(msg.from, msg.sdp);
     }
     else if (msg.type === 'answer') {
@@ -444,6 +459,8 @@ const CallPanel = {
       // 同じIDを持つ別端末が応答した → ダイアログを静かに閉じる
       if (!this.isConnected && !this.isCalling) {
         this.stopRingTone();
+        this.isRinging = false;
+        this.targetId = null;
         const overlay = document.getElementById('webrtc-call-overlay');
         if (overlay) overlay.remove();
       }
@@ -514,10 +531,12 @@ const CallPanel = {
           </button>
     `;
 
+    // data-textに生値を埋め込むと speech_templates 内の " や < で属性破壊・HTML注入が起きるため、
+    // 表示はエスケープ、送信はインデックス参照で templates[idx] の生値を使う
     const templateBtns = templates.map((t, idx) => `
-      <button class="btn btn-sm btn-outline btn-send-announcement" data-text="${t}" style="font-size:11.5px; padding:8px 10px; text-align:left; white-space:normal; line-height:1.2; width:100%; display:flex; align-items:center; gap:6px;">
+      <button class="btn btn-sm btn-outline btn-send-announcement" data-idx="${idx}" style="font-size:11.5px; padding:8px 10px; text-align:left; white-space:normal; line-height:1.2; width:100%; display:flex; align-items:center; gap:6px;">
         <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
-        <span>${t}</span>
+        <span>${UI.escapeHTML(String(t))}</span>
       </button>
     `).join('');
 
@@ -673,9 +692,9 @@ const CallPanel = {
       if (e.key === 'Enter' && !e.isComposing) sendAnnounce(e.target.value);
     });
 
-    // 定型アナウンスボタンイベント
+    // 定型アナウンスボタンイベント（インデックスから生値を参照して送信）
     overlay.querySelectorAll('.btn-send-announcement').forEach(btn => {
-      btn.addEventListener('click', () => sendAnnounce(btn.dataset.text));
+      btn.addEventListener('click', () => sendAnnounce(templates[Number(btn.dataset.idx)]));
     });
   },
 
@@ -692,6 +711,8 @@ const CallPanel = {
 
     this.targetId = targetId;
     this.isCalling = true;
+    // 自IDを通話開始時点で確定（以後のシグナリングはタブ/検査室選択の変化に影響されない）
+    this._myCallId = myId;
     // 破棄された過去の着信でバッファされたICE候補が新しい通話に混入しないようクリア
     this._pendingCandidates = [];
 
@@ -738,7 +759,7 @@ const CallPanel = {
       if (this._answerTimeout) clearTimeout(this._answerTimeout);
       this._answerTimeout = setTimeout(() => {
         if (this.isCalling && !this.isConnected) {
-          API.webrtcSend({ from: this.getMyId(), to: this.targetId, type: 'hangup' }).catch(() => {});
+          API.webrtcSend({ from: this._signalingId(), to: this.targetId, type: 'hangup' }).catch(() => {});
           this.cleanupCall('応答がありません');
         }
       }, 45000);
@@ -816,6 +837,9 @@ const CallPanel = {
   async acceptCall(callerId, offerSdp) {
     this.isCalling = false;
     this.isConnected = true;
+    this.isRinging = false;
+    // 応答した時点の自IDを確定（通話中のタブ切替でIDが揺れないよう固定）
+    this._myCallId = this.getMyId();
 
     this.showConnectedDialog(callerId);
 
@@ -836,7 +860,7 @@ const CallPanel = {
       await this.peerConnection.setLocalDescription(answer);
 
       await API.webrtcSend({
-        from: this.getMyId(),
+        from: this._signalingId(),
         to: callerId,
         type: 'answer',
         sdp: answer
@@ -864,7 +888,7 @@ const CallPanel = {
       console.error('[WebRTC] Accept Call Error:', e);
       // busyを送らないと発信側が「呼び出し中」のまま待ち続けてしまう
       // （カメラ・マイク取得失敗など、応答操作後の失敗もここに来る）
-      API.webrtcSend({ from: this.getMyId(), to: callerId, type: 'busy' }).catch(() => {});
+      API.webrtcSend({ from: this._signalingId(), to: callerId, type: 'busy' }).catch(() => {});
       this.cleanupCall(this._mediaErrorMessage(e));
     }
   },
@@ -882,7 +906,7 @@ const CallPanel = {
     this.peerConnection.onicecandidate = async (event) => {
       if (event.candidate && this.targetId) {
         await API.webrtcSend({
-          from: this.getMyId(),
+          from: this._signalingId(),
           to: this.targetId,
           type: 'ice',
           candidate: event.candidate
@@ -922,7 +946,7 @@ const CallPanel = {
         if (state === 'disconnected') {
           // 再接続処理
           if (statusLabel) {
-            statusLabel.innerHTML = `<i class="fas fa-exclamation-triangle"></i> 接続不安定: 再接続中...`;
+            statusLabel.innerHTML = `<i class="fas fa-exclamation-triangle"></i> 接続が不安定です: 復旧を待機中…`;
             statusLabel.style.color = '#d97706';
           }
           if (header) {
@@ -932,7 +956,7 @@ const CallPanel = {
             dialog.style.borderColor = '#d97706';
           }
           
-          this.appendChatMessage('system', '⚠️ 音声接続が切断されました。再接続を試みています...');
+          this.appendChatMessage('system', '⚠️ 接続が不安定になりました。自動復旧を待っています…');
           
           if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
           this.reconnectTimeout = setTimeout(() => {
@@ -1275,7 +1299,7 @@ const CallPanel = {
   async hangupCall() {
     if (this.targetId) {
       await API.webrtcSend({
-        from: this.getMyId(),
+        from: this._signalingId(),
         to: this.targetId,
         type: 'hangup'
       });
@@ -1355,8 +1379,10 @@ const CallPanel = {
 
     this.isCalling = false;
     this.isConnected = false;
+    this.isRinging = false;
     this.isVideoCall = false;
     this.targetId = null;
+    this._myCallId = null;
 
     // 通話履歴リロード
     this._loadRecentCalls();
@@ -1628,7 +1654,7 @@ const CallPanel = {
 
     // チャットパケットをシグナリングで送信
     API.webrtcSend({
-      from: myId,
+      from: this._signalingId(),
       to: this.targetId,
       type: 'chat',
       text: text

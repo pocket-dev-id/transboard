@@ -2752,7 +2752,17 @@ function startParentServer() {
       try {
         let result;
         if (cleanUrl.startsWith('webrtc/')) {
-          result = processWebrtcRequest(req.method, cleanUrl, body);
+          // 外部(子機)からのシグナリングはAPIトークンで保護する。
+          // トークン未設定の環境では後方互換のため従来どおり許可する。
+          // （親機自身のシグナリングはHTTPではなくIPC経路(webrtc-request)を通るため影響なし）
+          const wdb = readDB();
+          const expectedToken = (wdb.system_settings || []).find(s => s.id === 'api_token')?.value || '';
+          if (expectedToken && req.headers['x-api-token'] !== expectedToken) {
+            console.warn('[Security] WebRTCシグナリングのAPIトークン認証失敗');
+            result = { success: false, message: 'Unauthorized', unauthorized: true };
+          } else {
+            result = processWebrtcRequest(req.method, cleanUrl, body);
+          }
         } else if (cleanUrl.startsWith('device/')) {
           const action = cleanUrl.replace(/^device\//, '').split('?')[0];
           if (action === 'heartbeat' && req.method === 'POST') {
