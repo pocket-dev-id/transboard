@@ -808,7 +808,7 @@ const Wizard = {
             子機モードの設定を保存しました。<br>
             接続先の親機 (<strong>${UI.escapeHTML(this.config.parent_ip || '未指定')}</strong>) へのデータ接続を有効にするには、アプリを再起動してください。
           </p>
-          <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px 16px; margin-bottom:24px; font-size:12px; color:#1e40af; text-align:left;">
+          <div class="info-box" style="margin-bottom:24px; font-size:12px; text-align:left;">
             <i class="fas fa-info-circle"></i>
             <strong>再起動するまでの間</strong>、マスタデータや病床マップが正しく表示されない場合があります。
             再起動後に自動的に親機から最新データを取得します。
