@@ -68,6 +68,7 @@
 .fa-save::before { content: "\25A3"; }
 .fa-search::before { content: "\2315"; }
 .fa-search-plus::before { content: "\2315"; }
+.fa-search-minus::before { content: "\2212"; }
 .fa-shield-alt::before { content: "\25C8"; }
 .fa-shipping-fast::before { content: "\21E2"; }
 .fa-spinner::before { content: "\25CC"; }
