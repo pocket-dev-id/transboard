@@ -778,9 +778,23 @@ const BedModal = {
       await API.createEvent(eventData);
       await API.addStatusLog(eventId, null, 'DEPART_REGISTERED', 'nurse');
 
+      // 出棟登録はこの時点で完了済み。続けて「移動中」に進めるかを確認する。
       // 移動中(MOVING)が非表示設定(使わない運用)の場合はプロンプト自体をスキップし、
       // 出棟登録のままにする（登録直後に到着や検査開始へ自動前進させるのは実態と合わないため）
-      if (!AppState.isStatusHidden('MOVING') && confirm('ステータスを移動中にしますか？')) {
+      let goMoving = false;
+      if (!AppState.isStatusHidden('MOVING')) {
+        goMoving = await UI.confirmModal(
+          `${bed.bed_number}号床の出棟を登録しました。続けて「移動中」にしますか？`,
+          {
+            title: '患者はもう出発しましたか？',
+            type: 'info',
+            detail: 'キャンセルしても出棟登録は保存されます（ステータスは「出棟登録」のまま）。実際に移動を開始したら、あとから病床をタップして「移動開始」にできます。',
+            confirmLabel: '移動中にする',
+            cancelLabel: '出棟登録のまま',
+          }
+        );
+      }
+      if (goMoving) {
         await API.updateEventStatus(eventId, 'MOVING');
         UI.toast(`${bed.bed_number}号床を移動中にしました`, 'success');
       } else {

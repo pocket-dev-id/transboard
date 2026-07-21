@@ -486,6 +486,16 @@ const App = {
       });
     }
 
+    // スタッフ稼働状況の絞り込みトグル（全員／稼働中のみ）
+    const staffFilter = document.getElementById('staff-status-filter');
+    if (staffFilter) {
+      staffFilter.value = localStorage.getItem('cfg_staff_filter') || 'all';
+      staffFilter.addEventListener('change', () => {
+        localStorage.setItem('cfg_staff_filter', staffFilter.value);
+        Priority.renderStaffStatus();
+      });
+    }
+
     // 病床マップのズーム・全病棟表示コントロール
     BedMap.initControls();
 

@@ -72,8 +72,19 @@ const Priority = {
       free:    { cls: 'free',    label: '空き',       icon: 'fa-check' },
     };
 
-    panel.innerHTML = staffs.map(staff => {
-      const status = AppState.getStaffEscortStatus(staff.id) || 'free';
+    // 稼働状況を付与。「稼働中のみ」フィルタでは空き(free)を除外し、
+    // 付き添いに関わっているスタッフ(付き添い中/病棟待機)だけを表示する
+    const filter = localStorage.getItem('cfg_staff_filter') || 'all';
+    const rows = staffs
+      .map(staff => ({ staff, status: AppState.getStaffEscortStatus(staff.id) || 'free' }))
+      .filter(row => filter === 'busy' ? row.status !== 'free' : true);
+
+    if (rows.length === 0) {
+      panel.innerHTML = '<div class="text-muted text-sm" style="padding:4px 0;">稼働中のスタッフはいません</div>';
+      return;
+    }
+
+    panel.innerHTML = rows.map(({ staff, status }) => {
       const meta = STATUS_META[status];
       return `
         <span class="staff-status-chip ${meta.cls}">
