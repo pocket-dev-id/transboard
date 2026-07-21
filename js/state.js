@@ -16,7 +16,6 @@ const AppState = {
   examTypes: [],
   staffs: [],
   wards: [],
-  stickyNotes: [],
   handoverNotes: [],
 
   // アクティブイベント (現在の病棟)

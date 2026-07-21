@@ -258,6 +258,28 @@ select, input { font-family: inherit; }
 .summary-value-sub { font-size: 10px; font-weight: 700; color: var(--clr-text-muted); margin-left: 3px; }
 .summary-label { font-size: 10.5px; color: var(--clr-text-muted); margin-top: 1px; }
 
+/* ---------- 占有率・当日KPIストリップ ---------- */
+#kpi-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-left: 3px solid var(--clr-primary);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--clr-text);
+}
+#kpi-strip:empty { display: none; }
+.kpi-item { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.kpi-item b { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.kpi-k { color: var(--clr-text-muted); font-weight: 700; }
+.kpi-sub { color: var(--clr-text-muted); font-size: 11px; }
+.kpi-div { width: 1px; align-self: stretch; background: var(--clr-border); }
+
 /* ---------- ダッシュボードレイアウト ---------- */
 #dashboard-content {
   display: grid;
@@ -2365,7 +2387,7 @@ body.theme-dark .wiz-input { background: #1e293b; border-color: #334155; }
 }
 
 /* ============================================================
-   新規追加：テーマ設定＆付箋機能スタイル
+   新規追加：テーマ設定スタイル
    ============================================================ */
 
 /* --- ダークテーマ (.theme-dark) --- */
@@ -2652,71 +2674,6 @@ body.theme-high-contrast .info-box,
 body.theme-high-contrast .wiz-callout-info { background: #000000; border-color: #ffffff; color: #ffffff; }
 body.theme-high-contrast .info-box .info-box-sub { color: #ffffff; }
 
-/* ---------- 付箋 (Sticky Note) ---------- */
-.sticky-note-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: stretch;
-  position: relative;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  transform: rotate(-1.5deg);
-  min-height: var(--bed-card-min-h);
-  border-radius: var(--radius);
-}
-.sticky-note-card:hover {
-  transform: scale(1.05) rotate(0deg);
-  z-index: 10;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
-}
-
-.sticky-note-card.color-yellow {
-  background: #fef08a !important;
-  border: 1px solid #facc15 !important;
-  color: #713f12 !important;
-}
-.sticky-note-card.color-pink {
-  background: #fbcfe8 !important;
-  border: 1px solid #f472b6 !important;
-  color: #831843 !important;
-}
-.sticky-note-card.color-blue {
-  background: #bfdbfe !important;
-  border: 1px solid #60a5fa !important;
-  color: #1e3a8a !important;
-}
-.sticky-note-card.color-green {
-  background: #bbf7d0 !important;
-  border: 1px solid #4ade80 !important;
-  color: #14532d !important;
-}
-.sticky-note-card.color-orange {
-  background: #fed7aa !important;
-  border: 1px solid #fb923c !important;
-  color: #7c2d12 !important;
-}
-
-.sticky-note-pin {
-  position: absolute;
-  top: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 10px;
-  opacity: 0.7;
-}
-
-.sticky-note-text {
-  font-family: 'Yu Gothic UI', 'Meiryo', 'MS PGothic', sans-serif;
-  font-size: 11px;
-  line-height: 1.3;
-  margin-top: 10px;
-  word-break: break-all;
-  text-align: left;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 /* 空床セルのホバーエフェクト */
 .bed-cell-empty {

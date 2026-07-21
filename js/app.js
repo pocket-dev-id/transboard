@@ -6,6 +6,7 @@ const WardDashboard = {
   render() {
     BedMap.render();
     Priority.renderSummary();
+    Priority.renderKpi();
     Priority.renderPriorityList();
     Priority.renderStaffStatus();
     Handover.render();
@@ -1288,7 +1289,6 @@ const App = {
       AppState.examTypes = examTypes.filter(t => t.is_active !== false);
       AppState.staffs = staffs;
       AppState.systemSettings = systemSettings;
-      AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
 
       // 保持期間設定に基づき古い完了済みイベントを削除（起動時に1回）
@@ -1352,7 +1352,6 @@ const App = {
       }
       if (handoverNotes) AppState.handoverNotes = handoverNotes;
       if (allWardsStatus) AppState.allWardsActiveEvents = allWardsStatus.activeEvents || [];
-      AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
 
       this._setConnectionStatus(true);

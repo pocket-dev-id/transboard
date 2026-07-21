@@ -229,8 +229,6 @@ const BedMap = {
     grid.innerHTML = html;
     this._bindCardEvents(grid);
 
-    // 付箋機能は削除されました
-
     // フィルターを適用
     this.applyFilter();
   },

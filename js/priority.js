@@ -28,6 +28,53 @@ const Priority = {
     }
   },
 
+  // 占有率（在床/空床/稼働率）と当日KPI（出棟件数・平均検査時間・迎え待ち平均）を1行で表示
+  renderKpi() {
+    const el = document.getElementById('kpi-strip');
+    if (!el) return;
+
+    const wardId = AppState.currentWardId;
+    const beds = (AppState.beds || []).filter(b => b.ward_id === wardId);
+    const total = beds.length;
+    const occupied = beds.filter(b => b.patient_name).length;   // 患者割当あり
+    const present = beds.filter(b => b.patient_name && b.is_present).length;
+    const absent = occupied - present;
+    const empty = total - occupied;
+    const rate = total ? Math.round(occupied / total * 100) : 0;
+
+    // 当日KPI: 本日の帰棟済み移送から平均を算出（ExamStats.computeMetricsを再利用）
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
+    const events = AppState.todayEvents || [];
+    const departsToday = events.filter(e => e.departed_at && e.departed_at >= todayMs).length;
+
+    const examVals = [], pickupVals = [];
+    if (typeof ExamStats !== 'undefined') {
+      events.filter(e => e.current_status === 'RETURNED').forEach(e => {
+        const m = ExamStats.computeMetrics(e);
+        if (m) {
+          if (m.exam != null) examVals.push(m.exam);
+          if (m.pickup != null) pickupVals.push(m.pickup);
+        }
+      });
+    }
+    const avg = arr => arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : null;
+    const examAvg = avg(examVals);
+    const pickupAvg = avg(pickupVals);
+
+    const absentNote = absent > 0 ? `<span class="kpi-sub">（不在${absent}）</span>` : '';
+    const examPart = examAvg != null ? `<span class="kpi-item"><span class="kpi-k">平均検査</span> <b>${examAvg}</b>分</span>` : '';
+    const pickupPart = pickupAvg != null ? `<span class="kpi-item"><span class="kpi-k">迎え待ち平均</span> <b>${pickupAvg}</b>分</span>` : '';
+
+    el.innerHTML = `
+      <span class="kpi-item kpi-rate"><span class="kpi-k">稼働率</span> <b>${rate}%</b> <span class="kpi-sub">在床${present} / 空床${empty}</span>${absentNote}</span>
+      <span class="kpi-div"></span>
+      <span class="kpi-item"><span class="kpi-k">本日 出棟</span> <b>${departsToday}</b>件</span>
+      ${examPart}
+      ${pickupPart}`;
+  },
+
   renderPriorityList() {
     const list = document.getElementById('priority-list');
     const items = AppState.getPriorityList();
