@@ -17,6 +17,7 @@ const AppState = {
   staffs: [],
   wards: [],
   stickyNotes: [],
+  handoverNotes: [],
 
   // アクティブイベント (現在の病棟)
   activeEvents: [],

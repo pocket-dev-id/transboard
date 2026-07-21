@@ -496,6 +496,106 @@ select, input { font-family: inherit; }
 .priority-time.urgent, .bed-timer.urgent { color: #ea580c; }
 .priority-time.soon, .bed-timer.soon { color: #d97706; }
 
+/* ---------- 申し送りメモ板 ---------- */
+#handover-area {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+.handover-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 8px;
+  border-radius: 9px;
+  background: var(--clr-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.handover-editor {
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--clr-bg);
+}
+.handover-editor textarea {
+  width: 100%;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.handover-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.handover-editor-row input[type="text"],
+.handover-editor-row input#handover-author {
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-size: 12px;
+  min-width: 140px;
+}
+.handover-imp { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--clr-text-muted); cursor: pointer; }
+#handover-list { display: flex; flex-direction: column; gap: 6px; }
+.handover-note {
+  border: 1px solid var(--clr-border);
+  border-left: 3px solid var(--clr-primary);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--clr-surface);
+}
+.handover-note.important { border-left-color: #b5453f; background: var(--clr-pickup); }
+.handover-note.resolved { opacity: .6; border-left-color: var(--clr-cancelled-border); }
+.handover-note.resolved .handover-note-body { text-decoration: line-through; }
+.handover-note-body { font-size: 13px; line-height: 1.5; color: var(--clr-text); word-break: break-word; }
+.handover-imp-icon { color: #b5453f; }
+.handover-note-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.handover-note-by { font-size: 11px; color: var(--clr-text-muted); font-variant-numeric: tabular-nums; }
+.handover-note-actions { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.handover-act {
+  background: none;
+  border: none;
+  color: var(--clr-text-muted);
+  padding: 3px 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+}
+.handover-act:hover { background: var(--clr-bg); color: var(--clr-primary); }
+.handover-resolved-toggle {
+  margin-top: 8px;
+  background: none;
+  border: none;
+  color: var(--clr-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.handover-resolved-toggle:hover { color: var(--clr-primary); }
+
 /* ---------- ミニタイムライン ---------- */
 #mini-timeline-area {
   background: var(--clr-surface);

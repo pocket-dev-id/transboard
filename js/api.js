@@ -166,6 +166,13 @@ const API = {
     return res.data.filter(s => s.is_active && (!wardId || s.ward_id === wardId));
   },
 
+  /* ---------- 申し送りメモ ---------- */
+  async getHandoverNotes(wardId) {
+    const res = await this.getAll('handover_notes');
+    const list = (res.data || []).filter(n => !wardId || n.ward_id === wardId);
+    return list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  },
+
   /* ---------- 出棟イベント ---------- */
   async getActiveEvents(wardId) {
     const res = await this.getAll('transfer_events');

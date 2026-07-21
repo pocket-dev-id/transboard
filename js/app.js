@@ -8,6 +8,7 @@ const WardDashboard = {
     Priority.renderSummary();
     Priority.renderPriorityList();
     Priority.renderStaffStatus();
+    Handover.render();
     Timeline.render();
   },
 };
@@ -511,6 +512,8 @@ const App = {
     document.getElementById('ward-select').addEventListener('change', async (e) => {
       AppState.currentWardId = e.target.value;
       localStorage.setItem('current_ward_id', AppState.currentWardId);
+      // 病棟切替時はマスタ間引きをリセットし、新病棟の病床・申し送りを即再取得する
+      this._lastMasterRefresh = 0;
       await this.refreshData();
       WardDashboard.render();
       this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
@@ -1332,11 +1335,12 @@ const App = {
       // 病床マップの全病棟表示モードがONの間だけ、病棟横断のアクティブイベントも取得する
       const needAllWards = BedMap._allWardsMode;
 
-      const [eventStatus, systemSettings, beds, allWardsStatus] = await Promise.all([
+      const [eventStatus, systemSettings, beds, allWardsStatus, handoverNotes] = await Promise.all([
         API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data).catch(() => []),
         dueForMasterRefresh ? API.getAllBeds().catch(() => null) : Promise.resolve(null),
-        needAllWards ? API.getWardStatusEvents('', 0).catch(() => null) : Promise.resolve(null)
+        needAllWards ? API.getWardStatusEvents('', 0).catch(() => null) : Promise.resolve(null),
+        dueForMasterRefresh ? API.getHandoverNotes(wardId).catch(() => null) : Promise.resolve(null)
       ]);
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
@@ -1346,6 +1350,7 @@ const App = {
         AppState.beds = beds;
         this._lastMasterRefresh = Date.now();
       }
+      if (handoverNotes) AppState.handoverNotes = handoverNotes;
       if (allWardsStatus) AppState.allWardsActiveEvents = allWardsStatus.activeEvents || [];
       AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();

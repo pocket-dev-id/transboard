@@ -189,6 +189,29 @@
         </div>
       </div>
 
+      <!-- 申し送りメモ板（シフト引き継ぎ・病棟単位で共有） -->
+      <div id="handover-area">
+        <div class="panel-header">
+          <h2><i class="fas fa-clipboard-list"></i> 申し送り<span id="handover-open-count" class="handover-badge"></span></h2>
+          <button class="btn btn-outline btn-sm" id="btn-handover-add" style="font-size:11px;padding:3px 10px;">
+            <i class="fas fa-plus"></i> 追加
+          </button>
+        </div>
+        <div id="handover-editor" class="handover-editor" style="display:none;">
+          <textarea id="handover-input" rows="2" placeholder="申し送り内容を入力（例: 302号 15時に点滴交換）"></textarea>
+          <div class="handover-editor-row">
+            <input id="handover-author" list="handover-author-list" placeholder="担当者（任意）">
+            <datalist id="handover-author-list"></datalist>
+            <label class="handover-imp"><input type="checkbox" id="handover-important"> 重要</label>
+            <span style="flex:1"></span>
+            <button class="btn btn-outline btn-sm" id="btn-handover-cancel">キャンセル</button>
+            <button class="btn btn-primary btn-sm" id="btn-handover-save">保存</button>
+          </div>
+        </div>
+        <div id="handover-list"></div>
+        <button id="handover-resolved-toggle" class="handover-resolved-toggle" style="display:none;"></button>
+      </div>
+
       <!-- 下部: タイムライン簡易 -->
       <div id="mini-timeline-area">
         <div class="panel-header">
@@ -399,6 +422,7 @@
 
   <script src="js/wizard.js"></script>
   <script src="js/priority.js"></script>
+  <script src="js/handover.js"></script>
   <script src="js/timeline.js"></script>
   <script src="js/history.js"></script>
   <script src="js/examroom.js"></script>
