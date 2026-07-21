@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 子機→親機HTTPリクエストをメインプロセス経由で中継する（レンダラーfetch()のLocal Network Access制限を回避）
   parentHttpRequest: (req) => ipcRenderer.invoke('parent-http-request', req),
 
+  // 取り込み反映完了の通知（成功時のみメイン側が原本を退避/削除する）
+  confirmImportApplied: (payload) => ipcRenderer.invoke('confirm-import-applied', payload),
+
   // 手動取り込み実行のトリガー
   triggerManualImport: () => ipcRenderer.invoke('trigger-manual-import'),
   

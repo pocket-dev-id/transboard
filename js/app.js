@@ -655,15 +655,29 @@ const App = {
       console.log('[Electron] 患者・在床情報のインポートリスナーを設定しています...');
       
       // 成功時
-      window.electronAPI.onDataImported(async ({ fileName, rows }) => {
+      window.electronAPI.onDataImported(async ({ fileName, filePath, rows }) => {
         console.log(`[Electron] インポートデータを受信 (${fileName}): ${rows.length}件`);
+
+        // メイン側の退避/削除は反映成功のackを待つ。ここで確実に一度だけackするためのヘルパー
+        const ackApplied = (success) => {
+          if (filePath && window.electronAPI?.confirmImportApplied) {
+            window.electronAPI.confirmImportApplied({ filePath, success }).catch(() => {});
+          }
+        };
 
         // 在室管理モード確認
         const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
         if (admMode === 'manual') {
           UI.toast('在室管理モードが「手動登録」のためCSVインポートをスキップしました', 'warning', 5000);
+          // 手動モードではCSVを使わないが、原本はポリシーどおり整理してよい（適用対象外＝成功扱い）
+          ackApplied(true);
           return;
         }
+
+        // 複数ファイルの短時間同時投入を検知（clearUnlistedの誤クリア防止に使用）
+        const nowImport = Date.now();
+        const withinBatchWindow = (nowImport - (App._lastImportAt || 0)) < 5000;
+        App._lastImportAt = nowImport;
 
         let importedCount = 0;
         let skipCount = 0;
@@ -785,7 +799,12 @@ const App = {
         // CSVに載っていない病床を空床にする（在室患者のみ出力EMR向け）
         let clearCount = 0;
         if (policy.clearUnlisted) {
-          if (rows.length === 0) {
+          if (withinBatchWindow) {
+            // 直近に別ファイルの取込があった＝複数ファイル同時投入。各ファイルは部分リストの
+            // 可能性があり、未掲載病床の空床化が他ファイルの患者を消しかねないためスキップする
+            console.warn('[Import] clearUnlisted: 複数ファイル同時投入を検知したため空床化をスキップしました');
+            UI.toast('複数ファイルが短時間に投入されたため、未掲載病床の空床化を安全のためスキップしました。1回の取り込みは1ファイルにしてください。', 'warning', 7000);
+          } else if (rows.length === 0) {
             console.warn('[Import] clearUnlisted: CSVが0件のため空床化をスキップしました');
             UI.toast('CSVが空だったため、未掲載病床の空床化はスキップしました。', 'warning', 6000);
           } else {
@@ -805,21 +824,32 @@ const App = {
           }
         }
 
+        // DB反映の成否を追跡（失敗を握りつぶして「成功」ログにしないため）
+        let applySuccess = true;
+        let applyError = '';
         if (bulkUpdates.length > 0) {
           try {
             await API.bulkPatch('beds', bulkUpdates);
           } catch (err) {
             console.error('[Import] バルクアップデートエラー:', err);
+            applySuccess = false;
+            applyError = err?.message || String(err);
           }
         }
 
         const hasWarning = skipCount > 0;
-        const status = (importedCount === 0 && rows.length > 0) ? 'warning' : (hasWarning ? 'warning' : 'success');
+        const status = !applySuccess
+          ? 'failed'
+          : ((importedCount === 0 && rows.length > 0) ? 'warning' : (hasWarning ? 'warning' : 'success'));
         const clearPart = clearCount > 0 ? `, 退院クリア: ${clearCount}件` : '';
-        const detailMsg = `インポート成功: ${importedCount}件, スキップ: ${skipCount}件${clearPart}`;
-        const logMsg = importedCount > 0
-          ? `${importedCount}件の患者情報を更新しました。${clearCount > 0 ? `（${clearCount}件を退院済みとしてクリア）` : ''}`
-          : '更新対象の有効な病床データがありませんでした。';
+        const detailMsg = applySuccess
+          ? `インポート成功: ${importedCount}件, スキップ: ${skipCount}件${clearPart}`
+          : `DB反映に失敗: ${applyError}（対象${bulkUpdates.length}件は未反映。原本は保持されます）`;
+        const logMsg = !applySuccess
+          ? 'データベースへの反映に失敗しました。原本ファイルは削除されず保持されます。'
+          : (importedCount > 0
+            ? `${importedCount}件の患者情報を更新しました。${clearCount > 0 ? `（${clearCount}件を退院済みとしてクリア）` : ''}`
+            : '更新対象の有効な病床データがありませんでした。');
 
         // ログ書き込み
         try {
@@ -835,6 +865,9 @@ const App = {
           console.error('[Import] ログの書き込み失敗:', e);
         }
 
+        // メイン側へ反映結果を通知：成功時のみ原本を退避/削除、失敗時は原本を保持
+        ackApplied(applySuccess);
+
         // マスタデータ（beds）を再読み込みし、画面を再描画する
         await App.loadMasters();
         await App.refreshData();
@@ -847,13 +880,18 @@ const App = {
           Settings.render();
         }
         
-        const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
-        if (importToastEnabled) {
-          if (importedCount > 0) {
-            const clearNote = clearCount > 0 ? ` / 退院クリア: ${clearCount}件` : '';
-            UI.toast(`📂 ${importedCount} 件の患者・在床情報を更新しました (スキップ: ${skipCount}件${clearNote})`, 'success');
-          } else {
-            UI.toast(`📂 CSVインポート完了: 更新なし (スキップ: ${skipCount}件)`, 'warning');
+        if (!applySuccess) {
+          // 反映失敗は通知設定に関わらず必ず知らせる（原本は保持される）
+          UI.toast(`❌ CSV取り込みのDB反映に失敗しました。原本ファイルは保持されます: ${fileName}`, 'danger', 8000);
+        } else {
+          const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
+          if (importToastEnabled) {
+            if (importedCount > 0) {
+              const clearNote = clearCount > 0 ? ` / 退院クリア: ${clearCount}件` : '';
+              UI.toast(`📂 ${importedCount} 件の患者・在床情報を更新しました (スキップ: ${skipCount}件${clearNote})`, 'success');
+            } else {
+              UI.toast(`📂 CSVインポート完了: 更新なし (スキップ: ${skipCount}件)`, 'warning');
+            }
           }
         }
       });

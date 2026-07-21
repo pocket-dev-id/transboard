@@ -1009,10 +1009,13 @@ function importCSV(filePath) {
         if (mainWindow) {
           mainWindow.webContents.send('data-imported', {
             fileName: path.basename(filePath),
+            filePath,
             rows: results
           });
         }
-        archiveFile(filePath);
+        // 退避/削除は renderer の反映成功ackを待って行う（反映失敗時の原本喪失を防ぐ）。
+        // ウィンドウ未ロードやack未達のときはタイムアウトで archive のみ実施（delete はしない）。
+        schedulePendingArchive(filePath);
       })
       .on('error', (err) => {
         console.error('[Watcher] パースエラー:', err);
@@ -1076,8 +1079,40 @@ function cleanOldArchives() {
   });
 }
 
+// 取り込み反映ackの待機管理（filePath -> タイムアウトタイマー）
+const pendingImportFiles = new Map();
+const IMPORT_APPLY_TIMEOUT_MS = 60000;
+
+// renderer の反映を待つ。ackが来ればポリシーどおり退避/削除、
+// 来なければ原本喪失を防ぐため archive（移動）のみを実施する（delete は行わない）。
+function schedulePendingArchive(filePath) {
+  const existing = pendingImportFiles.get(filePath);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    pendingImportFiles.delete(filePath);
+    console.warn('[Watcher] 反映ack未達のため archive へ退避します（削除は行いません）:', filePath);
+    archiveFile(filePath, { forceArchive: true });
+  }, IMPORT_APPLY_TIMEOUT_MS);
+  pendingImportFiles.set(filePath, timer);
+}
+
+// renderer からの「反映完了」通知。成功時のみポリシーどおり退避/削除する。
+ipcMain.handle('confirm-import-applied', (event, payload = {}) => {
+  const { filePath, success } = payload;
+  if (!filePath) return { success: false, message: 'filePath required' };
+  const timer = pendingImportFiles.get(filePath);
+  if (timer) { clearTimeout(timer); pendingImportFiles.delete(filePath); }
+  if (success) {
+    archiveFile(filePath);
+  } else {
+    // 反映失敗: 原本を残して再取込・手動復旧を可能にする（import_logs には failed 記録済み）
+    console.warn('[Watcher] 反映失敗のため原本を保持します:', filePath);
+  }
+  return { success: true };
+});
+
 // ファイルをアーカイブ移動または削除
-function archiveFile(filePath) {
+function archiveFile(filePath, opts = {}) {
   const db = readDB();
   const policySetting = db.system_settings?.find(s => s.id === 'import_retention_policy');
   let policy = { action: 'archive', retentionDays: '30' };
@@ -1088,6 +1123,8 @@ function archiveFile(filePath) {
       console.error('[Watcher] ポリシー設定のパース失敗:', e);
     }
   }
+  // ack未達のタイムアウト退避では、削除ポリシーでも原本喪失を避けるため archive に限定する
+  if (opts.forceArchive) policy = { ...policy, action: 'archive' };
 
   if (policy.action === 'skip') {
     console.log(`[Watcher] ポリシー: そのまま残す (スキップ): ${filePath}`);
