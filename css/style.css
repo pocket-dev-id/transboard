@@ -78,8 +78,10 @@
 }
 
 /* フォントスタイル切り替えクラス */
+/* 「標準ゴシック」= Windows標準の游ゴシック系（UDフォントを使わない選択肢）。
+   以前は先頭が 'Noto Sans JP' だったがWindows標準では未搭載で無効だった */
 body.font-standard {
-  font-family: 'Noto Sans JP', 'BIZ UDPGothic', 'Yu Gothic UI', 'Yu Gothic', 'Meiryo', sans-serif !important;
+  font-family: 'Yu Gothic UI', 'Yu Gothic', 'Meiryo', 'Noto Sans JP', sans-serif !important;
 }
 body.font-bold {
   font-weight: 700 !important;
@@ -111,16 +113,35 @@ body.size-small {
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
-  font-family: 'BIZ UDPGothic', 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', 'Meiryo', sans-serif;
+  /* 既定はUDフォント（BIZ UDPGothic＝Windows同梱・医療現場の視認性に好適）。
+     実搭載フォントを優先し、'Noto Sans JP' は他OS向けの最終フォールバックに置く */
+  font-family: 'BIZ UDPGothic', 'Yu Gothic UI', 'Meiryo', 'Yu Gothic', 'Noto Sans JP', sans-serif;
   background: var(--clr-bg);
   background-attachment: fixed;
   color: var(--clr-text);
   font-size: 14px;
   line-height: 1.5;
+  /* 見出し以外の本文でも数字の桁を揃える（データダッシュボードのチラつき防止・#2） */
+  font-variant-numeric: tabular-nums;
   transition: background 0.3s ease, color 0.3s ease;
 }
+/* 患者名・自由文など通常の日本語プロポーショナル表示に戻したい箇所用 */
+.pnum { font-variant-numeric: proportional-nums; }
 button { cursor: pointer; font-family: inherit; }
 select, input { font-family: inherit; }
+
+/* 見出しの階層強化（#3）: 本文(line-height 1.5)より詰めた行間＋わずかな字間で、
+   本文とのコントラストを明確にし「意図的にデザインされた」見え方にする */
+h1, h2, h3, h4,
+.page-header h1, .panel-header h2,
+.settings-panel-header h3, .settings-panel-header h4,
+.call-section-title, .call-history-title {
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+}
+/* 最上位見出しは一段強いウェイトで階層を明確化 */
+.page-header h1 { font-weight: 800; }
+.panel-header h2 { letter-spacing: 0.015em; }
 
 /* ---------- ヘッダー ---------- */
 #app-header {
