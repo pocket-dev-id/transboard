@@ -133,22 +133,29 @@ const CONFIG = {
   },
 
   // 検査室側アクション
+  // ラベルは病棟側(ACTION_BUTTONS)・STATUS_LABELと表記を揃える（例: 到着=「検査室到着」）。
+  // 検査室でも中止できるよう各進行状態にキャンセルを用意する（破壊的操作のため実行時に確認）。
   EXAM_ROOM_ACTIONS: {
     DEPART_REGISTERED: [
-      { label: '到着', toStatus: 'ARRIVED', cls: 'btn-info' },
+      { label: '検査室到着', toStatus: 'ARRIVED', cls: 'btn-info' },
+      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
     ],
     MOVING: [
-      { label: '到着', toStatus: 'ARRIVED', cls: 'btn-info' },
+      { label: '検査室到着', toStatus: 'ARRIVED', cls: 'btn-info' },
+      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
     ],
     ARRIVED: [
       { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
+      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
     ],
     IN_EXAM: [
       { label: 'あと10分', toStatus: 'NEARLY_DONE', cls: 'btn-orange' },
       { label: '終了（迎え要）', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
+      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
     ],
     NEARLY_DONE: [
       { label: '終了（迎え要）', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
+      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
     ],
     PICKUP_REQUIRED: [],
   },

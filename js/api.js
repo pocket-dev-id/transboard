@@ -237,21 +237,28 @@ const API = {
       PICKUP_REQUIRED: 'pickup_ready_at',
       RETURNED: 'returned_at',
     };
+    // ログ用・タイムスタンプ補完用に遷移前のイベントを取得
+    let current = null;
+    let fromStatus = null;
+    try {
+      current = await this.getOne('transfer_events', eventId);
+      if (current && current.current_status) fromStatus = current.current_status;
+    } catch (e) { /* 取得失敗時はnullのまま */ }
+
     const patch = { current_status: newStatus, ...extraFields };
     if (statusTimeMap[newStatus]) {
       patch[statusTimeMap[newStatus]] = now;
+    }
+    // 検査開始時に到着記録が無ければ補完する。病棟が「到着」を飛ばして直接「検査開始」した場合でも
+    // arrived_at を失わず、移動時間メトリクスが取りこぼされないようにする（到着は検査開始の前提）。
+    if (newStatus === 'IN_EXAM' && current && current.arrived_at == null) {
+      patch.arrived_at = now;
     }
     // NEARLY_DONEの場合、設定値に基づいて迎え目安を再計算
     if (newStatus === 'NEARLY_DONE') {
       const ndMin = AppState.getSettingInt('nearly_done_minutes', 10);
       patch.estimated_pickup_at = now + (ndMin > 0 ? ndMin : 10) * 60 * 1000;
     }
-    // ログ用に遷移前のステータスを取得
-    let fromStatus = null;
-    try {
-      const current = await this.getOne('transfer_events', eventId);
-      if (current && current.current_status) fromStatus = current.current_status;
-    } catch (e) { /* 取得失敗時はnullのまま */ }
 
     const updated = await this.patch('transfer_events', eventId, patch);
     // ログを記録

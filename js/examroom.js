@@ -169,11 +169,16 @@ const ExamRoom = {
         return;
       }
 
+      // ICスキャンの遷移はボタン操作(EXAM_ROOM_ACTIONS)と一致させる。
+      // ARRIVED→IN_EXAM を飛ばすと exam_started_at が記録されず、経過時間・標準超過・
+      // KPI「平均検査」から漏れてしまうため、必ず検査開始を経由させる。
+      // 検査中(IN_EXAM)を使わない運用では下の isStatusHidden 読み替えで自動的に次可視へ進む。
       const statusActions = {
-        DEPART_REGISTERED: { nextStatus: 'ARRIVED', message: '到着にしますか？' },
-        MOVING: { nextStatus: 'ARRIVED', message: '到着にしますか？' },
-        ARRIVED: { nextStatus: 'PICKUP_REQUIRED', message: '終了（迎え要）にしますか？' },
+        DEPART_REGISTERED: { nextStatus: 'ARRIVED', message: '検査室到着にしますか？' },
+        MOVING: { nextStatus: 'ARRIVED', message: '検査室到着にしますか？' },
+        ARRIVED: { nextStatus: 'IN_EXAM', message: '検査開始にしますか？' },
         IN_EXAM: { nextStatus: 'PICKUP_REQUIRED', message: '終了（迎え要）にしますか？' },
+        NEARLY_DONE: { nextStatus: 'PICKUP_REQUIRED', message: '終了（迎え要）にしますか？' },
       };
 
       const action = statusActions[matchEvent.current_status];
@@ -604,6 +609,19 @@ const ExamRoom = {
   async _updateStatus(eventId, newStatus) {
     const event = AppState.activeEvents.find(e => e.id === eventId) ||
                   AppState.todayEvents.find(e => e.id === eventId);
+
+    // キャンセルは破壊的操作のため確認を挟む（検査室側からの中止）
+    if (newStatus === 'CANCELLED') {
+      const bed = event ? AppState.getBedById(event.bed_id) : null;
+      const bedName = bed ? UI.formatBedName(bed) : '患者';
+      const ok = await UI.confirmModal(`${bedName} の移送をキャンセルしますか？`, {
+        title: '移送をキャンセル',
+        danger: true,
+        confirmLabel: 'キャンセルする',
+        cancelLabel: '戻る',
+      });
+      if (!ok) return;
+    }
 
     try {
       await API.updateEventStatus(eventId, newStatus);

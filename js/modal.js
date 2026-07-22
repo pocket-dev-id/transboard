@@ -379,9 +379,49 @@ const BedModal = {
     `;
   },
 
+  // ACTION_BUTTONS のラベル/クラスを全状態から逆引き（読み替え時の表示に使う）
+  _wardMeta(toStatus) {
+    for (const acts of Object.values(CONFIG.ACTION_BUTTONS)) {
+      const hit = acts.find(a => a.toStatus === toStatus);
+      if (hit) return { label: hit.label, cls: hit.cls };
+    }
+    return { label: CONFIG.STATUS_LABEL[toStatus] || toStatus, cls: 'btn-primary' };
+  },
+
+  // 遷移ボタン非表示(hidden_statuses)を尊重した病棟アクション一覧。
+  // 非表示の遷移先は除去ではなく「次に使う状態」へ読み替える（検査室 _visibleExamActions と同挙動）。
+  // これをしないと、例えば検査中(IN_EXAM)を非表示運用にした際に病棟の到着カードから
+  // 前進ボタンが消え、キャンセルしか押せず患者が詰む。CANCELLED は進行状態ではないため対象外。
+  _visibleWardActions(currentStatus) {
+    const raw = CONFIG.ACTION_BUTTONS[currentStatus] || [];
+    const seen = new Set();
+    const result = [];
+    for (const a of raw) {
+      if (a.toStatus === 'CANCELLED') {
+        if (!seen.has('CANCELLED')) { seen.add('CANCELLED'); result.push({ ...a }); }
+        continue;
+      }
+      let toStatus = a.toStatus;
+      let label = a.label;
+      let cls = a.cls;
+      if (AppState.isStatusHidden(toStatus)) {
+        const next = AppState.getNextVisibleStatus(toStatus);
+        if (!next) continue; // 前進先が全て非表示なら出さない
+        toStatus = next;
+        const meta = this._wardMeta(next);
+        label = meta.label;
+        cls = meta.cls;
+      }
+      if (seen.has(toStatus)) continue;
+      seen.add(toStatus);
+      result.push({ label, toStatus, cls });
+    }
+    return result;
+  },
+
   _renderActionButtons(event, isManual = false) {
     const status = event.current_status;
-    const actions = (CONFIG.ACTION_BUTTONS[status] || []).filter(a => !AppState.isStatusHidden(a.toStatus));
+    const actions = this._visibleWardActions(status);
 
     if (actions.length === 0 && status !== 'RETURNED' && status !== 'CANCELLED') return '';
 
