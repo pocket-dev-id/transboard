@@ -1752,7 +1752,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       const activeEvents = scoped.filter(e => ACTIVE_TRANSFER_STATUSES.has(e.current_status));
       const todayEvents = scoped.filter(e => {
         if (ACTIVE_TRANSFER_STATUSES.has(e.current_status)) return true;
-        return Number.isFinite(todayMs) && todayMs > 0 && e.departed_at != null && e.departed_at >= todayMs;
+        if (!Number.isFinite(todayMs) || todayMs <= 0) return false;
+        // 完了/キャンセルは「本日の出棟」を取りこぼさないよう、移動中で記録される departed_at に
+        // 加えて出棟登録時刻 created_at でも当日判定する
+        return (e.departed_at != null && e.departed_at >= todayMs) ||
+               (e.created_at != null && e.created_at >= todayMs);
       });
       return { success: true, activeEvents, todayEvents };
     }

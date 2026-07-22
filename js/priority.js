@@ -47,7 +47,9 @@ const Priority = {
     today.setHours(0, 0, 0, 0);
     const todayMs = today.getTime();
     const events = AppState.todayEvents || [];
-    const departsToday = events.filter(e => e.departed_at && e.departed_at >= todayMs).length;
+    // 「移動中」を記録しない運用でも出棟登録した時点でカウントするため、
+    // departed_at（移動中で記録）が無ければ created_at（出棟登録時刻）で判定する
+    const departsToday = events.filter(e => (e.departed_at || e.created_at || 0) >= todayMs).length;
 
     const examVals = [], pickupVals = [];
     if (typeof ExamStats !== 'undefined') {

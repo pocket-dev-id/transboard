@@ -767,6 +767,7 @@ const BedModal = {
         estimated_pickup_at: now + durationMin * 60 * 1000,
         note: note || '',
         patient_ic_tag_id: icTagId || null,
+        created_at: now,
         departed_at: null,
         arrived_at: null,
         exam_started_at: null,

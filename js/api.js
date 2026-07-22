@@ -208,8 +208,10 @@ const API = {
       if (e.ward_id !== wardId) return false;
       // 進行中のイベントは departed_at の有無に関わらず常に含める
       if (CONFIG.ACTIVE_STATUSES.includes(e.current_status)) return true;
-      // 完了・キャンセルは今日の departed_at を基準にフィルタ
-      return e.departed_at != null && e.departed_at >= todayMs;
+      // 完了・キャンセルは、移動中で記録される departed_at に加えて出棟登録時刻 created_at でも当日判定する
+      // （移動中を記録しない運用でも当日分を取りこぼさない）
+      return (e.departed_at != null && e.departed_at >= todayMs) ||
+             (e.created_at != null && e.created_at >= todayMs);
     });
   },
 
