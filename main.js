@@ -1374,8 +1374,12 @@ function enforceReadOnlyConnectionString(connStr) {
 // PowerShell経由でODBC接続を実行する共通ヘルパー。$connBody にはOdbcConnectionを
 // $conn変数として開いた状態で渡ってくる想定のスクリプト片を渡す（接続文字列の埋め込み・
 // エスケープ・タイムアウト・ERROR:プレフィックスでの失敗判定を一箇所に集約する）
-function execOdbcPowerShell(connectionString, scriptBody) {
-  const safe = String(connectionString).replace(/'/g, '').slice(0, 500);
+// timeoutMsは呼び出し内容の重さに応じて呼び出し側から調整する（単純接続確認 <スキーマ取得 <実クエリ実行）
+function execOdbcPowerShell(connectionString, scriptBody, timeoutMs = 15000) {
+  // PowerShellのシングルクォート文字列内では ' は '' でエスケープする。
+  // 以前はシングルクォートを無条件に除去しており、パスワード等に ' が含まれる接続文字列で
+  // 認証情報が無言で欠落するバグがあったため、除去でなくエスケープに変更する。
+  const safe = String(connectionString).slice(0, 500).replace(/'/g, "''");
   const ps = `
 $ErrorActionPreference = 'Stop'
 try {
@@ -1388,28 +1392,47 @@ ${scriptBody}
   Write-Output "ERROR:$($_.Exception.Message)"
 }`.trim();
 
-  const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
-    { encoding: 'utf8', timeout: 15000 }).trim();
-  if (!out || out.startsWith('ERROR:')) {
-    const error = out ? out.slice(6) : '接続に失敗しました';
-    return { success: false, error };
+  try {
+    const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
+      { encoding: 'utf8', timeout: timeoutMs }).trim();
+    if (!out || out.startsWith('ERROR:')) {
+      const error = out ? out.slice(6) : '接続に失敗しました';
+      return { success: false, error };
+    }
+    return { success: true, output: out };
+  } catch (e) {
+    if (e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {
+      return { success: false, error: `処理がタイムアウトしました（${Math.round(timeoutMs / 1000)}秒)。データベースの応答が遅いか、ネットワーク/権限の問題が考えられます。` };
+    }
+    return { success: false, error: e.message };
   }
-  return { success: true, output: out };
 }
 
 // IPC通信でODBC接続経由でテーブル/ビュー一覧を取得する
 ipcMain.handle('get-odbc-tables', async (event, { connectionString }) => {
   if (!connectionString) return { success: false, error: '接続文字列が指定されていません', tables: [] };
 
+  // 他のODBCハンドラ(test-odbc-connection/run-odbc-sync)と同様、読み取り専用属性を強制する
+  const connResult = enforceReadOnlyConnectionString(connectionString);
+  if (!connResult.valid) {
+    return { success: false, error: connResult.message, tables: [] };
+  }
+
   try {
-    const result = execOdbcPowerShell(connectionString, `
+    // 単純な接続確認(test-odbc-connection)と異なりスキーマ/カタログ列挙は重い処理のため
+    // タイムアウトを長めに取る
+    const result = execOdbcPowerShell(connResult.connectionString, `
   $schema = $conn.GetSchema('Tables')
   $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
     Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
     Sort-Object type, name)
-  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }`);
+  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }`, 25000);
     if (!result.success) {
-      return { success: false, error: result.error, tables: [] };
+      // 接続自体は通っても、ドライバがスキーマ列挙(GetSchema/SQLTables)に対応していない、
+      // またはDBアカウントにメタデータ参照権限が無いために失敗するケースが多いため、
+      // 生のエラーメッセージだけでなく原因の当たりをつけやすいヒントを添える
+      const hint = 'テーブル一覧の取得に失敗しました。ODBCドライバがテーブル一覧の取得(スキーマ情報取得)に対応していないか、データベースアカウントにメタデータ参照権限がない可能性があります。「手動で入力」から対象テーブル/ビュー名を直接指定することもできます。';
+      return { success: false, error: `${hint}\n詳細: ${result.error}`, tables: [] };
     }
     const raw = JSON.parse(result.output);
     const tables = (Array.isArray(raw) ? raw : [raw]).map(r => ({ name: r.name, type: r.type }));
@@ -1484,10 +1507,8 @@ ipcMain.handle('test-odbc-connection', async (event, { connectionString, sqlQuer
   return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済、実接続確認済])' };
 });
 
-// IPC通信でODBC直接同期を実行する（シミュレーション）
+// IPC通信でODBC直接同期を実行する（実際にSQLクエリを実行しCSV取込と同じ経路でレンダラーへ渡す）
 ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) => {
-  await new Promise(resolve => setTimeout(resolve, 1200));
-  
   // 接続文字列の検証 & 読み取り専用属性の付与
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
@@ -1505,57 +1526,51 @@ ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) =>
     return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
   }
 
-  const db = readDB();
-  const mappingSetting = db.system_settings?.find(s => s.id === 'import_mapping');
-  let mapping = { bed_number: '', room_code: '', bed_code: '', join_char: '-', patient_id: '', patient_name: '', is_present: '' };
-  if (mappingSetting && mappingSetting.value) {
-    try { mapping = JSON.parse(mappingSetting.value); } catch(e) {}
+  // クエリをPowerShellのシングルクォート文字列として埋め込むためエスケープ（' → ''）
+  const safeQuery = String(sqlQuery).replace(/'/g, "''");
+  const scriptBody = `
+  $cmd = $conn.CreateCommand()
+  $cmd.CommandText = '${safeQuery}'
+  $cmd.CommandTimeout = 25
+  $reader = $cmd.ExecuteReader()
+  $cols = @()
+  for ($i = 0; $i -lt $reader.FieldCount; $i++) { $cols += $reader.GetName($i) }
+  $rows = New-Object System.Collections.ArrayList
+  while ($reader.Read()) {
+    $obj = [ordered]@{}
+    foreach ($c in $cols) {
+      $v = $reader[$c]
+      if ($v -is [DBNull]) { $obj[$c] = '' } else { $obj[$c] = "$v" }
+    }
+    [void]$rows.Add((New-Object PSObject -Property $obj))
   }
-  
-  const mapBed = mapping.bed_number || 'bed_number';
-  const mapRoomCode = mapping.room_code || '';
-  const mapBedCode = mapping.bed_code || '';
-  const mapPatId = mapping.patient_id || 'patient_id';
-  const mapPatName = mapping.patient_name || 'patient_name';
-  const mapPresent = mapping.is_present || 'is_present';
+  $reader.Close()
+  if ($rows.Count -eq 0) { Write-Output '[]' } else { $rows | ConvertTo-Json -Compress }`;
 
-  const mockRows = [];
-  const japaneseNames = ['佐藤 健一', '鈴木 美紀', '高橋 浩', '田中 明美', '渡辺 恵子', '伊藤 淳', '山本 正史', '中村 幸子', '小林 茂', '加藤 陽子'];
-  
-  const beds = db.beds || [];
-  beds.forEach((bed, index) => {
-    const row = {};
-    
-    // Determine bed identification columns
-    if (mapRoomCode && mapBedCode) {
-      row[mapRoomCode] = bed.room_code || bed.room_number || '';
-      row[mapBedCode] = bed.bed_code || '';
-    } else {
-      row[mapBed] = bed.bed_number || '';
-    }
-    
-    // Generate occupied or empty status (70% occupied)
-    const isOccupied = (index % 3 !== 0); 
-    if (isOccupied) {
-      row[mapPatId] = `P${100000 + index}`;
-      row[mapPatName] = japaneseNames[index % japaneseNames.length];
-      row[mapPresent] = '在床';
-    } else {
-      row[mapPatId] = '';
-      row[mapPatName] = '空床';
-      row[mapPresent] = '不在';
-    }
-    mockRows.push(row);
-  });
+  // 実クエリの実行は接続確認より時間がかかりうるためタイムアウトを長めに取る
+  const result = execOdbcPowerShell(finalConnStr, scriptBody, 30000);
+  if (!result.success) {
+    return { success: false, message: 'ODBC同期に失敗しました: ' + result.error };
+  }
 
+  let rows;
+  try {
+    const raw = JSON.parse(result.output);
+    rows = Array.isArray(raw) ? raw : [raw];
+  } catch (e) {
+    return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
+  }
+
+  // CSV取込(importCSV)と同じ経路(data-imported)へ、生のカラム名のまま渡す。
+  // カラム名→病床/患者名等へのマッピングはCSVと同様レンダラー側(import_mapping設定)で行う。
   if (mainWindow) {
     mainWindow.webContents.send('data-imported', {
-      fileName: 'ODBC DB Sync (Simulated - ReadOnly)',
-      rows: mockRows
+      fileName: `ODBC同期 (${new Date().toLocaleString('ja-JP')})`,
+      rows
     });
   }
-  
-  return { success: true, count: mockRows.length };
+
+  return { success: true, count: rows.length };
 });
 
 // IPC通信で出棟中（進行中）の移送情報をリセットする
