@@ -243,7 +243,11 @@
             <input type="text" id="exam-ic-input" placeholder="患者ICスキャン口 (スキャンで自動遷移)" style="padding: 6px 12px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; width: 250px;">
           </div>
         </div>
-        <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #475569; margin-left: auto; cursor: pointer; user-select: none;">
+        <div id="exam-view-toggle" class="exam-view-toggle" style="margin-left: auto;">
+          <button class="btn btn-outline btn-sm exam-view-btn active" data-view="card" title="カード表示"><i class="fas fa-th-large"></i> カード</button>
+          <button class="btn btn-outline btn-sm exam-view-btn" data-view="list" title="一覧表示"><i class="fas fa-list"></i> 一覧</button>
+        </div>
+        <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #475569; cursor: pointer; user-select: none;">
           <input type="checkbox" id="chk-exam-show-patient-names" style="cursor: pointer; transform: scale(1.1);">
           <span>患者名を表示</span>
         </label>

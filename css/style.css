@@ -71,8 +71,8 @@
   --badge-cancelled-bg: #eef0f2;   --badge-cancelled-text: #4b5563;
 
   /* カードサイズデフォルト (medium) */
-  --bed-card-min-h: 55px;
-  --bed-card-pad: 4px 6px;
+  --bed-card-min-h: 60px;
+  --bed-card-pad: 6px 8px;
   --bed-card-num-sz: 14px;
   --bed-card-info-sz: 9px;
 }
@@ -374,7 +374,7 @@ h1, h2, h3, h4,
 #bed-map-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
+  gap: 11px;
   transform: scale(var(--bedmap-zoom, 1));
   transform-origin: top left;
   transition: transform .15s ease;
@@ -676,11 +676,22 @@ h1, h2, h3, h4,
   min-width: 700px;
 }
 .timeline-bed-label {
-  width: 48px;
-  font-size: 13px;
-  font-weight: 700;
-  text-align: right;
+  width: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
   flex-shrink: 0;
+}
+.timeline-bed-num { font-size: 13px; font-weight: 700; }
+.timeline-bed-patient {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--clr-text-muted);
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .timeline-bar-track {
   flex: 1;
@@ -747,6 +758,48 @@ h1, h2, h3, h4,
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* カード/一覧 表示切り替えボタン */
+.exam-view-toggle { display: flex; gap: 2px; }
+.exam-view-btn.active {
+  background: var(--clr-primary) !important;
+  color: #fff !important;
+  border-color: var(--clr-primary) !important;
+  font-weight: 700;
+}
+
+/* ---------- 検査室 一覧（テーブル）表示 ---------- */
+.exam-queue-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.exam-queue-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 110px 100px 60px 70px 90px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--clr-border);
+  font-size: 12.5px;
+}
+.exam-queue-row:last-child { border-bottom: none; }
+.exam-queue-row--head {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  background: var(--clr-bg);
+}
+.exam-queue-row.status-PICKUP_REQUIRED { background: var(--clr-pickup); }
+.exam-queue-row.status-NEARLY_DONE { background: var(--clr-nearly-done); }
+.eqr-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eqr-bed { font-weight: 800; font-size: 14px; }
+.eqr-elapsed.text-danger { color: #dc2626; font-weight: 800; }
+.eqr-actions { display: flex; gap: 4px; flex-wrap: wrap; overflow: visible; white-space: normal; }
 
 /* ---------- ボタン ---------- */
 .btn {
@@ -928,12 +981,31 @@ h1, h2, h3, h4,
   padding: 4px 0;
 }
 .tl-row-label {
-  width: 60px;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
   font-size: 13px;
   font-weight: 700;
   text-align: right;
   flex-shrink: 0;
   padding-right: 8px;
+}
+.tl-row-bed-num { font-size: 13px; font-weight: 700; }
+.tl-row-patient {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--clr-text-muted);
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 同一病床で患者が入れ替わった行を強調（見落とし防止） */
+.tl-row-label--changed .tl-row-patient {
+  color: #dc2626;
+  font-weight: 800;
 }
 .tl-row-track {
   flex: 1;
@@ -2127,12 +2199,12 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
    ============================================================ */
 #bed-map-grid.bed-map-grid-layout {
   display: grid;
-  gap: 6px;
+  gap: 11px;
 }
 #bed-map-grid.bed-map-grid-simple {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 11px;
 }
 /* 全病棟横断表示: 病棟ごとにセクションを積み重ねる */
 #bed-map-grid.bed-map-grid-allwards {
@@ -2154,8 +2226,8 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 .bedmap-ward-section-title i { color: var(--clr-primary); }
 .bedmap-ward-section-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 11px;
 }
 .bed-cell-empty {
   /* 空セル: 廊下・壁などを表す透明スペース */

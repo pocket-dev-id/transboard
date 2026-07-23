@@ -54,6 +54,24 @@ const ExamRoom = {
       });
     }
 
+    // カード/一覧 表示切り替えのバインド
+    const viewToggle = document.getElementById('exam-view-toggle');
+    if (viewToggle && !viewToggle.dataset.listenerBound) {
+      viewToggle.dataset.listenerBound = 'true';
+      viewToggle.querySelectorAll('.exam-view-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.classList.contains('active')) return;
+          localStorage.setItem('cfg_examroom_view_mode', btn.dataset.view);
+          viewToggle.querySelectorAll('.exam-view-btn').forEach(b => b.classList.toggle('active', b === btn));
+          this._renderQueue();
+        });
+      });
+    }
+    if (viewToggle) {
+      const mode = localStorage.getItem('cfg_examroom_view_mode') === 'list' ? 'list' : 'card';
+      viewToggle.querySelectorAll('.exam-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === mode));
+    }
+
     // IC登録オプションの確認
     const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
     const isIcEnabled = icSetting && icSetting.value === 'true';
@@ -402,7 +420,10 @@ const ExamRoom = {
         return timeA - timeB;
       });
 
-      container.innerHTML = relevant.map(e => this._renderQueueCard(e)).join('');
+      const viewMode = localStorage.getItem('cfg_examroom_view_mode') === 'list' ? 'list' : 'card';
+      container.innerHTML = viewMode === 'list'
+        ? this._renderQueueList(relevant)
+        : relevant.map(e => this._renderQueueCard(e)).join('');
 
       container.querySelectorAll('[data-exam-action]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -461,7 +482,9 @@ const ExamRoom = {
         const eventId = this._pendingFlashEventId;
         this._pendingFlashEventId = null;
         setTimeout(() => {
-          const card = container.querySelector(`.exam-queue-card[data-event-id="${eventId}"]`);
+          // カード/一覧どちらの表示モードでも対応できるよう data-event-id のみで探す
+          // (行ルート要素が最初にマッチするため、内側のpickup-time inputより優先して見つかる)
+          const card = container.querySelector(`[data-event-id="${eventId}"]`);
           if (card) {
             card.style.backgroundColor = '#dcfce7'; // 薄い緑色
             setTimeout(() => {
@@ -509,6 +532,75 @@ const ExamRoom = {
       result.push({ toStatus, label, cls });
     }
     return result;
+  },
+
+  // ── 一覧（テーブル）表示 ──────────────────────────────
+  // カード表示と同じデータソースを使い、病床・患者・検査種別・状態・経過・迎え目安・
+  // 付き添い・アクションを1行で見渡せるようにする（多数の患者を一度に確認したい場合向け）
+  _renderQueueList(events) {
+    const nameChk = document.getElementById('chk-exam-show-patient-names');
+    const showNames = nameChk ? nameChk.checked : false;
+    const now = Date.now();
+
+    const rows = events.map(e => {
+      const bed = AppState.getBedById(e.bed_id);
+      const examType = AppState.getExamTypeById(e.exam_type_id);
+      const staff = AppState.getStaffById(e.escort_staff_id);
+
+      const patientHtml = bed && bed.patient_name
+        ? (showNames ? UI.escapeHTML(bed.patient_name) : '＊＊＊＊')
+        : '<span class="text-muted">--</span>';
+
+      let elapsedText = '--';
+      let elapsedCls = '';
+      if (e.exam_started_at) {
+        const elapsedMin = Math.floor((now - e.exam_started_at) / 60000);
+        const standardMin = examType ? examType.standard_duration_min : null;
+        elapsedCls = (standardMin !== null && elapsedMin > standardMin) ? 'text-danger' : '';
+        elapsedText = `${elapsedMin}分`;
+      }
+
+      const pickupText = e.estimated_pickup_at ? UI.formatTime(e.estimated_pickup_at) : '--';
+
+      const icHtml = e.patient_ic_tag_id
+        ? `<i class="fas fa-id-card" style="color:#0369a1;" title="ICカードID: ${UI.escapeHTML(e.patient_ic_tag_id)}"></i>`
+        : '';
+
+      const actions = this._visibleExamActions(e.current_status);
+      const actionBtns = actions.map(a =>
+        `<button class="btn ${a.cls} btn-sm" data-exam-action="${a.toStatus}" data-event-id="${e.id}">${a.label}</button>`
+      ).join('');
+
+      return `
+        <div class="exam-queue-row status-${e.current_status}" data-event-id="${e.id}">
+          <div class="eqr-cell eqr-bed">${bed ? UI.formatBedName(bed) : '?'}</div>
+          <div class="eqr-cell eqr-patient">${patientHtml} ${icHtml}</div>
+          <div class="eqr-cell eqr-exam">${examType ? UI.escapeHTML(examType.name) : '--'}</div>
+          <div class="eqr-cell eqr-status">${UI.statusBadge(e.current_status)}</div>
+          <div class="eqr-cell eqr-elapsed ${elapsedCls}">${elapsedText}</div>
+          <div class="eqr-cell eqr-pickup">${pickupText}</div>
+          <div class="eqr-cell eqr-staff">${staff ? UI.escapeHTML(staff.name) : ''}</div>
+          <div class="eqr-cell eqr-actions">
+            ${actionBtns}
+            <button class="btn btn-outline btn-sm btn-call-ward" data-event-id="${e.id}" title="病棟へコール"><i class="fas fa-phone"></i></button>
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="exam-queue-list">
+        <div class="exam-queue-row exam-queue-row--head">
+          <div class="eqr-cell eqr-bed">病床</div>
+          <div class="eqr-cell eqr-patient">患者</div>
+          <div class="eqr-cell eqr-exam">検査種別</div>
+          <div class="eqr-cell eqr-status">状態</div>
+          <div class="eqr-cell eqr-elapsed">経過</div>
+          <div class="eqr-cell eqr-pickup">迎え目安</div>
+          <div class="eqr-cell eqr-staff">付き添い</div>
+          <div class="eqr-cell eqr-actions">操作</div>
+        </div>
+        ${rows}
+      </div>`;
   },
 
   _renderQueueCard(event) {

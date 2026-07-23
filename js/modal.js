@@ -807,6 +807,10 @@ const BedModal = {
         estimated_pickup_at: now + durationMin * 60 * 1000,
         note: note || '',
         patient_ic_tag_id: icTagId || null,
+        // 登録時点の患者名をスナップショット。bed.patient_nameは「現在の」患者名しか
+        // 持たないため、同じ病床で後日患者が入れ替わるとタイムライン上の過去イベントの
+        // 表示まで変わってしまう。イベント側に固定することで履歴上の患者名を正しく保持する
+        patient_name: bed.patient_name || null,
         created_at: now,
         departed_at: null,
         arrived_at: null,

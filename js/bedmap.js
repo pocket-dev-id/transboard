@@ -197,7 +197,7 @@ const BedMap = {
 
     // グリッドを描画
     grid.className = 'bed-map-grid-layout' + (grid.classList.contains('hide-patient-names') ? ' hide-patient-names' : '');
-    grid.style.gridTemplateColumns = `repeat(${cols}, minmax(72px, 1fr))`;
+    grid.style.gridTemplateColumns = `repeat(${cols}, minmax(84px, 1fr))`;
     grid.style.gridTemplateRows    = `repeat(${rows}, auto)`;
 
     // bedsデータへのアクセスを高速化するためにベッドマップを作成
@@ -236,7 +236,7 @@ const BedMap = {
   // ── フォールバック: シンプル一覧表示 ──
   _renderSimple(grid, beds) {
     grid.className = 'bed-map-grid-simple' + (grid.classList.contains('hide-patient-names') ? ' hide-patient-names' : '');
-    grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(90px, 1fr))';
+    grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(104px, 1fr))';
     grid.style.gridTemplateRows = '';
 
     const sorted = [...beds].sort((a, b) =>

@@ -221,8 +221,14 @@ const Timeline = {
       const bed = AppState.getBedById(e.bed_id);
       const segs = this._buildSegments(e, windowStart, windowEnd, toPercent);
       const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
+      // 患者名はイベント登録時のスナップショット(patient_name)を優先し、無ければ病床の現在名で補う
+      const rawName = e.patient_name ?? bed?.patient_name ?? null;
+      const patientLabel = rawName ? UI.getPatientName(rawName) : '';
       html += `<div class="timeline-row">
-        <div class="timeline-bed-label">${bed ? UI.formatBedName(bed) : '?'}</div>
+        <div class="timeline-bed-label">
+          <span class="timeline-bed-num">${bed ? UI.formatBedName(bed) : '?'}</span>
+          ${patientLabel ? `<span class="timeline-bed-patient">${UI.escapeHTML(patientLabel)}</span>` : ''}
+        </div>
         <div class="timeline-bar-track" data-event-id="${e.id}"
           data-window-start="${windowStart}" data-window-end="${windowEnd}"
           data-editable="${editable}"
@@ -303,9 +309,11 @@ const Timeline = {
     const bedName = bed ? `${bed.bed_number}号床` : '?';
     const pickupVal = event.estimated_pickup_at
       ? new Date(event.estimated_pickup_at).toTimeString().slice(0, 5) : '';
-    // 患者名・IDは移送イベントではなく病床マスタ側に保持されている（他画面と同じくマスク設定を尊重する）
-    const patientName = bed ? UI.getPatientName(bed.patient_name) : null;
-    const patientId = bed && bed.patient_name ? (UI.isPatientMaskEnabled() ? '＊＊＊＊' : (bed.patient_id || '')) : '';
+    // 患者名はイベント登録時のスナップショットを優先する（同じ病床で患者が入れ替わった後も、
+    // 過去のイベントは登録当時の患者名を保つ）。無ければ病床マスタの現在名で補う
+    const rawName = event.patient_name ?? bed?.patient_name ?? null;
+    const patientName = rawName ? UI.getPatientName(rawName) : null;
+    const patientId = rawName ? (UI.isPatientMaskEnabled() ? '＊＊＊＊' : (bed?.patient_id || '')) : '';
 
     TimelinePopup.show(`
       <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:10px;">
@@ -566,6 +574,25 @@ const Timeline = {
       </div>
       <div class="tl-grid">`;
 
+    // 同一病床で患者が入れ替わったことが分かるよう、時刻順に前のイベントと患者名を比較しておく
+    // (filteredの並び自体は変えず、行ラベルの強調表示にのみ使う)
+    const patientChangedIds = new Set();
+    {
+      const byBed = {};
+      filtered.forEach(e => {
+        if (!byBed[e.bed_id]) byBed[e.bed_id] = [];
+        byBed[e.bed_id].push(e);
+      });
+      Object.values(byBed).forEach(list => {
+        const chrono = [...list].sort((a, b) => (a.departed_at || a.created_at || 0) - (b.departed_at || b.created_at || 0));
+        for (let i = 1; i < chrono.length; i++) {
+          const prevName = chrono[i - 1].patient_name;
+          const curName = chrono[i].patient_name;
+          if (prevName && curName && prevName !== curName) patientChangedIds.add(chrono[i].id);
+        }
+      });
+    }
+
     // 移送行（患者ID連携スケジュールを同一行のサブトラックに表示）
     if (filtered.length > 0) {
       html += `<div class="tl-section-label"><div class="tl-row-label" style="font-size:10px;font-weight:700;color:#94a3b8;text-align:right;">移送</div><div class="tl-row-track" style="background:transparent;"></div></div>`;
@@ -574,8 +601,14 @@ const Timeline = {
         const segs = this._buildSegments(e, winStart, winEnd, toPercent);
         const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
         const linkedItems = bedScheduleMap[e.bed_id] || [];
+        const rawName = e.patient_name ?? bed?.patient_name ?? null;
+        const patientLabel = rawName ? UI.getPatientName(rawName) : '';
+        const changed = patientChangedIds.has(e.id);
         html += `<div class="tl-row${linkedItems.length ? ' tl-row--has-sched' : ''}">
-          <div class="tl-row-label">${bed ? UI.formatBedName(bed) : '?'}</div>
+          <div class="tl-row-label${changed ? ' tl-row-label--changed' : ''}" title="${changed ? '前の患者から入れ替わりました' : ''}">
+            <span class="tl-row-bed-num">${bed ? UI.formatBedName(bed) : '?'}</span>
+            ${patientLabel ? `<span class="tl-row-patient">${changed ? '<i class="fas fa-exchange-alt"></i> ' : ''}${UI.escapeHTML(patientLabel)}</span>` : ''}
+          </div>
           <div class="tl-row-track" data-event-id="${e.id}"
             data-window-start="${winStart}" data-window-end="${winEnd}"
             data-editable="${editable}"
