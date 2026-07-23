@@ -264,6 +264,7 @@ const ExamRoom = {
 
     if (!roomId) {
       if (summaryContainer) summaryContainer.innerHTML = '';
+      container.classList.remove('exam-queue-list-mode');
       container.innerHTML = this._renderRoomGrid();
       // グリッドカードのクリックイベント
       container.querySelectorAll('[data-select-room]').forEach(card => {
@@ -420,7 +421,10 @@ const ExamRoom = {
         return timeA - timeB;
       });
 
+      // #exam-room-queue はカード表示用の固定グリッド(minmax(300px,1fr))のため、一覧モードでは
+      // 1個のラッパーdivが1カード分の幅に押し込められてしまう。モード切替クラスで解除する
       const viewMode = localStorage.getItem('cfg_examroom_view_mode') === 'list' ? 'list' : 'card';
+      container.classList.toggle('exam-queue-list-mode', viewMode === 'list');
       container.innerHTML = viewMode === 'list'
         ? this._renderQueueList(relevant)
         : relevant.map(e => this._renderQueueCard(e)).join('');

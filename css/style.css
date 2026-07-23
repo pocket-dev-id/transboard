@@ -720,6 +720,12 @@ h1, h2, h3, h4,
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 16px;
 }
+/* 一覧表示モードでは1個の.exam-queue-listラッパーだけが子要素になるため、
+   カード用グリッド(minmax(300px,1fr))のままだと1カード分の幅に押し込められてしまう。
+   このクラスが付いている間はグリッドを解除し、ラッパーが全幅を使えるようにする */
+#exam-room-queue.exam-queue-list-mode {
+  display: block;
+}
 .exam-queue-card {
   background: var(--clr-surface);
   border: 2px solid var(--clr-border);
