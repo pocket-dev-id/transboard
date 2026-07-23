@@ -106,21 +106,9 @@ const BedModal = {
       });
     }
 
-    // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
-    if (!event) {
-      setTimeout(() => {
-        // 新規登録フォームは検査種別にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
-        document.getElementById('f-exam-type')?.focus();
-      }, 50);
-    } else {
-      const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
-      const isIcEnabled = icSetting && icSetting.value === 'true';
-      if (isIcEnabled) {
-        setTimeout(() => {
-          document.getElementById('m-ic-tag-id')?.focus();
-        }, 50);
-      }
-    }
+    // Electron/Windowsで「モーダルを開いた直後に入力欄が打てなくなる」既知バグの対策として、
+    // 開いた直後に見えるフォーカス可能フィールドへフォーカスして入力フォーカスを確立する
+    this._focusInitialField(!!event);
 
     if (this._pendingFlash) {
       this._pendingFlash = false;
@@ -135,6 +123,27 @@ const BedModal = {
         }
       }, 100);
     }
+  },
+
+  // モーダルを開いた直後のフォーカス確立（Electron/Windowsの入力不能バグ対策）。
+  // 編集モーダルでIC連携が有効なときはスキャン受けのためIC入力へ、それ以外は
+  // 最初の「見える」フォーカス可能フィールドへ当てる。画面外に隠したselect
+  // (.visually-hidden-select) はフォーカスしても入力フォーカス確立効果が得られないため除外する。
+  _focusInitialField(hasEvent) {
+    setTimeout(() => {
+      const modalBody = document.getElementById('modal-body');
+      if (!modalBody) return;
+      if (hasEvent) {
+        const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
+        const isIcEnabled = icSetting && icSetting.value === 'true';
+        const icInput = document.getElementById('m-ic-tag-id');
+        if (isIcEnabled && icInput) { icInput.focus(); return; }
+      }
+      const target = modalBody.querySelector(
+        '.option-card, input:not([type="hidden"]):not(.visually-hidden-select), textarea, select:not(.visually-hidden-select)'
+      );
+      if (target) target.focus();
+    }, 50);
   },
 
   close() {
@@ -508,9 +517,12 @@ const BedModal = {
         if (modalEl) {
           modalEl.onclick = (e) => {
             const targetTagName = e.target.tagName.toLowerCase();
-            if (!['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) {
-              editIcInput.focus();
-            }
+            if (['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) return;
+            // フォーカスが既にモーダル内のフィールドにあるなら横取りしない（編集中の入力欄を邪魔しない）。
+            // 本当にフォーカスが外れている（body等）ときだけ、スキャン受けのIC入力へ戻す
+            const active = document.activeElement;
+            if (active && active !== document.body && modalEl.contains(active)) return;
+            editIcInput.focus();
           };
         }
       }

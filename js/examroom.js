@@ -89,11 +89,13 @@ const ExamRoom = {
           examPage.dataset.focusTrapBound = 'true';
           examPage.addEventListener('click', (e) => {
             const targetTagName = e.target.tagName.toLowerCase();
-            if (!['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) {
-              if (document.getElementById('exam-room-select')?.value) {
-                icInput.focus();
-              }
-            }
+            if (['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) return;
+            if (!document.getElementById('exam-room-select')?.value) return;
+            // フォーカスが既にページ内のフィールドにあるなら横取りしない（迎え目安の編集等を邪魔しない）。
+            // 本当に外れているときだけスキャン受けのIC入力へ戻す
+            const active = document.activeElement;
+            if (active && active !== document.body && examPage.contains(active)) return;
+            icInput.focus();
           });
         }
       } else {
