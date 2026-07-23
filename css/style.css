@@ -17,9 +17,6 @@
   /* 状態カラー - フラット・低彩度で調和させた配色 */
   --clr-in-bed: #f7f8fa;
   --clr-in-bed-border: #d8dce2;
-  --clr-depart-reg: #eef4f8;
-  --clr-depart-reg-border: #2f6d92;
-  --clr-depart-reg-text: #245876;
   --clr-moving: #eeedf6;
   --clr-moving-border: #5b57a6;
   --clr-moving-text: #443f80;
@@ -61,7 +58,6 @@
   --touch-target-min: 44px;
   /* ステータスバッジ色（低彩度・フラット） */
   --badge-in-bed-bg: #eef0f3;      --badge-in-bed-text: #4b5563;
-  --badge-depart-bg: #e7eff5;      --badge-depart-text: #245876;
   --badge-moving-bg: #eae9f4;      --badge-moving-text: #443f80;
   --badge-arrived-bg: #e4f0f1;     --badge-arrived-text: #226a72;
   --badge-in-exam-bg: #f3ecdd;     --badge-in-exam-text: #7a5713;
@@ -2563,9 +2559,6 @@ body.theme-dark {
   /* ダークテーマ用のステータスカラー - 半透明調整 */
   --clr-in-bed: rgba(30, 41, 59, 0.5);
   --clr-in-bed-border: rgba(71, 85, 105, 0.5);
-  --clr-depart-reg: rgba(30, 58, 138, 0.6);
-  --clr-depart-reg-border: var(--clr-primary);
-  --clr-depart-reg-text: #93c5fd;
   --clr-moving: rgba(46, 16, 101, 0.6);
   --clr-moving-border: #7c3aed;
   --clr-moving-text: #c4b5fd;
@@ -2683,9 +2676,6 @@ body.theme-blue {
   /* ステータスカラーもブルー基調に調和 - 半透明調整 */
   --clr-in-bed: rgba(255, 255, 255, 0.5);
   --clr-in-bed-border: rgba(186, 230, 253, 0.6);
-  --clr-depart-reg: rgba(224, 242, 254, 0.7);
-  --clr-depart-reg-border: #0284c7;
-  --clr-depart-reg-text: #0369a1;
   --clr-moving: rgba(237, 233, 254, 0.8);
   --clr-moving-border: #7c3aed;
   --clr-moving-text: #5b21b6;
@@ -2726,9 +2716,6 @@ body.theme-high-contrast {
   /* 高コントラスト用のステータスカラー */
   --clr-in-bed: #000000;
   --clr-in-bed-border: #ffffff;
-  --clr-depart-reg: #000000;
-  --clr-depart-reg-border: #ffff00;
-  --clr-depart-reg-text: #ffff00;
   --clr-moving: #000000;
   --clr-moving-border: #ffff00;
   --clr-arrived: #000000;
@@ -3053,9 +3040,6 @@ body.theme-cvd {
   /* 色覚対応ステータスカラー: 赤↔緑の混同を避けティール/ピンクで代替 */
   --clr-in-bed: rgba(248, 250, 252, 0.85);
   --clr-in-bed-border: rgba(148, 163, 184, 0.6);
-  --clr-depart-reg: rgba(219, 234, 254, 0.85);
-  --clr-depart-reg-border: var(--clr-primary-dark);
-  --clr-depart-reg-text: #1e40af;
   --clr-moving: rgba(237, 233, 254, 0.85);
   --clr-moving-border: #7c3aed;
   --clr-moving-text: #5b21b6;
@@ -3098,9 +3082,6 @@ body.theme-apple {
   /* iOS System Colors */
   --clr-in-bed: rgba(242, 242, 247, 0.6);
   --clr-in-bed-border: rgba(60, 60, 67, 0.18);
-  --clr-depart-reg: rgba(0, 122, 255, 0.12);
-  --clr-depart-reg-border: #007aff;
-  --clr-depart-reg-text: #0040dd;
   --clr-moving: rgba(175, 82, 222, 0.12);
   --clr-moving-border: #af52de;
   --clr-moving-text: #6b21a8;
@@ -3144,9 +3125,6 @@ body.theme-material {
   /* Google Workspace / Material パレット */
   --clr-in-bed: rgba(248, 249, 250, 0.7);
   --clr-in-bed-border: rgba(218, 220, 224, 0.9);
-  --clr-depart-reg: rgba(26, 115, 232, 0.1);
-  --clr-depart-reg-border: #1a73e8;
-  --clr-depart-reg-text: #174ea6;
   --clr-moving: rgba(161, 66, 244, 0.1);
   --clr-moving-border: #a142f4;
   --clr-moving-text: #6a1fc2;
@@ -3190,9 +3168,6 @@ body.theme-fluent {
   /* Fluent UI 共有カラーランプ */
   --clr-in-bed: rgba(250, 249, 248, 0.7);
   --clr-in-bed-border: rgba(225, 225, 225, 0.85);
-  --clr-depart-reg: rgba(0, 120, 212, 0.1);
-  --clr-depart-reg-border: #0078d4;
-  --clr-depart-reg-text: #004578;
   --clr-moving: rgba(135, 100, 184, 0.12);
   --clr-moving-border: #8764b8;
   --clr-moving-text: #52398a;

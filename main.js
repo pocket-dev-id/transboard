@@ -460,6 +460,19 @@ function readDB() {
       });
     }
     
+    // 旧「出棟登録(DEPART_REGISTERED)」の進行中イベントを「移動中(MOVING)」へ移行（自己修復）。
+    // DEPART_REGISTEREDは廃止済みで、そのまま残ると ACTIVE_STATUSES 等に該当せず盤面から
+    // 消えてUIで前進不能になるため、一度だけMOVINGへ読み替える（departed_atが無ければ補完）。
+    if (Array.isArray(db.transfer_events)) {
+      for (const ev of db.transfer_events) {
+        if (ev && ev.current_status === 'DEPART_REGISTERED') {
+          ev.current_status = 'MOVING';
+          if (ev.departed_at == null) ev.departed_at = ev.created_at || Date.now();
+          hasDuplicates = true; // 再書き込みトリガーを流用（移行結果を永続化する）
+        }
+      }
+    }
+
     // 全テーブルの重複IDを排除（自己修復プログラム）
     for (const table in db) {
       if (Array.isArray(db[table])) {
@@ -481,7 +494,7 @@ function readDB() {
         db[table] = uniqueList;
       }
     }
-    
+
     if (hasDuplicates || needsEncryptionRewrite) {
       console.log('[DB] 重複データ検出または暗号化適用のための再書き込みを実施します。');
       writeDB(db);

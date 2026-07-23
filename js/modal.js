@@ -289,15 +289,16 @@ const BedModal = {
     const now = Date.now();
     const remaining = event.estimated_pickup_at ? event.estimated_pickup_at - now : null;
 
+    // 出棟登録＝移動中に統合したため、登録(created_at)と移動開始(departed_at)は同時刻。
+    // 「出棟（移動開始）」の1行にまとめ、冗長な同時刻2行を出さない
     const timelineItems = [
-      { label: '出棟登録', time: event.created_at, icon: 'plus-circle', done: true },
-      { label: '移動開始', time: event.departed_at, icon: 'walking' },
+      { label: '出棟（移動開始）', time: event.departed_at || event.created_at, icon: 'walking', done: true },
       { label: '検査室到着', time: event.arrived_at, icon: 'map-marker-alt' },
       { label: '検査開始', time: event.exam_started_at, icon: 'flask' },
       { label: 'あと10分', time: event.nearly_done_at, icon: 'clock' },
       { label: '迎え要', time: event.pickup_ready_at, icon: 'bell' },
       { label: '帰棟完了', time: event.returned_at, icon: 'home' },
-    ].filter(item => item.label === '出棟登録' || item.time);
+    ].filter(item => item.done || item.time);
 
     const timelineHtml = timelineItems.map(item => `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:12px;">
