@@ -135,6 +135,33 @@ Object.assign(Settings, {
       }).join('');
 
     const admMode = admissionModeSetting.value || 'csv';
+
+    // ODBCステッパー: 各ステップが埋まっているかを現在の設定値から判定する（見た目のみ、永続化しない）
+    const odbcStepDsnDone = /DSN=[^;]+/i.test(odbcConnSetting.value || '');
+    const odbcStepAuthDone = /UID=[^;]+/i.test(odbcConnSetting.value || '') || /Trusted_Connection=Yes/i.test(odbcConnSetting.value || '');
+    const odbcStepConnDone = !!(odbcConnSetting.value || '').trim();
+    const odbcStepQueryDone = !!(odbcQuerySetting.value || '').trim();
+    const _odbcStep = (n, done, icon, label) => `
+      <div class="odbc-step ${done ? 'completed' : ''}" data-step="${n}">
+        <div class="odbc-step-circle">${done ? '<i class="fas fa-check"></i>' : `<i class="fas ${icon}"></i>`}</div>
+        <span class="odbc-step-label">${label}</span>
+      </div>`;
+    const odbcStepperHtml = `
+      <div class="odbc-stepper">
+        ${_odbcStep(1, odbcStepDsnDone, 'fa-database', 'DSN')}
+        <div class="odbc-step-connector ${odbcStepDsnDone ? 'completed' : ''}"></div>
+        ${_odbcStep(2, odbcStepAuthDone, 'fa-key', '認証')}
+        <div class="odbc-step-connector ${odbcStepAuthDone ? 'completed' : ''}"></div>
+        ${_odbcStep(3, odbcStepConnDone, 'fa-code', '接続文字列')}
+        <div class="odbc-step-connector ${odbcStepConnDone ? 'completed' : ''}"></div>
+        ${_odbcStep(4, odbcStepQueryDone, 'fa-table', 'クエリ')}
+        <div class="odbc-step-connector ${odbcStepQueryDone ? 'completed' : ''}"></div>
+        <div class="odbc-step" id="odbc-step-5" data-step="5">
+          <div class="odbc-step-circle"><i class="fas fa-vial"></i></div>
+          <span class="odbc-step-label">テスト・同期</span>
+        </div>
+      </div>`;
+
     body.innerHTML = `
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
@@ -200,7 +227,7 @@ Object.assign(Settings, {
           </div>
         </div>
         
-        <div class="settings-form-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+        <div class="settings-form-grid" style="display:grid; grid-template-columns: ${connTypeSetting.value === 'odbc' ? '1fr' : '1fr 1fr'}; gap:16px;">
           
           <!-- 左カラム：パス・マッピング・スケジュール -->
           <div style="display:flex; flex-direction:column; gap:16px;">
@@ -246,7 +273,9 @@ Object.assign(Settings, {
             <!-- 1. ODBC接続設定 (ODBC用) -->
             <div id="odbc-conn-panel" style="background:#f8fafc; padding:16px; border-radius:8px; border:1px solid #e2e8f0; display:${connTypeSetting.value === 'odbc' ? 'block' : 'none'};">
               <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748;"><i class="fas fa-database"></i> ODBC接続設定 (電子カルテDB連携)</h4>
-              
+
+              ${odbcStepperHtml}
+
               <!-- 読み取り専用安全対策の通知 -->
               <div style="margin-bottom:16px; padding:12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; color:#166534; font-size:12px; display:flex; align-items:flex-start; gap:10px;">
                 <i class="fas fa-shield-alt" style="margin-top:2px; font-size:16px; color:#15803d;"></i>
@@ -313,30 +342,48 @@ Object.assign(Settings, {
                     value="${odbcConnSetting.value}">
                 </div>
 
-                <!-- ④ SQLクエリ -->
+                <!-- ④ テーブル選択(ナビゲーター) & SQLクエリ(プレビュー付き) -->
                 <div class="odbc-section">
-                  <div class="odbc-section-title"><i class="fas fa-table"></i> データ抽出SQLクエリ</div>
-                  <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:4px;">
-                    <div style="flex:1;">
-                      <label class="odbc-label">ビュー / テーブル名</label>
-                      <div style="display:flex; gap:6px; align-items:center;">
-                        <select id="odbc-wiz-table" class="odbc-input" style="flex:1;">
-                          <option value="">— DSNを選択後に取得 —</option>
-                        </select>
-                        <button class="btn btn-outline btn-sm" id="btn-odbc-fetch-tables" title="テーブル/ビュー一覧を取得" style="white-space:nowrap; flex-shrink:0;">
-                          <i class="fas fa-cloud-download-alt"></i> 取得
+                  <div class="odbc-section-title"><i class="fas fa-table"></i> テーブル選択 & データ抽出SQLクエリ</div>
+                  <div class="odbc-navigator">
+                    <!-- 左: ナビゲーター（検索付きテーブル/ビュー一覧） -->
+                    <div class="odbc-navigator-pane">
+                      <div class="odbc-navigator-search">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="odbc-table-search" placeholder="テーブル/ビュー名で検索...">
+                        <button class="btn btn-outline btn-sm" id="btn-odbc-fetch-tables" title="テーブル/ビュー一覧を取得">
+                          <i class="fas fa-cloud-download-alt"></i>
                         </button>
                       </div>
-                      <div id="odbc-table-status" style="font-size:11px; color:#64748b; margin-top:3px; min-height:14px;"></div>
+                      <div id="odbc-navigator-list" class="odbc-navigator-list">
+                        <div class="odbc-navigator-empty">DSNを選択後、更新ボタンで一覧を取得してください</div>
+                      </div>
+                      <div id="odbc-table-status" class="odbc-table-status"></div>
+                      <!-- 既存ロジック(保存処理・SQL生成等)との互換のため実体のselectは残し非表示化 -->
+                      <select id="odbc-wiz-table" class="visually-hidden-select">
+                        <option value="">— DSNを選択後に取得 —</option>
+                      </select>
                     </div>
-                    <button class="btn btn-outline btn-sm" id="btn-odbc-build-query" style="white-space:nowrap; align-self:flex-end; margin-bottom:18px;">
-                      <i class="fas fa-magic"></i> SQL生成
-                    </button>
-                  </div>
-                  <textarea id="cfg-odbc-query" rows="3" class="odbc-input odbc-mono"
-                    placeholder="SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS">${odbcQuerySetting.value}</textarea>
-                  <div style="font-size:11px; color:#64748b; margin-top:3px;">
-                    必須カラム: <code>BED_NO</code>, <code>PATIENT_ID</code>, <code>PATIENT_NAME</code>, <code>IS_PRESENT</code>（在床=1）
+                    <!-- 右: SQLクエリ & プレビュー -->
+                    <div class="odbc-navigator-pane">
+                      <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+                        <label class="odbc-label" style="margin:0; flex:1;">データ抽出SQLクエリ</label>
+                        <button class="btn btn-outline btn-sm" id="btn-odbc-build-query" title="選択中のテーブルからSQLを自動生成">
+                          <i class="fas fa-magic"></i> SQL生成
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="btn-odbc-preview" title="クエリ結果を試しに取得（本番データには影響しません）">
+                          <i class="fas fa-eye"></i> プレビュー
+                        </button>
+                      </div>
+                      <textarea id="cfg-odbc-query" rows="3" class="odbc-input odbc-mono"
+                        placeholder="SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS">${odbcQuerySetting.value}</textarea>
+                      <div style="font-size:11px; color:var(--clr-text-muted); margin-top:3px;">
+                        必須カラム: <code>BED_NO</code>, <code>PATIENT_ID</code>, <code>PATIENT_NAME</code>, <code>IS_PRESENT</code>（在床=1）
+                      </div>
+                      <div id="odbc-query-preview" class="odbc-preview-empty">
+                        <i class="fas fa-eye"></i> 「プレビュー」ボタンでクエリ結果の先頭15行を確認できます（本番データには書き込まれません）
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -711,7 +758,55 @@ Object.assign(Settings, {
       UI.toast('SQL・カラムマッピングを反映しました。保存ボタンで確定してください。', 'success');
     });
 
-    // テーブル/ビュー一覧を取得してドロップダウンに反映
+    // ナビゲーター(検索付きテーブル/ビュー一覧)の描画。_loadTableListが取得した一覧をキャッシュし、
+    // 検索ボックスの入力ではキャッシュを再取得せずクライアント側でフィルタする
+    let _odbcTablesCache = [];
+    const _selectNavigatorItem = (value) => {
+      const sel = document.getElementById('odbc-wiz-table');
+      if (!sel) return;
+      sel.value = value;
+      sel.dispatchEvent(new Event('change'));
+      document.getElementById('odbc-navigator-list')?.querySelectorAll('.odbc-navigator-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.value === value);
+      });
+    };
+    const _renderNavigatorList = (filterText = '') => {
+      const listEl = document.getElementById('odbc-navigator-list');
+      if (!listEl) return;
+      const q = filterText.trim().toLowerCase();
+      const filtered = q ? _odbcTablesCache.filter(t => t.name.toLowerCase().includes(q)) : _odbcTablesCache;
+      const selVal = document.getElementById('odbc-wiz-table')?.value || '';
+
+      // 手動入力カードは常に末尾に表示（検索キーワードによらず選択可能にする）
+      const manualItemHtml = `
+        <div class="odbc-navigator-item ${selVal === '__manual__' ? 'selected' : ''}" data-value="__manual__">
+          <i class="fas fa-keyboard odbc-navigator-item-icon"></i>
+          <span class="odbc-navigator-item-name">手動で入力...</span>
+        </div>`;
+
+      if (_odbcTablesCache.length === 0) {
+        listEl.innerHTML = '<div class="odbc-navigator-empty">DSNを選択後、更新ボタンで一覧を取得してください</div>' + manualItemHtml;
+      } else if (filtered.length === 0) {
+        listEl.innerHTML = '<div class="odbc-navigator-empty">一致するテーブル/ビューがありません</div>' + manualItemHtml;
+      } else {
+        listEl.innerHTML = filtered.map(t => {
+          const isView = t.type === 'VIEW';
+          return `
+            <div class="odbc-navigator-item ${selVal === t.name ? 'selected' : ''}" data-value="${UI.escapeHTML(t.name)}">
+              <i class="fas ${isView ? 'fa-eye' : 'fa-table'} odbc-navigator-item-icon ${isView ? 'is-view' : 'is-table'}"></i>
+              <span class="odbc-navigator-item-name">${UI.escapeHTML(t.name)}</span>
+              <span class="odbc-navigator-item-type">${isView ? 'ビュー' : 'テーブル'}</span>
+            </div>`;
+        }).join('') + manualItemHtml;
+      }
+      listEl.querySelectorAll('.odbc-navigator-item').forEach(el => {
+        el.addEventListener('click', () => _selectNavigatorItem(el.dataset.value));
+      });
+    };
+
+    document.getElementById('odbc-table-search')?.addEventListener('input', (e) => _renderNavigatorList(e.target.value));
+
+    // テーブル/ビュー一覧を取得してナビゲーターへ反映（隠しselectにも同期し既存ロジックとの互換を保つ）
     const _loadTableList = async () => {
       const connStr = document.getElementById('cfg-odbc-conn')?.value?.trim();
       const sel     = document.getElementById('odbc-wiz-table');
@@ -722,7 +817,6 @@ Object.assign(Settings, {
       const prevVal = sel?.value;
       if (btn)    { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
       if (status) status.textContent = '取得中...';
-      if (sel)    sel.innerHTML = '<option value="">取得中...</option>';
 
       try {
         const res = window.electronAPI?.getOdbcTables
@@ -730,11 +824,14 @@ Object.assign(Settings, {
           : { success: false, error: 'デスクトップ環境が必要です', tables: [] };
 
         if (!res.success) {
-          if (sel)    sel.innerHTML = '<option value="">取得失敗 — 手動入力</option><option value="__manual__">手動で入力...</option>';
-          if (status) status.innerHTML = `<span style="color:#dc2626;"><i class="fas fa-times-circle"></i> ${UI.escapeHTML(res.error)}</span>`;
+          _odbcTablesCache = [];
+          if (sel) sel.innerHTML = '<option value="">取得失敗 — 手動入力</option><option value="__manual__">手動で入力...</option>';
+          _renderNavigatorList(document.getElementById('odbc-table-search')?.value || '');
+          if (status) status.innerHTML = `<span class="odbc-status-error"><i class="fas fa-times-circle"></i> ${UI.escapeHTML(res.error).replace(/\n/g, '<br>')}</span>`;
           return;
         }
 
+        _odbcTablesCache = res.tables.slice();
         const views  = res.tables.filter(t => t.type === 'VIEW');
         const tables = res.tables.filter(t => t.type === 'TABLE' || t.type === 'SYSTEM TABLE');
         const opts   = ['<option value="">— 選択 —</option>'];
@@ -745,12 +842,15 @@ Object.assign(Settings, {
           sel.innerHTML = opts.join('');
           if (prevVal && [...sel.options].some(o => o.value === prevVal)) sel.value = prevVal;
         }
-        if (status) status.innerHTML = `<span style="color:#16a34a;"><i class="fas fa-check-circle"></i> ${res.tables.length} 件取得（ビュー ${views.length} / テーブル ${tables.length}）</span>`;
+        _renderNavigatorList(document.getElementById('odbc-table-search')?.value || '');
+        if (status) status.innerHTML = `<span class="odbc-status-ok"><i class="fas fa-check-circle"></i> ${res.tables.length} 件取得（ビュー ${views.length} / テーブル ${tables.length}）</span>`;
       } catch (e) {
-        if (sel)    sel.innerHTML = '<option value="">エラー</option>';
-        if (status) status.innerHTML = `<span style="color:#dc2626;">${UI.escapeHTML(e.message)}</span>`;
+        _odbcTablesCache = [];
+        if (sel) sel.innerHTML = '<option value="">エラー</option>';
+        _renderNavigatorList('');
+        if (status) status.innerHTML = `<span class="odbc-status-error">${UI.escapeHTML(e.message)}</span>`;
       } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> 取得'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-download-alt"></i>'; }
       }
     };
 
@@ -763,9 +863,9 @@ Object.assign(Settings, {
         if (!manualArea) {
           const div = document.createElement('div');
           div.id = 'odbc-table-manual-area';
-          div.style.marginTop = '4px';
+          div.style.marginTop = '6px';
           div.innerHTML = '<input type="text" id="odbc-table-manual-input" class="odbc-input" placeholder="テーブル/ビュー名を入力">';
-          e.target.parentNode.after(div);
+          e.target.after(div);
           div.querySelector('input').focus();
         }
       } else {
@@ -782,8 +882,52 @@ Object.assign(Settings, {
       return sel?.value || '';
     };
 
+    // クエリプレビューボタン（本番データには一切書き込まない、Power Queryのデータプレビュー相当）
+    document.getElementById('btn-odbc-preview')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn-odbc-preview');
+      const previewEl = document.getElementById('odbc-query-preview');
+      const conn = document.getElementById('cfg-odbc-conn')?.value?.trim();
+      const query = document.getElementById('cfg-odbc-query')?.value?.trim();
+      if (!conn || !query) { UI.toast('接続文字列とSQLクエリを入力してください', 'warning'); return; }
+
+      btn.disabled = true;
+      const oldHtml = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> プレビュー';
+      if (previewEl) previewEl.innerHTML = '<div class="odbc-preview-loading"><i class="fas fa-spinner fa-spin"></i> 取得中...</div>';
+
+      try {
+        const res = window.electronAPI?.previewOdbcQuery
+          ? await window.electronAPI.previewOdbcQuery({ connectionString: conn, sqlQuery: query })
+          : { success: false, message: 'デスクトップ環境でのみ実行可能です' };
+
+        if (!previewEl) return;
+        if (!res.success) {
+          previewEl.innerHTML = `<div class="odbc-preview-error"><i class="fas fa-times-circle"></i> ${UI.escapeHTML(res.message).replace(/\n/g, '<br>')}</div>`;
+          return;
+        }
+        if (!res.rows.length) {
+          previewEl.innerHTML = '<div class="odbc-preview-empty"><i class="fas fa-inbox"></i> 該当する行がありませんでした</div>';
+          return;
+        }
+        const theadHtml = `<tr>${res.columns.map(c => `<th>${UI.escapeHTML(c)}</th>`).join('')}</tr>`;
+        const tbodyHtml = res.rows.map(row => `<tr>${res.columns.map(c => `<td>${UI.escapeHTML(row[c] ?? '')}</td>`).join('')}</tr>`).join('');
+        previewEl.innerHTML = `
+          <div class="odbc-preview-grid-wrap">
+            <table class="odbc-preview-grid"><thead>${theadHtml}</thead><tbody>${tbodyHtml}</tbody></table>
+          </div>
+          <div class="odbc-preview-count">${res.rows.length}行を表示${res.truncated ? '（先頭のみ。実際の件数はより多い可能性があります）' : ''}</div>`;
+      } catch (e) {
+        if (previewEl) previewEl.innerHTML = `<div class="odbc-preview-error">${UI.escapeHTML(e.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldHtml;
+      }
+    });
+
     // DSN一覧を初回ロード
     _loadDsnList();
+    // ナビゲーター初期描画（静的HTMLの手動入力カードにもクリックハンドラを付与するため）
+    _renderNavigatorList();
 
     // ODBC接続テストボタンイベント
     document.getElementById('btn-odbc-test').onclick = async () => {
@@ -798,12 +942,17 @@ Object.assign(Settings, {
         const query = document.getElementById('cfg-odbc-query').value.trim();
         if (window.electronAPI && window.electronAPI.testOdbcConnection) {
           const res = await window.electronAPI.testOdbcConnection({ connectionString: conn, sqlQuery: query });
+          const step5 = document.getElementById('odbc-step-5');
           if (res.success) {
             if (resultEl) resultEl.innerHTML = `<span style="color:#16a34a;font-weight:700;"><i class="fas fa-check-circle"></i> ${UI.escapeHTML(res.message)}</span>`;
             UI.toast('ODBC接続テスト成功', 'success');
+            step5?.classList.add('completed');
+            if (step5) step5.querySelector('.odbc-step-circle').innerHTML = '<i class="fas fa-check"></i>';
           } else {
             if (resultEl) resultEl.innerHTML = `<span style="color:#dc2626;font-weight:700;"><i class="fas fa-times-circle"></i> ${UI.escapeHTML(res.message)}</span>`;
             UI.toast(`接続失敗: ${res.message}`, 'danger');
+            step5?.classList.remove('completed');
+            if (step5) step5.querySelector('.odbc-step-circle').innerHTML = '<i class="fas fa-vial"></i>';
           }
         } else {
           if (resultEl) resultEl.innerHTML = '<span style="color:#d97706;">デスクトップ環境でのみ実行可能です</span>';

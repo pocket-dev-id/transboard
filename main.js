@@ -1507,6 +1507,36 @@ ipcMain.handle('test-odbc-connection', async (event, { connectionString, sqlQuer
   return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済、実接続確認済])' };
 });
 
+// ODBC: SQLクエリを実行し結果行を取得するPowerShellスクリプト片を組み立てる共通ヘルパー。
+// maxRowsを指定すると件数に達した時点で読み取りを打ち切る（プレビュー用途、本番同期時はnull=無制限）。
+// 出力はcolumns/rows/truncatedを持つ単一オブジェクトのJSON(ConvertTo-Json任せ、手組み文字列にしない)。
+function buildOdbcRowFetchScript(sqlQuery, maxRows = null) {
+  // クエリをPowerShellのシングルクォート文字列として埋め込むためエスケープ（' → ''）
+  const safeQuery = String(sqlQuery).replace(/'/g, "''");
+  const breakCheck = maxRows ? `if ($rows.Count -ge ${maxRows}) { $hasMore = $true; break }` : '';
+  return `
+  $cmd = $conn.CreateCommand()
+  $cmd.CommandText = '${safeQuery}'
+  $cmd.CommandTimeout = 25
+  $reader = $cmd.ExecuteReader()
+  $cols = @()
+  for ($i = 0; $i -lt $reader.FieldCount; $i++) { $cols += $reader.GetName($i) }
+  $rows = New-Object System.Collections.ArrayList
+  $hasMore = $false
+  while ($reader.Read()) {
+    ${breakCheck}
+    $obj = [ordered]@{}
+    foreach ($c in $cols) {
+      $v = $reader[$c]
+      if ($v -is [DBNull]) { $obj[$c] = '' } else { $obj[$c] = "$v" }
+    }
+    [void]$rows.Add((New-Object PSObject -Property $obj))
+  }
+  $reader.Close()
+  $result = [ordered]@{ columns = @($cols); rows = @($rows); truncated = $hasMore }
+  $result | ConvertTo-Json -Compress -Depth 6`;
+}
+
 // IPC通信でODBC直接同期を実行する（実際にSQLクエリを実行しCSV取込と同じ経路でレンダラーへ渡す）
 ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) => {
   // 接続文字列の検証 & 読み取り専用属性の付与
@@ -1526,37 +1556,16 @@ ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) =>
     return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
   }
 
-  // クエリをPowerShellのシングルクォート文字列として埋め込むためエスケープ（' → ''）
-  const safeQuery = String(sqlQuery).replace(/'/g, "''");
-  const scriptBody = `
-  $cmd = $conn.CreateCommand()
-  $cmd.CommandText = '${safeQuery}'
-  $cmd.CommandTimeout = 25
-  $reader = $cmd.ExecuteReader()
-  $cols = @()
-  for ($i = 0; $i -lt $reader.FieldCount; $i++) { $cols += $reader.GetName($i) }
-  $rows = New-Object System.Collections.ArrayList
-  while ($reader.Read()) {
-    $obj = [ordered]@{}
-    foreach ($c in $cols) {
-      $v = $reader[$c]
-      if ($v -is [DBNull]) { $obj[$c] = '' } else { $obj[$c] = "$v" }
-    }
-    [void]$rows.Add((New-Object PSObject -Property $obj))
-  }
-  $reader.Close()
-  if ($rows.Count -eq 0) { Write-Output '[]' } else { $rows | ConvertTo-Json -Compress }`;
-
   // 実クエリの実行は接続確認より時間がかかりうるためタイムアウトを長めに取る
-  const result = execOdbcPowerShell(finalConnStr, scriptBody, 30000);
+  const result = execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, null), 30000);
   if (!result.success) {
     return { success: false, message: 'ODBC同期に失敗しました: ' + result.error };
   }
 
   let rows;
   try {
-    const raw = JSON.parse(result.output);
-    rows = Array.isArray(raw) ? raw : [raw];
+    const parsed = JSON.parse(result.output);
+    rows = Array.isArray(parsed.rows) ? parsed.rows : [];
   } catch (e) {
     return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
   }
@@ -1571,6 +1580,42 @@ ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) =>
   }
 
   return { success: true, count: rows.length };
+});
+
+// IPC通信でODBCクエリのプレビュー（先頭数行）を取得する。本番データには一切書き込まない
+// 読み取り専用のお試し実行で、Power Queryのデータプレビューに相当する。
+ipcMain.handle('preview-odbc-query', async (event, { connectionString, sqlQuery }) => {
+  const connResult = enforceReadOnlyConnectionString(connectionString);
+  if (!connResult.valid) {
+    return { success: false, message: connResult.message };
+  }
+  const finalConnStr = connResult.connectionString;
+
+  const queryResult = validateReadOnlyQuery(sqlQuery);
+  if (!queryResult.valid) {
+    return { success: false, message: queryResult.message };
+  }
+
+  if (!finalConnStr || !finalConnStr.includes('DSN=')) {
+    return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
+  }
+
+  const result = execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, 15), 20000);
+  if (!result.success) {
+    return { success: false, message: 'プレビューの取得に失敗しました: ' + result.error };
+  }
+
+  try {
+    const parsed = JSON.parse(result.output);
+    return {
+      success: true,
+      columns: Array.isArray(parsed.columns) ? parsed.columns : [],
+      rows: Array.isArray(parsed.rows) ? parsed.rows : [],
+      truncated: !!parsed.truncated,
+    };
+  } catch (e) {
+    return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
+  }
 });
 
 // IPC通信で出棟中（進行中）の移送情報をリセットする

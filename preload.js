@@ -44,7 +44,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
    // ODBC同期の実行
   runOdbcSync: (config) => ipcRenderer.invoke('run-odbc-sync', config),
-  
+
+  // ODBCクエリのプレビュー取得（先頭数行、本番データには書き込まない）
+  previewOdbcQuery: (config) => ipcRenderer.invoke('preview-odbc-query', config),
+
   // 親機PC自身のローカルIPアドレス一覧を取得する
   getLocalIPs: () => ipcRenderer.invoke('get-local-ips'),
 

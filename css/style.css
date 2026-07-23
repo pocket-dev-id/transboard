@@ -1805,6 +1805,115 @@ body.theme-dark .odbc-settings-panel { background: rgba(30,58,138,.15); border-c
 body.theme-dark .odbc-section { border-bottom-color: #1e40af; }
 body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color: #e2e8f0; }
 
+/* ---- ODBCステッパー見出し(Power Query風の進行状況表示、見た目のみ) ---- */
+.odbc-stepper {
+  display: flex; align-items: center; gap: 0;
+  margin-bottom: 14px; padding: 10px 4px;
+  overflow-x: auto;
+}
+.odbc-step {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex-shrink: 0; min-width: 56px;
+}
+.odbc-step-circle {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  background: var(--clr-surface, #fff);
+  border: 2px solid var(--clr-border, #cbd5e0);
+  color: var(--clr-text-muted, #94a3b8);
+  transition: all .15s ease;
+}
+.odbc-step-label {
+  font-size: 10px; color: var(--clr-text-muted, #64748b); white-space: nowrap;
+}
+.odbc-step.completed .odbc-step-circle {
+  background: var(--clr-primary, #2f6d92); border-color: var(--clr-primary, #2f6d92); color: #fff;
+}
+.odbc-step.completed .odbc-step-label { color: var(--clr-primary, #2f6d92); font-weight: 700; }
+.odbc-step-connector {
+  flex: 1; height: 2px; min-width: 16px;
+  background: var(--clr-border, #cbd5e0);
+  margin: 0 2px; margin-bottom: 16px;
+  transition: background .15s ease;
+}
+.odbc-step-connector.completed { background: var(--clr-primary, #2f6d92); }
+
+/* ---- ODBCナビゲーター(検索付きテーブル/ビュー一覧) + クエリプレビュー ---- */
+.odbc-navigator {
+  display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: 14px;
+}
+@media (max-width: 900px) {
+  .odbc-navigator { grid-template-columns: 1fr; }
+}
+.odbc-navigator-pane { display: flex; flex-direction: column; min-width: 0; }
+.odbc-navigator-search {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; margin-bottom: 6px;
+  border: 1px solid var(--clr-border, #bfdbfe); border-radius: 5px;
+  background: var(--clr-surface, #fff); color: var(--clr-text-muted, #94a3b8);
+}
+.odbc-navigator-search input {
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: 12.5px; padding: 4px 0; color: var(--clr-text, #1e293b);
+}
+.odbc-navigator-search button { flex-shrink: 0; }
+.odbc-navigator-list {
+  border: 1px solid var(--clr-border, #bfdbfe); border-radius: 5px;
+  background: var(--clr-surface, #fff);
+  max-height: 220px; overflow-y: auto;
+}
+.odbc-navigator-empty {
+  padding: 16px 10px; text-align: center;
+  font-size: 11.5px; color: var(--clr-text-muted, #94a3b8);
+}
+.odbc-navigator-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--clr-border, #eef2f7);
+  font-size: 12px; transition: background .1s ease;
+}
+.odbc-navigator-item:last-child { border-bottom: none; }
+.odbc-navigator-item:hover { background: rgba(47,109,146,.08); }
+.odbc-navigator-item.selected { background: rgba(47,109,146,.14); font-weight: 700; }
+.odbc-navigator-item-icon { width: 14px; text-align: center; color: var(--clr-text-muted, #94a3b8); }
+.odbc-navigator-item-icon.is-view { color: #7c3aed; }
+.odbc-navigator-item-icon.is-table { color: #2563eb; }
+.odbc-navigator-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.odbc-navigator-item-type { font-size: 10px; color: var(--clr-text-muted, #94a3b8); flex-shrink: 0; }
+.odbc-table-status { font-size: 11px; margin-top: 4px; min-height: 14px; }
+.odbc-status-ok { color: #16a34a; }
+.odbc-status-error { color: #dc2626; }
+
+.odbc-preview-empty, .odbc-preview-loading, .odbc-preview-error {
+  margin-top: 8px; padding: 10px; border-radius: 5px;
+  font-size: 11.5px; line-height: 1.5;
+}
+.odbc-preview-empty { color: var(--clr-text-muted, #94a3b8); background: var(--clr-bg, #f8fafc); border: 1px dashed var(--clr-border, #cbd5e0); }
+.odbc-preview-loading { color: var(--clr-text-muted, #64748b); }
+.odbc-preview-error { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; }
+.odbc-preview-grid-wrap {
+  margin-top: 8px; max-height: 220px; overflow: auto;
+  border: 1px solid var(--clr-border, #bfdbfe); border-radius: 5px;
+}
+.odbc-preview-grid { width: 100%; border-collapse: collapse; font-size: 11px; white-space: nowrap; }
+.odbc-preview-grid th, .odbc-preview-grid td {
+  padding: 5px 8px; border-bottom: 1px solid var(--clr-border, #eef2f7);
+  text-align: left; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.odbc-preview-grid th {
+  position: sticky; top: 0; background: var(--clr-bg, #f8fafc);
+  color: var(--clr-text-muted, #475569); font-weight: 700;
+}
+.odbc-preview-count { margin-top: 4px; font-size: 10.5px; color: var(--clr-text-muted, #94a3b8); }
+
+body.theme-dark .odbc-navigator-search,
+body.theme-dark .odbc-navigator-list { background: #1e293b; border-color: #334155; }
+body.theme-dark .odbc-navigator-item { border-bottom-color: #334155; }
+body.theme-dark .odbc-preview-grid-wrap { border-color: #334155; }
+body.theme-dark .odbc-preview-grid th, body.theme-dark .odbc-preview-grid td { border-bottom-color: #334155; }
+body.theme-dark .odbc-preview-empty { background: rgba(30,41,59,.5); }
+
 /* ============================================================
    設定画面
    ============================================================ */
