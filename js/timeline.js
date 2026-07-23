@@ -39,29 +39,14 @@ const TimelinePopup = {
 const TimelineContextMenu = {
   _el: null,
 
-  // 次のステータス定義（labelはCONFIG.ACTION_BUTTONSから解決するため持たない。コード#2: 重複データ排除）
-  NEXT: {
-    DEPART_REGISTERED: [
-      { to: 'MOVING',     icon: 'fa-walking' },
-      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
-    ],
-    MOVING: [
-      { to: 'ARRIVED',    icon: 'fa-hospital' },
-      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
-    ],
-    ARRIVED: [
-      { to: 'IN_EXAM',    icon: 'fa-flask' },
-      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
-    ],
-    IN_EXAM: [
-      { to: 'NEARLY_DONE', icon: 'fa-clock' },
-    ],
-    NEARLY_DONE: [
-      { to: 'PICKUP_REQUIRED', icon: 'fa-bell' },
-    ],
-    PICKUP_REQUIRED: [
-      { to: 'RETURNED', icon: 'fa-check-circle' },
-    ],
+  ICONS: {
+    MOVING: 'fa-walking',
+    ARRIVED: 'fa-hospital',
+    IN_EXAM: 'fa-flask',
+    NEARLY_DONE: 'fa-clock',
+    PICKUP_REQUIRED: 'fa-bell',
+    RETURNED: 'fa-check-circle',
+    CANCELLED: 'fa-times',
   },
 
   // CONFIG.ACTION_BUTTONS（実行時にカスタム設定で上書きされる）から遷移先に対応するデフォルトラベルを解決する
@@ -89,14 +74,17 @@ const TimelineContextMenu = {
 
   show(event, x, y) {
     const el = this._ensureEl();
-    const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
     const actionLabels = AppState.getSettingJSON('action_button_labels', {});
-    const nexts = (this.NEXT[event.current_status] || [])
-      .filter(n => !hiddenStatuses.includes(n.to))
-      .map(n => {
-        const customLabel = actionLabels[`${event.current_status}:${n.to}`];
-        const label = customLabel || this._resolveDefaultLabel(event.current_status, n.to);
-        return { ...n, label };
+    const nexts = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.WARD)
+      .map(action => {
+        const customLabel = actionLabels[`${event.current_status}:${action.toStatus}`];
+        const label = customLabel || action.label || this._resolveDefaultLabel(event.current_status, action.toStatus);
+        return {
+          to: action.toStatus,
+          icon: this.ICONS[action.toStatus] || 'fa-arrow-right',
+          danger: action.toStatus === 'CANCELLED',
+          label,
+        };
       });
     const bed = AppState.getBedById(event.bed_id);
     const bedName = bed ? `${bed.bed_number}号床` : '?';
