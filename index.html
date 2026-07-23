@@ -179,10 +179,12 @@
             <span class="panel-sub">迎えが必要な順に表示</span>
           </div>
           <div id="priority-list"></div>
+        </div>
 
-          <!-- スタッフ稼働状況: 付き添いの手離れ/迎え移動を一目で確認できるようにする -->
-          <div class="panel-header" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--clr-border);">
-            <h2 style="font-size:13px;"><i class="fas fa-user-nurse"></i> スタッフ稼働状況</h2>
+        <!-- スタッフ稼働状況: 優先対応一覧から独立したパネル（付き添いの手離れ/迎え移動を一目で確認） -->
+        <div id="staff-status-area">
+          <div class="panel-header">
+            <h2><i class="fas fa-user-nurse"></i> スタッフ稼働状況</h2>
             <select id="staff-status-filter" class="staff-status-filter" title="表示するスタッフを絞り込みます">
               <option value="all">全員</option>
               <option value="busy">稼働中のみ</option>

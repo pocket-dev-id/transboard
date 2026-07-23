@@ -124,20 +124,30 @@ const ExamRoom = {
   async _handleScan(icValue) {
     if (!icValue) return;
 
-    // 編集モーダルのIC登録入力欄が開いている場合はそちらに流す（自動登録）
-    const editIcInput = document.getElementById('m-ic-tag-id');
-    if (editIcInput) {
-      editIcInput.value = icValue;
-      document.getElementById('btn-update-ic-tag')?.click();
-      return;
-    }
+    // 編集モーダル/新規登録フォームが実際に開いている場合のみ、そちらの入力欄へ流す（自動登録）。
+    // BedModal.close() はCSSクラスで隠すだけでinnerHTMLを消さないため、一度でもモーダルを
+    // 開くと #m-ic-tag-id / #f-ic-tag-id はDOMに残り続ける。可視性を見ずに存在だけで
+    // 分岐すると、モーダルを閉じた後の全てのICスキャンがここに奪われ、検査室のステータス
+    // 更新が一切効かなくなる（このガードが原因で「読み取ってもステータスが変わらない」不具合が起きていた）。
+    const modalOverlay = document.getElementById('bed-modal-overlay');
+    const isModalOpen = !!modalOverlay && !modalOverlay.classList.contains('hidden');
 
-    // 新規出棟登録フォームのIC入力欄が開いている場合はそちらに流す（フィールド入力のみ）
-    const newIcInput = document.getElementById('f-ic-tag-id');
-    if (newIcInput && !newIcInput.disabled) {
-      newIcInput.value = icValue;
-      UI.toast('ICカードを読み取りました', 'info');
-      return;
+    if (isModalOpen) {
+      // 編集モーダルのIC登録入力欄が開いている場合はそちらに流す（自動登録）
+      const editIcInput = document.getElementById('m-ic-tag-id');
+      if (editIcInput) {
+        editIcInput.value = icValue;
+        document.getElementById('btn-update-ic-tag')?.click();
+        return;
+      }
+
+      // 新規出棟登録フォームのIC入力欄が開いている場合はそちらに流す（フィールド入力のみ）
+      const newIcInput = document.getElementById('f-ic-tag-id');
+      if (newIcInput && !newIcInput.disabled) {
+        newIcInput.value = icValue;
+        UI.toast('ICカードを読み取りました', 'info');
+        return;
+      }
     }
 
     // 重複スキャン（チャタリング）防止: 3秒以内の同一IDのスキャンは無視

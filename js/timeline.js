@@ -303,6 +303,9 @@ const Timeline = {
     const bedName = bed ? `${bed.bed_number}号床` : '?';
     const pickupVal = event.estimated_pickup_at
       ? new Date(event.estimated_pickup_at).toTimeString().slice(0, 5) : '';
+    // 患者名・IDは移送イベントではなく病床マスタ側に保持されている（他画面と同じくマスク設定を尊重する）
+    const patientName = bed ? UI.getPatientName(bed.patient_name) : null;
+    const patientId = bed && bed.patient_name ? (UI.isPatientMaskEnabled() ? '＊＊＊＊' : (bed.patient_id || '')) : '';
 
     TimelinePopup.show(`
       <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:10px;">
@@ -312,8 +315,8 @@ const Timeline = {
         </span>
       </div>
       <div style="color:#4a5568;line-height:2.0;font-size:12px;">
-        <div>👤 ${UI.escapeHTML(event.patient_name || '（患者名なし）')}</div>
-        ${event.patient_id ? `<div style="color:#718096;">ID: ${UI.escapeHTML(event.patient_id)}</div>` : ''}
+        <div>👤 ${UI.escapeHTML(patientName || '（患者名なし）')}</div>
+        ${patientId ? `<div style="color:#718096;">ID: ${UI.escapeHTML(patientId)}</div>` : ''}
         ${examRoom ? `<div>🏥 ${UI.escapeHTML(examRoom.name)}${examType ? ' / '+UI.escapeHTML(examType.name) : ''}</div>` : ''}
         <div>🚶 出棟: ${UI.formatTime(event.departed_at)}</div>
         ${event.estimated_pickup_at ? `<div>🔔 迎え目安: ${UI.formatTime(event.estimated_pickup_at)}</div>` : ''}
