@@ -323,13 +323,15 @@ const CallPanel = {
     return id;
   },
 
+  // IDが必ず 'ward-'/'room-' で始まる保証はない（病棟マスタのID入力は自由文字列のため）。
+  // 命名規則で分岐すると、規則に沿わない病棟IDが検査室側と誤判定され、フォールバック文言に
+  // すり替わる（発信元/相手表示が「検査室」に誤表示される不具合の原因）。実データを直接照合する。
   getNameById(id) {
-    if (id.startsWith('ward-')) {
-      const w = AppState.wards.find(x => x.id === id);
-      return w ? w.name : '病棟';
-    }
+    const w = AppState.wards.find(x => x.id === id);
+    if (w) return w.name;
     const room = AppState.getExamRoomById(id);
-    return room ? room.name : '検査室';
+    if (room) return room.name;
+    return id.startsWith('ward-') ? '病棟' : '検査室';
   },
 
   startListening() {
@@ -480,9 +482,9 @@ const CallPanel = {
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
-    const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
-    const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
-    const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const ward = AppState.wards.find(x => x.id === targetId);
+    const room = ward ? null : AppState.getExamRoomById(targetId);
+    const phoneNum = ward ? ward.phone : (room ? room.phone : '');
 
     // 定型文リストの構築 (データベースから動的に取得)
     const myName = this.getNameById(this.getMyId());
@@ -1121,9 +1123,9 @@ const CallPanel = {
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
-    const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
-    const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
-    const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const ward = AppState.wards.find(x => x.id === targetId);
+    const room = ward ? null : AppState.getExamRoomById(targetId);
+    const phoneNum = ward ? ward.phone : (room ? room.phone : '');
 
     const overlay = document.createElement('div');
     overlay.id = 'webrtc-call-overlay';
