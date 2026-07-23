@@ -462,7 +462,7 @@ const BedMap = {
       if (filter === 'all') {
         match = true;
       } else if (filter === 'active_transfer') {
-        match = ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'].includes(status);
+        match = ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'].includes(status);
       } else if (filter === 'pickup') {
         match = (status === 'PICKUP_REQUIRED');
       } else if (filter === 'empty') {

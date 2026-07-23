@@ -1495,7 +1495,6 @@ const App = {
       PICKUP_REQUIRED: { enabled: true, sound: 'alarm' },
       NEARLY_DONE: { enabled: true, sound: 'chime' },
       SOON: { enabled: true, sound: 'chime' },
-      DEPART_REGISTERED: { enabled: false, sound: 'ding' },
       MOVING: { enabled: false, sound: 'ding' },
       ARRIVED: { enabled: false, sound: 'ding' },
       IN_EXAM: { enabled: false, sound: 'ding' },
@@ -1539,7 +1538,7 @@ const App = {
           const patientName = bed?.patient_name ? `（${UI.getPatientName(bed.patient_name)}）` : '';
           const toastTypes = {
             RETURNED: 'success', ARRIVED: 'info', IN_EXAM: 'info',
-            DEPART_REGISTERED: 'info', MOVING: 'info',
+            MOVING: 'info',
           };
           const toastType = toastTypes[e.current_status] || 'info';
           UI.toast(`${bedLabel}${patientName} → ${statusLabel}`, toastType, 5000);
@@ -1727,7 +1726,6 @@ const App = {
 
     const STATUS_CSS_VARS = {
       IN_BED:           { card_bg: '--clr-in-bed',        card_border: '--clr-in-bed-border',      badge_bg: '--badge-in-bed-bg',        badge_text: '--badge-in-bed-text' },
-      DEPART_REGISTERED:{ card_bg: '--clr-depart-reg',    card_border: '--clr-depart-reg-border',  card_text: '--clr-depart-reg-text',    badge_bg: '--badge-depart-bg',    badge_text: '--badge-depart-text' },
       MOVING:           { card_bg: '--clr-moving',        card_border: '--clr-moving-border',      card_text: '--clr-moving-text',        badge_bg: '--badge-moving-bg',    badge_text: '--badge-moving-text' },
       ARRIVED:          { card_bg: '--clr-arrived',       card_border: '--clr-arrived-border',     badge_bg: '--badge-arrived-bg',        badge_text: '--badge-arrived-text' },
       IN_EXAM:          { card_bg: '--clr-in-exam',       card_border: '--clr-in-exam-border',     card_text: '--clr-in-exam-text',       badge_bg: '--badge-in-exam-bg',   badge_text: '--badge-in-exam-text' },

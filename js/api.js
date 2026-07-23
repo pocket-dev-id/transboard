@@ -267,51 +267,57 @@ const API = {
     // 状態変化による自動音声合成アナウンスのシグナリング送信
     try {
       const event = await this.getOne('transfer_events', eventId);
-      if (event) {
-        const bed = AppState.getBedById(event.bed_id);
-        const bedName = bed ? `${bed.bed_number}号床` : '患者';
-        const room = AppState.getExamRoomById(event.exam_room_id);
-        const roomName = room ? room.name : '検査室';
-        const ward = AppState.wards.find(w => w.id === event.ward_id);
-        const wardName = ward ? ward.name : '病棟';
-
-        // 患者名を読み上げに含めるかは施設の設定次第（既定は含めない）。
-        // 有効時は文頭に付与し、聞き逃しにくくする
-        const announceName = AppState.systemSettings?.find(s => s.id === 'announce_patient_name')?.value === 'true';
-        const namePrefix = announceName && bed?.patient_name ? `${bed.patient_name}さん、` : '';
-
-        let speechText = '';
-        let toId = '';
-        let fromId = '';
-
-        if (newStatus === 'MOVING') {
-          speechText = `${namePrefix}${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`;
-          toId = event.exam_room_id;
-          fromId = event.ward_id;
-        } else if (newStatus === 'ARRIVED') {
-          speechText = `${namePrefix}${roomName}に、${bedName}が到着しました。`;
-          toId = event.ward_id;
-          fromId = event.exam_room_id;
-        } else if (newStatus === 'PICKUP_REQUIRED') {
-          speechText = `${namePrefix}${roomName}から、${bedName}のお迎え要請です。`;
-          toId = event.ward_id;
-          fromId = event.exam_room_id;
-        }
-
-        if (speechText && toId) {
-          await this.webrtcSend({
-            from: fromId,
-            to: toId,
-            type: 'speech',
-            text: speechText
-          });
-        }
-      }
+      await this.sendStatusAnnouncement(event, newStatus);
     } catch(err) {
       console.error('[Speech Signal Error]', err);
     }
 
     return updated;
+  },
+
+  // 状態変化時の自動音声合成アナウンス送信。updateEventStatus からの遷移だけでなく、
+  // 出棟登録時点でMOVINGとして作成する場合（modal.js _submitDepart）からも呼べるよう
+  // eventオブジェクトを直接受け取る形で切り出している
+  async sendStatusAnnouncement(event, newStatus) {
+    if (!event) return;
+    const bed = AppState.getBedById(event.bed_id);
+    const bedName = bed ? `${bed.bed_number}号床` : '患者';
+    const room = AppState.getExamRoomById(event.exam_room_id);
+    const roomName = room ? room.name : '検査室';
+    const ward = AppState.wards.find(w => w.id === event.ward_id);
+    const wardName = ward ? ward.name : '病棟';
+
+    // 患者名を読み上げに含めるかは施設の設定次第（既定は含めない）。
+    // 有効時は文頭に付与し、聞き逃しにくくする
+    const announceName = AppState.systemSettings?.find(s => s.id === 'announce_patient_name')?.value === 'true';
+    const namePrefix = announceName && bed?.patient_name ? `${bed.patient_name}さん、` : '';
+
+    let speechText = '';
+    let toId = '';
+    let fromId = '';
+
+    if (newStatus === 'MOVING') {
+      speechText = `${namePrefix}${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`;
+      toId = event.exam_room_id;
+      fromId = event.ward_id;
+    } else if (newStatus === 'ARRIVED') {
+      speechText = `${namePrefix}${roomName}に、${bedName}が到着しました。`;
+      toId = event.ward_id;
+      fromId = event.exam_room_id;
+    } else if (newStatus === 'PICKUP_REQUIRED') {
+      speechText = `${namePrefix}${roomName}から、${bedName}のお迎え要請です。`;
+      toId = event.ward_id;
+      fromId = event.exam_room_id;
+    }
+
+    if (speechText && toId) {
+      await this.webrtcSend({
+        from: fromId,
+        to: toId,
+        type: 'speech',
+        text: speechText
+      });
+    }
   },
 
   /* ---------- 操作監査ログ (データ #2) ---------- */

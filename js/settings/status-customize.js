@@ -29,13 +29,11 @@ Object.assign(Settings, {
       if (typeof App !== 'undefined' && App.applySystemVisualSettings) App.applySystemVisualSettings();
     };
 
-    const STATUS_ORDER = ['IN_BED','DEPART_REGISTERED','MOVING','ARRIVED','IN_EXAM','NEARLY_DONE','PICKUP_REQUIRED','RETURNED','CANCELLED'];
+    const STATUS_ORDER = ['IN_BED','MOVING','ARRIVED','IN_EXAM','NEARLY_DONE','PICKUP_REQUIRED','RETURNED','CANCELLED'];
     // デフォルト表示名・デフォルト色は config.js を単一の情報源とする（コード#2）
     const DEFAULT_LABELS = CONFIG.STATUS_LABEL_DEFAULTS;
     const STATUS_COLOR_DEFAULTS = CONFIG.STATUS_DEFAULT_COLORS;
     const ALL_ACTION_BTNS = [
-      { key: 'DEPART_REGISTERED:MOVING',         label: '移動中へ',        scope: '病棟側' },
-      { key: 'DEPART_REGISTERED:IN_EXAM',         label: '検査開始',        scope: '病棟側' },
       { key: 'MOVING:ARRIVED',                    label: '検査室到着',      scope: '病棟側' },
       { key: 'MOVING:IN_EXAM',                    label: '検査開始',        scope: '病棟側' },
       { key: 'ARRIVED:IN_EXAM',                   label: '検査開始',        scope: '病棟側' },
@@ -43,14 +41,14 @@ Object.assign(Settings, {
       { key: 'IN_EXAM:PICKUP_REQUIRED',           label: '迎え要',          scope: '病棟側' },
       { key: 'NEARLY_DONE:PICKUP_REQUIRED',       label: '迎え要',          scope: '病棟側' },
       { key: 'PICKUP_REQUIRED:RETURNED',          label: '帰棟完了',        scope: '病棟側' },
-      { key: 'EXAM:DEPART_REGISTERED:ARRIVED',    label: '到着',            scope: '検査室側' },
       { key: 'EXAM:MOVING:ARRIVED',               label: '到着',            scope: '検査室側' },
       { key: 'EXAM:ARRIVED:IN_EXAM',              label: '検査開始',        scope: '検査室側' },
       { key: 'EXAM:IN_EXAM:NEARLY_DONE',          label: 'あと10分',        scope: '検査室側' },
       { key: 'EXAM:IN_EXAM:PICKUP_REQUIRED',      label: '終了（迎え要）',  scope: '検査室側' },
       { key: 'EXAM:NEARLY_DONE:PICKUP_REQUIRED',  label: '終了（迎え要）',  scope: '検査室側' },
     ];
-    const HIDEABLE_STATUSES = ['MOVING','ARRIVED','NEARLY_DONE'];
+    // MOVINGは出棟登録操作の初期状態になったため「遷移先」ではなくなり、非表示読み替えの対象外
+    const HIDEABLE_STATUSES = ['ARRIVED','NEARLY_DONE'];
 
     const customLabels   = AppState.getSettingJSON('status_custom_labels', {});
     const ndMin          = AppState.getSettingInt('nearly_done_minutes', 10);

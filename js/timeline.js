@@ -41,10 +41,6 @@ const TimelineContextMenu = {
 
   // 次のステータス定義（labelはCONFIG.ACTION_BUTTONSから解決するため持たない。コード#2: 重複データ排除）
   NEXT: {
-    DEPART_REGISTERED: [
-      { to: 'MOVING',     icon: 'fa-walking' },
-      { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
-    ],
     MOVING: [
       { to: 'ARRIVED',    icon: 'fa-hospital' },
       { to: 'CANCELLED',  icon: 'fa-times',  danger: true },
@@ -75,7 +71,7 @@ const TimelineContextMenu = {
   },
 
   // CONFIG.ACTION_BUTTONS（実行時にカスタム設定で上書きされる）から遷移先に対応するデフォルトラベルを解決する
-  // ACTION_BUTTONSに無い組合せ（非表示ステータスの読み替えで生じる。例: DEPART_REGISTERED→ARRIVED）は
+  // ACTION_BUTTONSに無い組合せ（非表示ステータスの読み替えで生じる。例: MOVING→PICKUP_REQUIRED）は
   // 英字コードをそのまま出さずSTATUS_LABELへフォールバックする
   _resolveDefaultLabel(fromStatus, toStatus) {
     const btn = CONFIG.ACTION_BUTTONS[fromStatus]?.find(b => b.toStatus === toStatus);
@@ -103,7 +99,7 @@ const TimelineContextMenu = {
     const el = this._ensureEl();
     const actionLabels = AppState.getSettingJSON('action_button_labels', {});
     // 遷移先が非表示(使わない運用)なら「次に使う状態」へ読み替える。
-    // フィルタで消すだけだと MOVING非表示時のDEPART_REGISTERED が「キャンセル」しか
+    // フィルタで消すだけだと ARRIVED非表示時のMOVINGが「キャンセル」しか
     // 選べない行き止まりになるため（検査室画面の _visibleExamActions と同じ方針）
     const seen = new Set();
     const nexts = [];

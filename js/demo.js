@@ -176,7 +176,7 @@ const DemoData = {
         estimated_pickup_at: now - 5 * min,
         note: 'ストレッチャー使用',
       },
-      // 707: 出棟登録済（内視鏡）
+      // 707: 移動中（内視鏡）
       {
         id: `demo-evt-707`,
         bed_id: 'bed-707',
@@ -184,9 +184,9 @@ const DemoData = {
         exam_type_id: 'exam-endo',
         exam_room_id: 'room-endo',
         escort_staff_id: 'staff-4',
-        current_status: 'DEPART_REGISTERED',
+        current_status: 'MOVING',
         expected_duration_min: 90,
-        departed_at: null,
+        departed_at: now - 3 * min,
         arrived_at: null,
         exam_started_at: null,
         nearly_done_at: null,

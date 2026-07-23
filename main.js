@@ -269,7 +269,7 @@ const SEEDS = {
     { id: "import_connection_type", value: "csv" },
     { id: "odbc_connection_string", value: "DSN=EMR_DB;UID=admin;PWD=admin_pass;" },
     { id: "odbc_sql_query", value: "SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS" },
-    { id: "notification_sounds", value: "{\"PICKUP_REQUIRED\":{\"enabled\":true,\"sound\":\"alarm\"},\"NEARLY_DONE\":{\"enabled\":true,\"sound\":\"chime\"},\"SOON\":{\"enabled\":true,\"sound\":\"chime\"},\"DEPART_REGISTERED\":{\"enabled\":false,\"sound\":\"ding\"},\"ARRIVED\":{\"enabled\":false,\"sound\":\"ding\"},\"RETURNED\":{\"enabled\":false,\"sound\":\"ding\"}}" },
+    { id: "notification_sounds", value: "{\"PICKUP_REQUIRED\":{\"enabled\":true,\"sound\":\"alarm\"},\"NEARLY_DONE\":{\"enabled\":true,\"sound\":\"chime\"},\"SOON\":{\"enabled\":true,\"sound\":\"chime\"},\"ARRIVED\":{\"enabled\":false,\"sound\":\"ding\"},\"RETURNED\":{\"enabled\":false,\"sound\":\"ding\"}}" },
     { id: "incoming_ring_sound", value: "ring" },
     { id: "share_mode", value: "parent" },
     { id: "parent_ip", value: "" },
@@ -1550,7 +1550,7 @@ ipcMain.handle('reset-database', () => {
   const db = readDB();
   
   // 進行中のステータス一覧
-  const activeStatuses = ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'];
+  const activeStatuses = ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'];
   
   if (Array.isArray(db.transfer_events)) {
     // 進行中のイベントIDを取得
@@ -1678,7 +1678,6 @@ const ALLOWED_TABLES = new Set([
 // 申し送りメモは患者名を含み得るためトークン保護の対象にする
 const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes']);
 const ACTIVE_TRANSFER_STATUSES = new Set([
-  'DEPART_REGISTERED',
   'MOVING',
   'ARRIVED',
   'IN_EXAM',

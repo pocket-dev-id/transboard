@@ -221,7 +221,7 @@ const BedModal = {
       <div class="status-display-row" style="${!bed.patient_name ? 'opacity:0.5;' : ''}">
         <span class="status-badge badge-IN_BED">在床</span>
         <span class="status-arrow"><i class="fas fa-arrow-right"></i></span>
-        <span class="status-badge badge-DEPART_REGISTERED">出棟登録済</span>
+        <span class="status-badge badge-MOVING">移動中</span>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>検査種別 <span style="color:#dc2626">*</span></label>
@@ -829,6 +829,8 @@ const BedModal = {
       const durationMin = isNaN(duration) ? 30 : duration;
       const eventId = `evt-${now}-${Math.random().toString(36).slice(2,7)}`;
 
+      // 出棟登録＝移動中として扱う。DEPART_REGISTEREDという中間状態は廃止し、
+      // 登録した時点でMOVINGとして作成する（departed_atもcreated_atと同時刻でセット）
       const eventData = {
         id: eventId,
         bed_id: this.currentBedId,
@@ -836,7 +838,7 @@ const BedModal = {
         exam_type_id: examTypeId,
         exam_room_id: examRoomId,
         escort_staff_id: escortStaffId || null,
-        current_status: 'DEPART_REGISTERED',
+        current_status: 'MOVING',
         expected_duration_min: durationMin,
         estimated_pickup_at: now + durationMin * 60 * 1000,
         note: note || '',
@@ -846,7 +848,7 @@ const BedModal = {
         // 表示まで変わってしまう。イベント側に固定することで履歴上の患者名を正しく保持する
         patient_name: bed.patient_name || null,
         created_at: now,
-        departed_at: null,
+        departed_at: now,
         arrived_at: null,
         exam_started_at: null,
         nearly_done_at: null,
@@ -855,30 +857,11 @@ const BedModal = {
       };
 
       await API.createEvent(eventData);
-      await API.addStatusLog(eventId, null, 'DEPART_REGISTERED', 'nurse');
+      await API.addStatusLog(eventId, null, 'MOVING', 'nurse');
+      // 移動開始の自動音声アナウンス（updateEventStatus経由のMOVING遷移と同じ文言を鳴らす）
+      await API.sendStatusAnnouncement(eventData, 'MOVING').catch(err => console.error('[Speech Signal Error]', err));
 
-      // 出棟登録はこの時点で完了済み。続けて「移動中」に進めるかを確認する。
-      // 移動中(MOVING)が非表示設定(使わない運用)の場合はプロンプト自体をスキップし、
-      // 出棟登録のままにする（登録直後に到着や検査開始へ自動前進させるのは実態と合わないため）
-      let goMoving = false;
-      if (!AppState.isStatusHidden('MOVING')) {
-        goMoving = await UI.confirmModal(
-          `${bed.bed_number}号床の出棟を登録しました。続けて「移動中」にしますか？`,
-          {
-            title: '患者はもう出発しましたか？',
-            type: 'info',
-            detail: 'キャンセルしても出棟登録は保存されます（ステータスは「出棟登録」のまま）。実際に移動を開始したら、あとから病床をタップして「移動開始」にできます。',
-            confirmLabel: '移動中にする',
-            cancelLabel: '出棟登録のまま',
-          }
-        );
-      }
-      if (goMoving) {
-        await API.updateEventStatus(eventId, 'MOVING');
-        UI.toast(`${bed.bed_number}号床を移動中にしました`, 'success');
-      } else {
-        UI.toast(`${bed.bed_number}号床の出棟を登録しました`, 'success');
-      }
+      UI.toast(`${bed.bed_number}号床を移動中にしました`, 'success');
       this.close();
       await App.refreshData();
       

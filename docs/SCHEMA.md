@@ -78,8 +78,8 @@ TransBoard はSQLiteを使用せず、JSONファイル（`transboard-db.json`）
 
 **ステータス遷移:**
 ```
-IN_BED → DEPART_REGISTERED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED → RETURNED
-                                                                         ↘ CANCELLED
+IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED → RETURNED
+                                                     ↘ CANCELLED
 ```
 
 ---

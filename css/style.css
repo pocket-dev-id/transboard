@@ -354,7 +354,6 @@ h1, h2, h3, h4,
   border: 1px solid;
 }
 .legend-item.in-bed { background: var(--clr-in-bed); border-color: var(--clr-in-bed-border); color: #4a5568; }
-.legend-item.depart-registered { background: var(--clr-depart-reg); border-color: var(--clr-depart-reg-border); color: var(--clr-depart-reg-text); }
 .legend-item.moving { background: var(--clr-moving); border-color: var(--clr-moving-border); color: var(--clr-moving-text, #5b21b6); }
 .legend-item.arrived { background: var(--clr-arrived); border-color: var(--clr-arrived-border); color: #0369a1; }
 .legend-item.in-exam { background: var(--clr-in-exam); border-color: var(--clr-in-exam-border); color: var(--clr-in-exam-text); }
@@ -478,7 +477,6 @@ h1, h2, h3, h4,
 
 /* 状態別スタイル */
 .bed-card.status-IN_BED { background: var(--clr-in-bed); border-color: var(--clr-in-bed-border); }
-.bed-card.status-DEPART_REGISTERED { background: var(--clr-depart-reg); border-color: var(--clr-depart-reg-border); }
 .bed-card.status-MOVING { background: var(--clr-moving); border-color: var(--clr-moving-border); }
 .bed-card.status-ARRIVED { background: var(--clr-arrived); border-color: var(--clr-arrived-border); }
 .bed-card.status-IN_EXAM { background: var(--clr-in-exam); border-color: var(--clr-in-exam-border); }
@@ -1116,7 +1114,6 @@ h1, h2, h3, h4,
   /* ベッドカード：ステータス別背景を印刷時も再現 */
   .bed-card { backdrop-filter: none !important; }
   .bed-card.status-IN_BED          { background: #f1f5f9 !important; border-color: #94a3b8 !important; }
-  .bed-card.status-DEPART_REGISTERED { background: #dbeafe !important; border-color: var(--clr-primary) !important; }
   .bed-card.status-MOVING          { background: #ede9fe !important; border-color: #7c3aed !important; }
   .bed-card.status-ARRIVED         { background: #e0f2fe !important; border-color: #0284c7 !important; }
   .bed-card.status-IN_EXAM         { background: #fef9c3 !important; border-color: #ca8a04 !important; }
@@ -1423,7 +1420,6 @@ h1, h2, h3, h4,
   border: 1px solid rgba(15, 23, 42, 0.06);
 }
 .badge-IN_BED          { background: var(--badge-in-bed-bg);      color: var(--badge-in-bed-text); }
-.badge-DEPART_REGISTERED { background: var(--badge-depart-bg);    color: var(--badge-depart-text); }
 .badge-MOVING          { background: var(--badge-moving-bg);       color: var(--badge-moving-text); }
 .badge-ARRIVED         { background: var(--badge-arrived-bg);      color: var(--badge-arrived-text); }
 .badge-IN_EXAM         { background: var(--badge-in-exam-bg);      color: var(--badge-in-exam-text); }

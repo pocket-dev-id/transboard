@@ -187,7 +187,7 @@ const ExamRoom = {
     try {
       const events = await API.getEventsForExamRoom(roomId);
       const relevant = events.filter(ev =>
-        ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE'].includes(ev.current_status)
+        ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE'].includes(ev.current_status)
       );
 
       const matchEvent = relevant.find(ev => ev.patient_ic_tag_id === icValue);
@@ -202,7 +202,6 @@ const ExamRoom = {
       // KPI「平均検査」から漏れてしまうため、必ず検査開始を経由させる。
       // 検査中(IN_EXAM)を使わない運用では下の isStatusHidden 読み替えで自動的に次可視へ進む。
       const statusActions = {
-        DEPART_REGISTERED: { nextStatus: 'ARRIVED', message: '検査室到着にしますか？' },
         MOVING: { nextStatus: 'ARRIVED', message: '検査室到着にしますか？' },
         ARRIVED: { nextStatus: 'IN_EXAM', message: '検査開始にしますか？' },
         IN_EXAM: { nextStatus: 'PICKUP_REQUIRED', message: '終了（迎え要）にしますか？' },
@@ -285,7 +284,7 @@ const ExamRoom = {
     try {
       const events = await API.getEventsForExamRoom(roomId);
       const relevant = events.filter(e =>
-        ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'].includes(e.current_status)
+        ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'].includes(e.current_status)
       );
 
       // 患者名表示のクラスを設定 (CSS側のフォールバック用)
@@ -342,7 +341,7 @@ const ExamRoom = {
       let pickupCount = 0;
 
       relevant.forEach(e => {
-        if (['DEPART_REGISTERED', 'MOVING'].includes(e.current_status)) {
+        if (e.current_status === 'MOVING') {
           inTransitCount++;
         } else if (e.current_status === 'ARRIVED') {
           waitingCount++;
@@ -395,7 +394,6 @@ const ExamRoom = {
         'IN_EXAM': 3,
         'ARRIVED': 4,
         'MOVING': 5,
-        'DEPART_REGISTERED': 6
       };
 
       const getTimestampForStatus = (e) => {
@@ -405,7 +403,6 @@ const ExamRoom = {
           case 'IN_EXAM': return e.exam_started_at || e.updated_at || e.created_at || 0;
           case 'ARRIVED': return e.arrived_at || e.updated_at || e.created_at || 0;
           case 'MOVING': return e.departed_at || e.updated_at || e.created_at || 0;
-          case 'DEPART_REGISTERED': return e.created_at || 0;
           default: return e.updated_at || e.created_at || 0;
         }
       };
@@ -756,7 +753,7 @@ const ExamRoom = {
     }
 
     const activeStatuses = new Set(CONFIG.ACTIVE_STATUSES);
-    const movingSet  = new Set(['DEPART_REGISTERED', 'MOVING']);
+    const movingSet  = new Set(['MOVING']);
     const examSet    = new Set(['ARRIVED', 'IN_EXAM', 'NEARLY_DONE']);
     const pickupSet  = new Set(['PICKUP_REQUIRED']);
 

@@ -12,7 +12,6 @@ const CONFIG = {
   // 状態定義
   STATUS: {
     IN_BED: 'IN_BED',
-    DEPART_REGISTERED: 'DEPART_REGISTERED',
     MOVING: 'MOVING',
     ARRIVED: 'ARRIVED',
     IN_EXAM: 'IN_EXAM',
@@ -23,9 +22,9 @@ const CONFIG = {
   },
 
   // 状態表示名（施設ごとのカスタム表示名で上書きされる可能性がある実行時の値）
+  // 「出棟登録」は廃止し、出棟登録＝移動中として1状態に統合している
   STATUS_LABEL: {
     IN_BED: '在床',
-    DEPART_REGISTERED: '出棟登録済',
     MOVING: '移動中',
     ARRIVED: '検査室到着',
     IN_EXAM: '検査中',
@@ -40,7 +39,6 @@ const CONFIG = {
   // 「本来のデフォルト」を参照する必要がある箇所は STATUS_LABEL ではなくこちらを使う
   STATUS_LABEL_DEFAULTS: Object.freeze({
     IN_BED: '在床',
-    DEPART_REGISTERED: '出棟登録済',
     MOVING: '移動中',
     ARRIVED: '検査室到着',
     IN_EXAM: '検査中',
@@ -52,7 +50,7 @@ const CONFIG = {
 
   // ステータスカラーのデフォルト値（カラーピッカーの初期表示・リセット用）
   STATUS_DEFAULT_COLORS: {
-    IN_BED: '#f8fafc', DEPART_REGISTERED: '#dbeafe', MOVING: '#ede9fe',
+    IN_BED: '#f8fafc', MOVING: '#ede9fe',
     ARRIVED: '#e0f2fe', IN_EXAM: '#fefce8', NEARLY_DONE: '#fff7ed',
     PICKUP_REQUIRED: '#fee2e2', RETURNED: '#f0fdf4', CANCELLED: '#f1f5f9',
   },
@@ -61,7 +59,6 @@ const CONFIG = {
   // 色だけでなく形状でも状態を識別できるようにする（色覚・印刷・モノクロ画面への対応）
   STATUS_ICON: {
     IN_BED: 'fa-bed',
-    DEPART_REGISTERED: 'fa-door-open',
     MOVING: 'fa-walking',
     ARRIVED: 'fa-map-marker-alt',
     IN_EXAM: 'fa-stethoscope',
@@ -72,9 +69,9 @@ const CONFIG = {
   },
 
   // 状態遷移ルール: key = 現在状態, value = 遷移可能な次状態[]
+  // 「出棟登録」は廃止。出棟登録操作は最初からMOVINGとしてイベントを作成する（IN_BED→MOVING）
   STATUS_TRANSITIONS: {
-    IN_BED: ['DEPART_REGISTERED'],
-    DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
+    IN_BED: ['MOVING'],
     MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
     ARRIVED: ['IN_EXAM', 'CANCELLED'],
     IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'CANCELLED'],
@@ -85,27 +82,22 @@ const CONFIG = {
   },
 
   // 「出棟中」扱いの状態
-  DEPART_STATUSES: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
+  DEPART_STATUSES: ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
 
   // 「進行中」表示対象
-  ACTIVE_STATUSES: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
+  ACTIVE_STATUSES: ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
 
   // 付き添いスタッフが実際に患者と一緒に移動している区間（それ以外は病棟へ戻って手離れしている想定）
   ESCORT_ACTIVE_STATUSES: ['MOVING', 'PICKUP_REQUIRED'],
 
   // 移送ステータスの前進順序。遷移ボタン非表示(hidden_statuses)時に「次に使う状態」を求めるのに使う
-  STATUS_PROGRESSION: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED'],
+  STATUS_PROGRESSION: ['MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED'],
 
   // 迎え要件のしきい値 (分)
   SOON_THRESHOLD_MIN: 15,
 
   // アクションボタン設定
   ACTION_BUTTONS: {
-    DEPART_REGISTERED: [
-      { label: '移動中へ', toStatus: 'MOVING', cls: 'btn-primary' },
-      { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
     MOVING: [
       { label: '検査室到着', toStatus: 'ARRIVED', cls: 'btn-info' },
       { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
@@ -136,10 +128,6 @@ const CONFIG = {
   // ラベルは病棟側(ACTION_BUTTONS)・STATUS_LABELと表記を揃える（例: 到着=「検査室到着」）。
   // 検査室でも中止できるよう各進行状態にキャンセルを用意する（破壊的操作のため実行時に確認）。
   EXAM_ROOM_ACTIONS: {
-    DEPART_REGISTERED: [
-      { label: '検査室到着', toStatus: 'ARRIVED', cls: 'btn-info' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
     MOVING: [
       { label: '検査室到着', toStatus: 'ARRIVED', cls: 'btn-info' },
       { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
