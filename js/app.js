@@ -648,6 +648,10 @@ const App = {
       setTimeout(() => {
         Wizard.open();
       }, 500);
+    } else {
+      // 通常運用時のみ、日跨ぎ（帰棟し忘れ）の未完了出棟をチェックして通知する
+      // （初回セットアップ中はウィザードを優先し邪魔しない）
+      setTimeout(() => this.checkCarriedOver(), 800);
     }
 
     // デスクトップアプリ用自動インポートのリスナー登録
@@ -1441,6 +1445,11 @@ const App = {
           }
 
           this._checkNotifications();
+
+          // 24時間稼働端末での日付ロールオーバー検知。日付が変わったら未完了出棟を再チェック
+          if (this._lastDateStr && this._lastDateStr !== new Date().toDateString()) {
+            this.checkCarriedOver();
+          }
         }
       } catch (e) {
         ok = false;
@@ -1483,6 +1492,24 @@ const App = {
       badge.style.display = 'inline-flex';
     } else {
       badge.style.display = 'none';
+    }
+  },
+
+  // 日跨ぎ（帰棟し忘れ等）の未完了出棟を検出し、起動時・日付変更時に一度だけ通知する。
+  // 同日中は localStorage の ack で再通知を抑止（翌日は再度通知）。患者安全のため自動では消さない。
+  checkCarriedOver() {
+    try {
+      const todayStr = new Date().toDateString();
+      this._lastDateStr = todayStr;
+      const list = AppState.getCarriedOverEvents();
+      if (!list || list.length === 0) return;
+      if (localStorage.getItem('tbs_carryover_ack') === todayStr) return; // 本日は確認済み
+      localStorage.setItem('tbs_carryover_ack', todayStr);
+      UI.toast(`前日から未完了の出棟が ${list.length} 件あります。確認してください。`, 'warning', 8000);
+      UI.showOsNotification('TransBoard: 未完了の出棟', `前日から ${list.length} 件`);
+      if (typeof CarryoverModal !== 'undefined') CarryoverModal.open(list);
+    } catch (e) {
+      console.error('[Carryover]', e);
     }
   },
 

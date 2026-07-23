@@ -180,6 +180,20 @@ const AppState = {
     return items;
   },
 
+  // 日跨ぎ（帰棟し忘れ等で日付をまたいで残った）未完了の出棟を返す。
+  // 基準時刻(departed_at || created_at)が本日0:00より前のアクティブ移送が対象。
+  // タイムスタンプが無いものは判定不能として対象外（安全側）。
+  getCarriedOverEvents() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
+    return this.activeEvents.filter(e => {
+      if (!CONFIG.ACTIVE_STATUSES.includes(e.current_status)) return false;
+      const ref = e.departed_at || e.created_at || 0;
+      return ref > 0 && ref < todayMs;
+    });
+  },
+
   /* ---------- system_settings 読み取りヘルパー（コード#1: 重複ボイラープレート排除） ---------- */
   getSettingRaw(id, fallback = null) {
     const s = this.systemSettings?.find(x => x.id === id);
