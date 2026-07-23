@@ -1358,9 +1358,10 @@ function enforceReadOnlyConnectionString(connStr) {
   return { valid: true, connectionString: finalConnStr };
 }
 
-// IPC通信でODBC接続経由でテーブル/ビュー一覧を取得する
-ipcMain.handle('get-odbc-tables', async (event, { connectionString }) => {
-  if (!connectionString) return { success: false, error: '接続文字列が指定されていません', tables: [] };
+// PowerShell経由でODBC接続を実行する共通ヘルパー。$connBody にはOdbcConnectionを
+// $conn変数として開いた状態で渡ってくる想定のスクリプト片を渡す（接続文字列の埋め込み・
+// エスケープ・タイムアウト・ERROR:プレフィックスでの失敗判定を一箇所に集約する）
+function execOdbcPowerShell(connectionString, scriptBody) {
   const safe = String(connectionString).replace(/'/g, '').slice(0, 500);
   const ps = `
 $ErrorActionPreference = 'Stop'
@@ -1368,23 +1369,36 @@ try {
   Add-Type -AssemblyName System.Data
   $conn = New-Object System.Data.Odbc.OdbcConnection('${safe}')
   $conn.Open()
-  $schema = $conn.GetSchema('Tables')
+${scriptBody}
   $conn.Close()
-  $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
-    Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
-    Sort-Object type, name)
-  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }
 } catch {
   Write-Output "ERROR:$($_.Exception.Message)"
 }`.trim();
 
+  const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
+    { encoding: 'utf8', timeout: 15000 }).trim();
+  if (!out || out.startsWith('ERROR:')) {
+    const error = out ? out.slice(6) : '接続に失敗しました';
+    return { success: false, error };
+  }
+  return { success: true, output: out };
+}
+
+// IPC通信でODBC接続経由でテーブル/ビュー一覧を取得する
+ipcMain.handle('get-odbc-tables', async (event, { connectionString }) => {
+  if (!connectionString) return { success: false, error: '接続文字列が指定されていません', tables: [] };
+
   try {
-    const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', timeout: 15000 }).trim();
-    if (!out || out.startsWith('ERROR:')) {
-      return { success: false, error: out ? out.slice(6) : 'テーブル情報を取得できませんでした', tables: [] };
+    const result = execOdbcPowerShell(connectionString, `
+  $schema = $conn.GetSchema('Tables')
+  $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
+    Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
+    Sort-Object type, name)
+  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }`);
+    if (!result.success) {
+      return { success: false, error: result.error, tables: [] };
     }
-    const raw = JSON.parse(out);
+    const raw = JSON.parse(result.output);
     const tables = (Array.isArray(raw) ? raw : [raw]).map(r => ({ name: r.name, type: r.type }));
     return { success: true, tables };
   } catch (e) {
@@ -1422,10 +1436,12 @@ ipcMain.handle('get-odbc-dsns', () => {
   return result;
 });
 
-// IPC通信でODBCデータベース接続テストを行う（シミュレーション）
+// IPC通信でODBCデータベース接続テストを行う。
+// 以前は接続文字列の書式チェックのみで実際には一度も接続しておらず、常に「成功」を
+// 返していたため、この画面では「接続できる」のに、実際に初めて本物の接続を試みる
+// get-odbc-tables（ビュー一覧取得）でだけ失敗する、という食い違いが起きていた。
+// get-odbc-tablesと同じ経路(execOdbcPowerShell)で実際にOpen/Closeを行うようにする
 ipcMain.handle('test-odbc-connection', async (event, { connectionString, sqlQuery }) => {
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
   // 接続文字列の検証 & 読み取り専用属性の付与
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
@@ -1442,7 +1458,17 @@ ipcMain.handle('test-odbc-connection', async (event, { connectionString, sqlQuer
   if (!finalConnStr || !finalConnStr.includes('DSN=')) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。例: DSN=EMR_DB;UID=admin;PWD=pass;' };
   }
-  return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済])' };
+
+  try {
+    const result = execOdbcPowerShell(finalConnStr, `  Write-Output 'OK'`);
+    if (!result.success) {
+      return { success: false, message: 'ODBC接続に失敗しました: ' + result.error };
+    }
+  } catch (e) {
+    return { success: false, message: 'ODBC接続に失敗しました: ' + e.message };
+  }
+
+  return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済、実接続確認済])' };
 });
 
 // IPC通信でODBC直接同期を実行する（シミュレーション）
