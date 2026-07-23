@@ -288,6 +288,7 @@ const SEEDS = {
     { id: "smb_password", value: "" },
     { id: "admin_passcode", value: "0000" },
     { id: "speech_templates", value: "[\"連絡事項があります。\",\"間もなく、患者が出発します。\",\"患者が到着しました。\",\"検査が終了しました。お迎えをお願いします。\",\"移送をキャンセルします。\",\"至急、ご連絡ください。\"]" },
+    { id: "announce_patient_name", value: "false" },
     { id: "admission_mode", value: "csv" },
     { id: "notification_volume", value: "80" },
     { id: "notification_scan_sound", value: "true" },

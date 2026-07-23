@@ -229,7 +229,7 @@ const ExamRoom = {
       }
 
       const bed = AppState.getBedById(matchEvent.bed_id);
-      const bedName = bed ? UI.formatBedName(bed) : '患者';
+      const bedName = bed ? UI.formatBedNamePlain(bed) : '患者';
       const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
       const nextLabel = CONFIG.STATUS_LABEL[nextStatus] || nextStatus;
       if (!confirm(`${bedName}（現在: ${currentLabel}）を「${nextLabel}」にしますか？`)) {
@@ -715,7 +715,7 @@ const ExamRoom = {
     // キャンセルは破壊的操作のため確認を挟む（検査室側からの中止）
     if (newStatus === 'CANCELLED') {
       const bed = event ? AppState.getBedById(event.bed_id) : null;
-      const bedName = bed ? UI.formatBedName(bed) : '患者';
+      const bedName = bed ? UI.formatBedNamePlain(bed) : '患者';
       const ok = await UI.confirmModal(`${bedName} の移送をキャンセルしますか？`, {
         title: '移送をキャンセル',
         danger: true,

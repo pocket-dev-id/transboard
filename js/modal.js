@@ -225,11 +225,25 @@ const BedModal = {
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>検査種別 <span style="color:#dc2626">*</span></label>
-        <select id="f-exam-type" ${disabledAttr}>${examTypeOptions}</select>
+        <select id="f-exam-type" ${disabledAttr} class="visually-hidden-select">${examTypeOptions}</select>
+        <div class="option-card-grid" id="f-exam-type-cards">
+          ${AppState.examTypes.map((t, idx) => `
+            <button type="button" class="option-card${idx === 0 ? ' selected' : ''}" data-value="${t.id}">
+              <span class="option-card-title">${UI.escapeHTML(t.name)}</span>
+              <span class="option-card-sub">標準${t.standard_duration_min}分</span>
+            </button>`).join('')}
+        </div>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>行き先検査室 <span style="color:#dc2626">*</span></label>
-        <select id="f-exam-room" ${disabledAttr}>${examRoomOptions}</select>
+        <select id="f-exam-room" ${disabledAttr} class="visually-hidden-select">${examRoomOptions}</select>
+        <div class="option-card-grid" id="f-exam-room-cards">
+          ${AppState.examRooms.map((r, idx) => `
+            <button type="button" class="option-card${idx === 0 ? ' selected' : ''}" data-value="${r.id}">
+              <span class="option-card-title">${UI.escapeHTML(r.name)}</span>
+              <span class="option-card-sub">${UI.escapeHTML(r.floor || '')}</span>
+            </button>`).join('')}
+        </div>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>付き添い看護師</label>
@@ -250,6 +264,22 @@ const BedModal = {
         <textarea id="f-note" placeholder="例: 車椅子使用、酸素持参" ${disabledAttr}></textarea>
       </div>
     `;
+  },
+
+  // タッチ操作しやすいカード選択のバインド。隠しselectの値を更新しchangeイベントを
+  // 発火することで、検査種別変更時の所要時間自動入力など既存ロジックをそのまま動かす
+  _bindOptionCards(gridId, selectId) {
+    const grid = document.getElementById(gridId);
+    const select = document.getElementById(selectId);
+    if (!grid || !select) return;
+    grid.querySelectorAll('.option-card').forEach(card => {
+      card.addEventListener('click', () => {
+        grid.querySelectorAll('.option-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        select.value = card.dataset.value;
+        select.dispatchEvent(new Event('change'));
+      });
+    });
   },
 
   _renderEventDetail(bed, event) {
@@ -484,6 +514,10 @@ const BedModal = {
         }
       }
     }
+
+    // 検査種別・行き先検査室のカード選択（タッチしやすいカード表示。値は隠しselectに反映する）
+    this._bindOptionCards('f-exam-type-cards', 'f-exam-type');
+    this._bindOptionCards('f-exam-room-cards', 'f-exam-room');
 
     // 出棟登録
     const submitBtn = document.getElementById('btn-depart-submit');

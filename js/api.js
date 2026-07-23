@@ -275,20 +275,25 @@ const API = {
         const ward = AppState.wards.find(w => w.id === event.ward_id);
         const wardName = ward ? ward.name : '病棟';
 
+        // 患者名を読み上げに含めるかは施設の設定次第（既定は含めない）。
+        // 有効時は文頭に付与し、聞き逃しにくくする
+        const announceName = AppState.systemSettings?.find(s => s.id === 'announce_patient_name')?.value === 'true';
+        const namePrefix = announceName && bed?.patient_name ? `${bed.patient_name}さん、` : '';
+
         let speechText = '';
         let toId = '';
         let fromId = '';
 
         if (newStatus === 'MOVING') {
-          speechText = `${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`;
+          speechText = `${namePrefix}${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`;
           toId = event.exam_room_id;
           fromId = event.ward_id;
         } else if (newStatus === 'ARRIVED') {
-          speechText = `${roomName}に、${bedName}が到着しました。`;
+          speechText = `${namePrefix}${roomName}に、${bedName}が到着しました。`;
           toId = event.ward_id;
           fromId = event.exam_room_id;
         } else if (newStatus === 'PICKUP_REQUIRED') {
-          speechText = `${roomName}から、${bedName}のお迎え要請です。`;
+          speechText = `${namePrefix}${roomName}から、${bedName}のお迎え要請です。`;
           toId = event.ward_id;
           fromId = event.exam_room_id;
         }

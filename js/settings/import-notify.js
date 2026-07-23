@@ -2147,6 +2147,9 @@ Object.assign(Settings, {
       });
     };
 
+    const announceNameSetting = AppState.systemSettings?.find(s => s.id === 'announce_patient_name');
+    const announceNameChecked = announceNameSetting?.value === 'true';
+
     body.innerHTML = `
       <div class="settings-panel">
         <div class="settings-panel-header">
@@ -2156,12 +2159,16 @@ Object.assign(Settings, {
           </button>
         </div>
         <div class="settings-panel-body" style="padding:16px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; color:#334155; margin-bottom:16px; cursor:pointer; user-select:none;">
+            <input type="checkbox" id="chk-announce-patient-name" ${announceNameChecked ? 'checked' : ''} style="cursor:pointer; transform:scale(1.1);">
+            <span>自動音声アナウンス（出棟・到着・お迎え要請時）に患者名を含める</span>
+          </label>
           <p style="font-size:12px; color:#64748b; margin-bottom:16px; line-height:1.4;">
             コールの代わりに音声合成で読み上げて相手に伝える「ワンクリック定型アナウンス」の定型文リストを編集します。<br>
             追加・削除・編集を行った後は、最下部の「定型文設定を保存」ボタンを押してください。
           </p>
           <div id="templates-list-container" style="max-width:600px; margin-bottom:20px;"></div>
-          
+
           <button class="btn btn-primary" id="btn-save-templates" style="padding:10px 24px; font-weight:700;">
             <i class="fas fa-save"></i> 定型文設定を保存
           </button>
@@ -2170,6 +2177,24 @@ Object.assign(Settings, {
     `;
 
     renderList();
+
+    // 患者名アナウンス設定は即時保存（他のON/OFFトグルと同じ挙動）
+    document.getElementById('chk-announce-patient-name').addEventListener('change', async (e) => {
+      const value = e.target.checked ? 'true' : 'false';
+      try {
+        await API.patch('system_settings', 'announce_patient_name', { value });
+        if (announceNameSetting) {
+          announceNameSetting.value = value;
+        } else {
+          AppState.systemSettings.push({ id: 'announce_patient_name', value });
+        }
+        UI.toast('設定を保存しました', 'success');
+      } catch (err) {
+        console.error(err);
+        UI.toast('設定の保存に失敗しました', 'danger');
+        e.target.checked = !e.target.checked;
+      }
+    });
 
     // 追加ボタンイベント
     document.getElementById('btn-add-template').onclick = () => {
