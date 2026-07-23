@@ -827,6 +827,7 @@ const App = {
         // DB反映の成否を追跡（失敗を握りつぶして「成功」ログにしないため）
         let applySuccess = true;
         let applyError = '';
+        let applyUnauthorized = false;
         if (bulkUpdates.length > 0) {
           try {
             await API.bulkPatch('beds', bulkUpdates);
@@ -834,6 +835,9 @@ const App = {
             console.error('[Import] バルクアップデートエラー:', err);
             applySuccess = false;
             applyError = err?.message || String(err);
+            // 子機構成でAPIトークンが親機と不一致の場合、api.js _fetch は401をこのフラグ付きで投げる。
+            // 「原因不明のDB反映失敗」ではなく設定不備だと分かるよう、専用メッセージに分岐させる
+            applyUnauthorized = !!err?.unauthorized;
           }
         }
 
@@ -844,9 +848,13 @@ const App = {
         const clearPart = clearCount > 0 ? `, 退院クリア: ${clearCount}件` : '';
         const detailMsg = applySuccess
           ? `インポート成功: ${importedCount}件, スキップ: ${skipCount}件${clearPart}`
-          : `DB反映に失敗: ${applyError}（対象${bulkUpdates.length}件は未反映。原本は保持されます）`;
+          : (applyUnauthorized
+            ? `APIトークンが親機と一致していません（対象${bulkUpdates.length}件は未反映。原本は保持されます）。設定 → 共有・ネットワーク設定 → 「親機への接続」でAPIトークンを確認してください。`
+            : `DB反映に失敗: ${applyError}（対象${bulkUpdates.length}件は未反映。原本は保持されます）`);
         const logMsg = !applySuccess
-          ? 'データベースへの反映に失敗しました。原本ファイルは削除されず保持されます。'
+          ? (applyUnauthorized
+            ? 'APIトークンが親機と一致していないため反映できませんでした。原本ファイルは削除されず保持されます。'
+            : 'データベースへの反映に失敗しました。原本ファイルは削除されず保持されます。')
           : (importedCount > 0
             ? `${importedCount}件の患者情報を更新しました。${clearCount > 0 ? `（${clearCount}件を退院済みとしてクリア）` : ''}`
             : '更新対象の有効な病床データがありませんでした。');
@@ -882,7 +890,10 @@ const App = {
         
         if (!applySuccess) {
           // 反映失敗は通知設定に関わらず必ず知らせる（原本は保持される）
-          UI.toast(`❌ CSV取り込みのDB反映に失敗しました。原本ファイルは保持されます: ${fileName}`, 'danger', 8000);
+          const toastMsg = applyUnauthorized
+            ? `❌ 病床データの反映に失敗しました（APIトークンが親機と一致していません）。設定 → 共有・ネットワーク設定 → 「親機への接続」でAPIトークンを確認してください: ${fileName}`
+            : `❌ CSV取り込みのDB反映に失敗しました（${applyError}）。原本ファイルは保持されます: ${fileName}`;
+          UI.toast(toastMsg, 'danger', 10000);
         } else {
           const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
           if (importToastEnabled) {
