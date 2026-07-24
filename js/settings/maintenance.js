@@ -61,10 +61,11 @@ Object.assign(Settings, {
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
           <h3><i class="fas fa-arrow-circle-up"></i> アプリの更新</h3>
+          <span class="settings-badge settings-badge--terminal">個別設定（PCごと）</span>
         </div>
         <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:var(--clr-text);">
           <input type="checkbox" id="cfg-auto-update-check" ${localStorage.getItem('cfg_auto_update_check') !== 'false' ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-          起動時と24時間ごとに更新を自動チェックする
+          起動時と24時間ごとに更新を自動チェックする <span style="font-weight:400; color:var(--clr-text-muted); font-size:11px;">（切り替えると即時保存されます）</span>
         </label>
         <div style="font-size:11px; color:var(--clr-text-muted); margin-top:4px; padding-left:24px;">
           ${currentMode === 'parent' ? '親機は自身の配信フォルダ（下記で取り込んだ更新）をチェックします。' : '子機は親機の配信フォルダをチェックします。更新は通知のみで、インストールは常に手動で開始します。'}
@@ -78,7 +79,7 @@ Object.assign(Settings, {
         <div id="update-dist-panel" style="display:${currentMode === 'parent' ? 'block' : 'none'}; margin-top:14px; padding-top:14px; border-top:1px dashed var(--clr-border);">
           <div style="font-size:13px; font-weight:700; color:var(--clr-text); margin-bottom:4px;">
             <i class="fas fa-broadcast-tower"></i> 子機への更新配信
-            <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用</span>
+            <span class="settings-badge settings-badge--parent">親機専用</span>
           </div>
           <p style="font-size:11px; color:var(--clr-text-muted); margin:0 0 8px 0;">
             GitHub Releases から <code style="background:#edf2f7; padding:1px 4px; border-radius:3px;">latest.yml</code> とインストーラ（.exe）をダウンロードし、ここで取り込むとLAN内の全端末（この親機を含む）へ更新を配信できます。取込時にファイルの整合性（sha512）を検証するため、破損・組み合わせ違いのファイルは配信されません。

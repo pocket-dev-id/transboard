@@ -2325,7 +2325,7 @@ Object.assign(Settings, {
 
     renderList();
 
-    // 患者名アナウンス設定は即時保存（他のON/OFFトグルと同じ挙動）
+    // 患者名アナウンス設定は即時保存（ON/OFFトグルは即時保存に統一する方針、js/settings/network.jsのWebRTC/ICカードトグル等も同様）
     document.getElementById('chk-announce-patient-name').addEventListener('change', async (e) => {
       const value = e.target.checked ? 'true' : 'false';
       try {

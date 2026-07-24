@@ -42,7 +42,7 @@ const SETTINGS_TAB_CATEGORIES = {
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
-  notifications: 'terminal', network: 'terminal', maintenance: 'terminal',
+  notifications: 'terminal', network: 'mixed', maintenance: 'mixed',
 };
 
 const SETTINGS_CATEGORY_META = {
@@ -56,7 +56,11 @@ const SETTINGS_CATEGORY_META = {
     icon: 'fa-laptop',
     cls: 'settings-category-banner--terminal',
     title: '端末固有設定',
-    desc: 'この設定はこの端末にのみ適用されます。他の端末には影響しません。',
+    // 子機では純粋に端末ローカル(localStorage)保存だが、親機で変更した場合は
+    // 共有DB(system_settings)に保存され「新しく接続する子機の初期値」になる
+    // （通知音設定タブの実装に合わせた役割別の説明）
+    parentDesc: 'この端末（親機）で変更すると共有データベースに保存され、新しく接続する子機の初期値になります。既に接続済みで個別に上書き済みの子機には影響しません。',
+    childDesc: 'この設定はこの端末にのみ適用されます。他の端末には影響しません。',
   },
   'parent-only': {
     icon: 'fa-server',
@@ -64,6 +68,12 @@ const SETTINGS_CATEGORY_META = {
     title: '親機専用機能',
     parentDesc: 'この機能は親機でのみ実行されます。',
     childDesc: '実際の処理（ファイル監視・取り込み）は親機で実行されます。設定自体は子機からも変更できます。',
+  },
+  mixed: {
+    icon: 'fa-layer-group',
+    cls: 'settings-category-banner--mixed',
+    title: '適用範囲が項目ごとに異なります',
+    desc: 'このタブには「この端末のみ」「親機専用」「全端末に同期」の設定が混在します。各項目の見出しにあるバッジで適用範囲を確認してください。',
   },
 };
 
@@ -255,7 +265,8 @@ const Settings = {
     if (!category) return;
 
     const meta = SETTINGS_CATEGORY_META[category];
-    const desc = category === 'parent-only'
+    // parentDesc/childDescを持つカテゴリ（parent-only・terminal）は端末の役割に応じて説明文を出し分ける
+    const desc = (meta.parentDesc || meta.childDesc)
       ? (isChild ? meta.childDesc : meta.parentDesc)
       : meta.desc;
     const banner = document.createElement('div');

@@ -145,19 +145,13 @@ Object.assign(Settings, {
       <div class="settings-panel">
         <div class="settings-panel-header">
           <h3><i class="fas fa-network-wired"></i> 共有・ネットワーク設定</h3>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-outline btn-sm" id="btn-launch-wizard" style="border-color:var(--clr-primary); color:var(--clr-primary);">
-              <i class="fas fa-magic"></i> 初期設定ウィザード起動
-            </button>
-            <button class="btn btn-primary btn-sm" id="btn-save-network">
-              <i class="fas fa-save"></i> 設定を保存
-            </button>
-          </div>
+          <button class="btn btn-outline btn-sm" id="btn-launch-wizard" style="border-color:var(--clr-primary); color:var(--clr-primary);">
+            <i class="fas fa-magic"></i> 初期設定ウィザード起動
+          </button>
         </div>
         <p class="settings-hint">
           <i class="fas fa-info-circle"></i>
-          病棟PCと検査室PCの間でデータを共有するための設定を行います。<br>
-          ※設定を変更して保存した後に、アプリケーションの再起動が必要です。
+          病棟PCと検査室PCの間でデータを共有するための設定を行います。各セクションの保存ボタンで個別に保存してください。
         </p>
 
         <div style="background:#f8fafc; padding:20px; border-radius:8px; border:1px solid #e2e8f0; margin-top:16px; display:flex; flex-direction:column; gap:16px;">
@@ -165,7 +159,7 @@ Object.assign(Settings, {
           <div>
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-project-diagram"></i> このPCの役割を選択
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; font-weight:800;">個別設定（PCごと）</span>
+              <span class="settings-badge settings-badge--terminal">個別設定（PCごと）</span>
             </h4>
             <div style="display:flex; flex-direction:column; gap:12px;">
               <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
@@ -189,7 +183,7 @@ Object.assign(Settings, {
           <div id="client-config-section" style="border-top:1px solid #e2e8f0; padding-top:16px; display:${currentMode === 'client' ? 'block' : 'none'};">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-plug"></i> 親機への接続設定
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#dbeafe; color:#1e40af; font-weight:800;">子機専用設定</span>
+              <span class="settings-badge settings-badge--terminal">子機専用設定</span>
             </h4>
             <div class="form-row" style="margin-bottom:12px;">
               <label>親機PCのIPアドレス / ホスト名</label>
@@ -227,7 +221,7 @@ Object.assign(Settings, {
             <div id="parent-share-onboarding" style="display:${isStandaloneMode ? 'none' : 'block'};">
               <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
                 <i class="fas fa-info-circle"></i> 子機から接続するための情報
-                <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用情報</span>
+                <span class="settings-badge settings-badge--parent">親機専用情報</span>
               </h4>
               <p style="font-size:11px; color:#718096; margin:0 0 8px 0;">子機PCを設定する際は、この親機PCの以下のいずれかのIPアドレスを接続先に指定してください：</p>
               <ul style="font-size:12px; line-height:1.6; margin:0; padding-left:20px; color:#4a5568;">
@@ -249,15 +243,22 @@ Object.assign(Settings, {
             </div>
           </div>
 
+          <div style="display:flex; justify-content:flex-end;">
+            <button class="btn btn-primary btn-sm" id="btn-save-connection"><i class="fas fa-save"></i> 接続設定を保存</button>
+          </div>
+          <p style="font-size:11px; color:#b45309; margin:-8px 0 0 0; text-align:right;">
+            <i class="fas fa-exclamation-triangle"></i> このPCの役割・親機IP・APIトークンの変更はアプリの再起動後に有効になります。
+          </p>
+
           <!-- WebRTC通話機能の有効/無効設定 -->
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-phone-alt"></i> WebRTC音声通話機能の設定
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
+              <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-enable-webrtc-call" ${isWebRtcEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-              WebRTC音声通話機能を使用する
+              WebRTC音声通話機能を使用する <span style="font-weight:400; color:var(--clr-text-muted); font-size:11px;">（切り替えると即時保存されます）</span>
             </label>
             <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
               チェックを外すと、画面間のリアルタイム音声通話が無効になります。簡易定型アナウンス（音声合成）や内線番号表示のみを利用できます。
@@ -293,11 +294,11 @@ Object.assign(Settings, {
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-id-card"></i> 患者ICカード登録機能（オプション）
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
+              <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-enable-patient-ic" ${isIcEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-              患者ICカード登録機能を使用する（出棟時・移動中の紐づけ、帰棟・キャンセル時の自動解除）
+              患者ICカード登録機能を使用する（出棟時・移動中の紐づけ、帰棟・キャンセル時の自動解除） <span style="font-weight:400; color:var(--clr-text-muted); font-size:11px;">（切り替えると即時保存されます）</span>
             </label>
             <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
               チェックを入れると、病床詳細モーダルにおいて出棟登録時や移動中の患者に対してICカード（スキャナーによる文字入力）を登録できるようになります。帰棟完了時やキャンセル時には自動的に紐づけが削除されます。
@@ -308,7 +309,7 @@ Object.assign(Settings, {
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-desktop"></i> 表示倍率・フォント・病床カードサイズ設定
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; font-weight:800;">個別設定（PCごと）</span>
+              <span class="settings-badge settings-badge--terminal">個別設定（PCごと）</span>
             </h4>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:10px;">
               <div class="form-row">
@@ -353,13 +354,16 @@ Object.assign(Settings, {
             <div style="font-size:11px; color:#718096; margin-top:8px;">
               ※表示設定（倍率・フォント・カードサイズ・テーマ）は端末ごとに個別保存されます（このパソコンのみに適用）。同時に、新しい端末接続時のデフォルト初期値として、親機のデータベースにも共通保存されます。
             </div>
+            <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+              <button class="btn btn-primary btn-sm" id="btn-save-display"><i class="fas fa-save"></i> 表示設定を保存</button>
+            </div>
           </div>
 
           <!-- 管理者パスコードの設定 (全体同期) -->
           <div id="admin-passcode-section" style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-lock"></i> 設定画面保護パスコード
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
+              <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <div class="form-row" style="margin-top:10px;">
               <label style="font-size:12.5px; font-weight:700; color:#4a5568;">管理者パスコード（数字4桁など）</label>
@@ -368,6 +372,9 @@ Object.assign(Settings, {
                 ※設定画面を開くための親機・子機共通パスコードです。空欄のまま保存すると現在のパスコードを維持します。パスコードはSHA-256でハッシュ化して保存され、同じ親機配下の端末へ同期されます。
               </div>
             </div>
+            <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+              <button class="btn btn-primary btn-sm" id="btn-save-passcode"><i class="fas fa-save"></i> パスコードを保存</button>
+            </div>
           </div>
 
           <!-- スタートアップ登録 (Desktop専用) -->
@@ -375,6 +382,7 @@ Object.assign(Settings, {
           <div style="border-top:1px solid #e2e8f0; padding-top:16px; margin-top:4px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-power-off"></i> Windows 起動時の自動起動
+              <span class="settings-badge settings-badge--terminal">個別設定（PCごと）</span>
             </h4>
             <div style="display:flex; align-items:center; gap:10px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:normal;">
@@ -613,43 +621,29 @@ Object.assign(Settings, {
       UI.toast(`ビデオ品質を「${{ low:'低画質', medium:'標準', high:'高画質' }[sel.value]}」に設定しました`, 'success');
     };
 
-    // 保存ボタンイベント
-    const saveNetworkBtn = body.querySelector('#btn-save-network');
-    if (saveNetworkBtn) saveNetworkBtn.onclick = async () => {
+    // AppStateのシステム設定キャッシュを更新する共通ヘルパー
+    const updateSetting = (id, val) => {
+      const obj = AppState.systemSettings?.find(s => s.id === id);
+      if (obj) obj.value = val;
+      else AppState.systemSettings.push({ id, value: val });
+    };
+
+    // ── 接続設定の保存（稼働モード・親機IP・APIトークン。再起動が必要） ──
+    const saveConnectionBtn = document.getElementById('btn-save-connection');
+    if (saveConnectionBtn) saveConnectionBtn.onclick = async () => {
       const mode = body.querySelector('input[name="network-mode"]:checked').value;
       const parentIp = document.getElementById('cfg-parent-ip').value.trim();
       const apiToken = document.getElementById('cfg-api-token')?.value.trim() || '';
-      const enableWebRtcCall = document.getElementById('cfg-enable-webrtc-call').checked ? 'true' : 'false';
-      const enablePatientIc = document.getElementById('cfg-enable-patient-ic').checked ? 'true' : 'false';
-      const defaultZoom = document.getElementById('cfg-default-zoom').value;
-      const fontStyle = document.getElementById('cfg-font-style').value;
-      const bedCardSize = document.getElementById('cfg-bed-card-size').value;
-      const themeStyle = document.getElementById('cfg-theme').value;
-      const adminPasscodeRaw = document.getElementById('cfg-admin-passcode').value.trim();
 
       if (mode === 'client' && !parentIp) {
         UI.toast('接続先の親機IPアドレスを入力してください', 'warning');
         return;
       }
 
-      // パスコードをSHA-256でハッシュ化して保存 (セキュリティ #3)
-      let adminPasscode = '';
-      if (adminPasscodeRaw) {
-        adminPasscode = typeof PasscodeHash !== 'undefined'
-          ? await PasscodeHash.hash(adminPasscodeRaw)
-          : adminPasscodeRaw;
-      }
-
-      // localStorageへ保存（起動時の同期ロードおよび端末個別用）
       localStorage.setItem('cfg_share_mode', mode);
       localStorage.setItem('cfg_parent_ip', parentIp);
       localStorage.setItem('cfg_api_token', apiToken);
-      localStorage.setItem('cfg_app_zoom', defaultZoom);
-      localStorage.setItem('cfg_font_style', fontStyle);
-      localStorage.setItem('cfg_bed_card_size', bedCardSize);
-      localStorage.setItem('cfg_theme_style', themeStyle);
 
-      // マスタDB側にも設定値（互換性保存）を反映
       try {
         // 稼働モード・親機IPは「この端末自身」の設定のため、共有APIルーティング
         // （API.patch）を通さず常にローカルDBへ直接書き込む。
@@ -662,43 +656,12 @@ Object.assign(Settings, {
             window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: parentIp }) } }),
           ]);
         }
-        await Promise.all([
-          API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
-          API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
-          API.patch('system_settings', 'default_zoom', { value: defaultZoom }),
-          API.patch('system_settings', 'font_style', { value: fontStyle }),
-          API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
-          API.patch('system_settings', 'theme_style', { value: themeStyle }),
-          ...(adminPasscode ? [API.patch('system_settings', 'admin_passcode', { value: adminPasscode })] : []),
-        ]);
-
-        // AppStateのシステム設定も更新
-        const updateSetting = (id, val) => {
-          const obj = AppState.systemSettings?.find(s => s.id === id);
-          if (obj) obj.value = val;
-          else AppState.systemSettings.push({ id, value: val });
-        };
-        updateSetting('enable_webrtc_call', enableWebRtcCall);
-        updateSetting('enable_patient_ic_association', enablePatientIc);
-        updateSetting('default_zoom', defaultZoom);
-        updateSetting('font_style', fontStyle);
-        updateSetting('bed_card_size', bedCardSize);
-        updateSetting('theme_style', themeStyle);
-        if (adminPasscode) updateSetting('admin_passcode', adminPasscode);
-
-        // 即座に変更を適用する
-        if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
-          App.applySystemVisualSettings();
-        }
         // 稼働モード変更に伴う単独運用UIの再判定（parent(単独ON)→client切替時のbodyクラス残留を防ぐ）
         if (typeof App !== 'undefined' && App._applyStandaloneMode) {
           App._applyStandaloneMode();
         }
 
-        UI.toast('設定を保存しました。画面表示設定は即時適用され、ネットワーク共有設定は再起動後に有効になります。', 'success');
-        
-        // 再起動アラートの提示
-        if (await UI.confirmModal('設定を完全に反映するためには、アプリケーションの再起動が必要です。今すぐ再起動しますか？', { confirmLabel: '再起動' })) {
+        if (await UI.confirmModal('接続設定を反映するためには、アプリケーションの再起動が必要です。今すぐ再起動しますか？', { title: '接続設定を保存しました', confirmLabel: '再起動' })) {
           if (window.electronAPI && window.electronAPI.relaunchApp) {
             window.electronAPI.relaunchApp();
           } else {
@@ -707,9 +670,98 @@ Object.assign(Settings, {
         }
       } catch (err) {
         console.error(err);
-        UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
+        UI.toast('接続設定の保存に失敗しました: ' + err.message, 'danger');
       }
-    }; // if (saveNetworkBtn)
+    };
+
+    // ── WebRTC音声通話・患者ICカード機能のトグルは即時保存（他の即時保存トグルと統一） ──
+    const webrtcChk = document.getElementById('cfg-enable-webrtc-call');
+    if (webrtcChk) {
+      webrtcChk.onchange = async () => {
+        const value = webrtcChk.checked ? 'true' : 'false';
+        try {
+          await API.patch('system_settings', 'enable_webrtc_call', { value });
+          updateSetting('enable_webrtc_call', value);
+          UI.toast(webrtcChk.checked ? 'WebRTC音声通話機能を有効にしました' : 'WebRTC音声通話機能を無効にしました', 'success');
+        } catch (err) {
+          UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
+          webrtcChk.checked = !webrtcChk.checked;
+        }
+      };
+    }
+    const icChk = document.getElementById('cfg-enable-patient-ic');
+    if (icChk) {
+      icChk.onchange = async () => {
+        const value = icChk.checked ? 'true' : 'false';
+        try {
+          await API.patch('system_settings', 'enable_patient_ic_association', { value });
+          updateSetting('enable_patient_ic_association', value);
+          UI.toast(icChk.checked ? '患者ICカード登録機能を有効にしました' : '患者ICカード登録機能を無効にしました', 'success');
+        } catch (err) {
+          UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
+          icChk.checked = !icChk.checked;
+        }
+      };
+    }
+
+    // ── 表示設定の保存（倍率・フォント・カードサイズ・テーマ。即時反映・再起動不要） ──
+    const saveDisplayBtn = document.getElementById('btn-save-display');
+    if (saveDisplayBtn) saveDisplayBtn.onclick = async () => {
+      const defaultZoom = document.getElementById('cfg-default-zoom').value;
+      const fontStyle = document.getElementById('cfg-font-style').value;
+      const bedCardSize = document.getElementById('cfg-bed-card-size').value;
+      const themeStyle = document.getElementById('cfg-theme').value;
+
+      localStorage.setItem('cfg_app_zoom', defaultZoom);
+      localStorage.setItem('cfg_font_style', fontStyle);
+      localStorage.setItem('cfg_bed_card_size', bedCardSize);
+      localStorage.setItem('cfg_theme_style', themeStyle);
+
+      try {
+        await Promise.all([
+          API.patch('system_settings', 'default_zoom', { value: defaultZoom }),
+          API.patch('system_settings', 'font_style', { value: fontStyle }),
+          API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
+          API.patch('system_settings', 'theme_style', { value: themeStyle }),
+        ]);
+        updateSetting('default_zoom', defaultZoom);
+        updateSetting('font_style', fontStyle);
+        updateSetting('bed_card_size', bedCardSize);
+        updateSetting('theme_style', themeStyle);
+
+        if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
+          App.applySystemVisualSettings();
+        }
+        UI.toast('表示設定を保存し、即時反映しました', 'success');
+      } catch (err) {
+        console.error(err);
+        UI.toast('表示設定の保存に失敗しました: ' + err.message, 'danger');
+      }
+    };
+
+    // ── 管理者パスコードの保存 ──
+    const savePasscodeBtn = document.getElementById('btn-save-passcode');
+    if (savePasscodeBtn) savePasscodeBtn.onclick = async () => {
+      const adminPasscodeRaw = document.getElementById('cfg-admin-passcode').value.trim();
+      if (!adminPasscodeRaw) {
+        UI.toast('パスコードを入力してください（維持する場合は変更不要です）', 'warning');
+        return;
+      }
+      try {
+        // パスコードをSHA-256でハッシュ化して保存 (セキュリティ #3)
+        const adminPasscode = typeof PasscodeHash !== 'undefined'
+          ? await PasscodeHash.hash(adminPasscodeRaw)
+          : adminPasscodeRaw;
+        await API.patch('system_settings', 'admin_passcode', { value: adminPasscode });
+        updateSetting('admin_passcode', adminPasscode);
+        document.getElementById('cfg-admin-passcode').value = '';
+        document.getElementById('cfg-admin-passcode').placeholder = '●●●● (変更する場合のみ入力)';
+        UI.toast('パスコードを保存しました', 'success');
+      } catch (err) {
+        console.error(err);
+        UI.toast('パスコードの保存に失敗しました: ' + err.message, 'danger');
+      }
+    };
 
     // スタートアップ登録チェックボックス
     const startupChk = document.getElementById('chk-startup');
