@@ -352,7 +352,7 @@ Object.assign(Settings, {
               </div>
             </div>
             <div style="font-size:11px; color:#718096; margin-top:8px;">
-              ※表示設定（倍率・フォント・カードサイズ・テーマ）は端末ごとに個別保存されます（このパソコンのみに適用）。同時に、新しい端末接続時のデフォルト初期値として、親機のデータベースにも共通保存されます。
+              ※表示設定（倍率・フォント・カードサイズ・テーマ）は端末ごとに個別保存されます（このパソコンのみに適用）。親機で保存した場合のみ、新しい端末接続時のデフォルト初期値としてデータベースにも共通保存されます（子機ではこのパソコンのみに適用され、他の端末の初期値には影響しません）。
             </div>
             <div style="display:flex; justify-content:flex-end; margin-top:10px;">
               <button class="btn btn-primary btn-sm" id="btn-save-display"><i class="fas fa-save"></i> 表示設定を保存</button>
@@ -716,18 +716,22 @@ Object.assign(Settings, {
       localStorage.setItem('cfg_font_style', fontStyle);
       localStorage.setItem('cfg_bed_card_size', bedCardSize);
       localStorage.setItem('cfg_theme_style', themeStyle);
+      updateSetting('default_zoom', defaultZoom);
+      updateSetting('font_style', fontStyle);
+      updateSetting('bed_card_size', bedCardSize);
+      updateSetting('theme_style', themeStyle);
 
       try {
-        await Promise.all([
-          API.patch('system_settings', 'default_zoom', { value: defaultZoom }),
-          API.patch('system_settings', 'font_style', { value: fontStyle }),
-          API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
-          API.patch('system_settings', 'theme_style', { value: themeStyle }),
-        ]);
-        updateSetting('default_zoom', defaultZoom);
-        updateSetting('font_style', fontStyle);
-        updateSetting('bed_card_size', bedCardSize);
-        updateSetting('theme_style', themeStyle);
+        // 子機では端末ローカル(localStorage)保存に留め、共有DBの「新規端末初期値」は変更しない
+        // （通知音設定タブと同じ方針。子機の個人設定が他端末の初期値を意図せず書き換えるのを防ぐ）
+        if (currentMode !== 'client') {
+          await Promise.all([
+            API.patch('system_settings', 'default_zoom', { value: defaultZoom }),
+            API.patch('system_settings', 'font_style', { value: fontStyle }),
+            API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
+            API.patch('system_settings', 'theme_style', { value: themeStyle }),
+          ]);
+        }
 
         if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
           App.applySystemVisualSettings();

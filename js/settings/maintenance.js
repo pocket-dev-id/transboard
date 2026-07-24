@@ -120,8 +120,8 @@ Object.assign(Settings, {
         </div>
       </div>
 
-      <!-- データベースの保存先設定 (Desktop専用) -->
-      ${window.electronAPI && storageInfo ? `
+      <!-- データベースの保存先設定 (Desktop・親機専用) -->
+      ${window.electronAPI && storageInfo && currentMode === 'parent' ? `
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
           <h3><i class="fas fa-folder-open"></i> データベースの保存先設定</h3>
