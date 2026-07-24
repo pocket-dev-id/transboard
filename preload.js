@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getEncryptionStatus: () => ipcRenderer.invoke('get-encryption-status'),
   getArchiveInfo: () => ipcRenderer.invoke('get-archive-info'),
 
+  // 保守画面: DB概況・診断バンドル出力
+  getDbInfo: () => ipcRenderer.invoke('get-db-info'),
+  exportDiagnosticsBundle: () => ipcRenderer.invoke('export-diagnostics-bundle'),
+
   // NFC カードスキャン
   onCardScanned: (callback) => {
     ipcRenderer.removeAllListeners('card-scanned');

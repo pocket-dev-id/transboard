@@ -652,6 +652,7 @@ const App = {
       // 通常運用時のみ、日跨ぎ（帰棟し忘れ）の未完了出棟をチェックして通知する
       // （初回セットアップ中はウィザードを優先し邪魔しない）
       setTimeout(() => this.checkCarriedOver(), 800);
+      setTimeout(() => this.checkBackupReminder(), 1200);
     }
 
     // デスクトップアプリ用自動インポートのリスナー登録
@@ -1510,6 +1511,33 @@ const App = {
       if (typeof CarryoverModal !== 'undefined') CarryoverModal.open(list);
     } catch (e) {
       console.error('[Carryover]', e);
+    }
+  },
+
+  // 最終バックアップから30日以上経過している場合に軽く注意喚起する（親機のみ・1日1回まで）。
+  // データ保護目的の案内であり、carryover通知と異なり緊急性は低いためトーストのみで、
+  // ダイアログは開かない。バックアップ機能自体は「システム保守」タブにある
+  async checkBackupReminder() {
+    try {
+      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+      if (shareMode === 'client') return; // バックアップは親機専用機能
+      if (!window.electronAPI?.getDbInfo) return;
+
+      const todayStr = new Date().toDateString();
+      if (localStorage.getItem('tbs_backup_reminder_ack') === todayStr) return;
+
+      const info = await window.electronAPI.getDbInfo().catch(() => null);
+      if (!info) return;
+      const daysAgo = info.lastBackupAt ? Math.floor((Date.now() - info.lastBackupAt) / 86400000) : null;
+      if (daysAgo !== null && daysAgo <= 30) return; // 30日以内に実施済みなら何もしない
+
+      localStorage.setItem('tbs_backup_reminder_ack', todayStr);
+      const message = daysAgo === null
+        ? 'データベースのバックアップがまだ取られていません。設定 > システム保守 から実施してください。'
+        : `最終バックアップから${daysAgo}日経過しています。設定 > システム保守 からバックアップを取ることをおすすめします。`;
+      UI.toast(message, 'warning', 8000);
+    } catch (e) {
+      console.error('[BackupReminder]', e);
     }
   },
 

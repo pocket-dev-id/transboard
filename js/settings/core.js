@@ -19,6 +19,7 @@ const SETTINGS_TAB_DEFS = {
   schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
   notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
   network: ['fa-network-wired', '共有・ネットワーク設定', 'terminal', '端末'],
+  maintenance: ['fa-toolbox', 'システム保守', 'terminal', '端末'],
 };
 
 const SETTINGS_TAB_GROUPS = {
@@ -26,11 +27,12 @@ const SETTINGS_TAB_GROUPS = {
     ['端末・接続', ['network', 'notifications']],
     ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
+    ['保守', ['maintenance']],
   ],
   parent: [
     ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
-    ['端末・接続/保守', ['network', 'notifications']],
+    ['端末・接続/保守', ['network', 'notifications', 'maintenance']],
   ],
 };
 
@@ -40,7 +42,7 @@ const SETTINGS_TAB_CATEGORIES = {
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
-  notifications: 'terminal', network: 'terminal',
+  notifications: 'terminal', network: 'terminal', maintenance: 'terminal',
 };
 
 const SETTINGS_CATEGORY_META = {
@@ -236,6 +238,7 @@ const Settings = {
       schedule_feeds: '_renderScheduleFeeds',
       network: '_renderNetworkSettings',
       status_customize: '_renderStatusCustomize',
+      maintenance: '_renderMaintenanceSettings',
     };
     const renderer = renderers[this._activeTab];
     if (renderer && typeof this[renderer] === 'function') {
