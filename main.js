@@ -1180,8 +1180,7 @@ ipcMain.handle('get-watch-directory', () => {
   return currentWatchDir;
 });
 
-// IPC通信で監視対象フォルダを動的に切り替える
-ipcMain.handle('update-watch-directory', (event, newPath) => {
+function updateWatchDirectoryOnParent(newPath) {
   const resolved = newPath && newPath.trim() ? newPath.trim() : path.join(__dirname, 'import_folder');
   
   // UNCパスの場合のみSMBネットワーク共有フォルダの認証を実行
@@ -1197,10 +1196,12 @@ ipcMain.handle('update-watch-directory', (event, newPath) => {
   setupImportTrigger();
   setupScheduleFeedTriggers();
   return { success: true, path: resolved };
-});
+}
 
-// IPC通信で手動でのフォルダスキャン・CSV取り込みを実行する
-ipcMain.handle('trigger-manual-import', async () => {
+// IPC通信で監視対象フォルダを動的に切り替える
+ipcMain.handle('update-watch-directory', (event, newPath) => updateWatchDirectoryOnParent(newPath));
+
+async function triggerManualImportOnParent() {
   const watchPath = resolveWatchDir();
   if (!fs.existsSync(watchPath)) {
     return { success: false, message: '監視フォルダが存在しません。' };
@@ -1223,7 +1224,10 @@ ipcMain.handle('trigger-manual-import', async () => {
     console.error('[Manual Import] エラー:', err);
     return { success: false, message: err.message };
   }
-});
+}
+
+// IPC通信で手動でのフォルダスキャン・CSV取り込みを実行する
+ipcMain.handle('trigger-manual-import', () => triggerManualImportOnParent());
 
 // ODBC読み取り専用安全対策: SQLクエリバリデーション
 function validateReadOnlyQuery(sql) {
@@ -1308,8 +1312,7 @@ function enforceReadOnlyConnectionString(connStr) {
   return { valid: true, connectionString: finalConnStr };
 }
 
-// IPC通信でODBC接続経由でテーブル/ビュー一覧を取得する
-ipcMain.handle('get-odbc-tables', async (event, { connectionString }) => {
+async function getOdbcTablesOnParent({ connectionString }) {
   if (!connectionString) return { success: false, error: '接続文字列が指定されていません', tables: [] };
   const safe = String(connectionString).replace(/'/g, '').slice(0, 500);
   const ps = `
@@ -1340,10 +1343,12 @@ try {
   } catch (e) {
     return { success: false, error: e.message, tables: [] };
   }
-});
+}
 
-// IPC通信でWindowsレジストリからシステム/ユーザーDSN一覧を取得する
-ipcMain.handle('get-odbc-dsns', () => {
+// IPC通信でODBC接続経由でテーブル/ビュー一覧を取得する
+ipcMain.handle('get-odbc-tables', (event, config) => getOdbcTablesOnParent(config || {}));
+
+function getOdbcDsnsOnParent() {
   const result = { system: [], user: [], drivers: [] };
   const regQuery = (hive, subkey) => {
     try {
@@ -1370,10 +1375,12 @@ ipcMain.handle('get-odbc-dsns', () => {
   result.user    = regQuery('HKCU', 'ODBC Data Sources');
   result.drivers = [...new Set([...driverQuery('HKLM'), ...driverQuery('HKCU')])];
   return result;
-});
+}
 
-// IPC通信でODBCデータベース接続テストを行う（シミュレーション）
-ipcMain.handle('test-odbc-connection', async (event, { connectionString, sqlQuery }) => {
+// IPC通信でWindowsレジストリからシステム/ユーザーDSN一覧を取得する
+ipcMain.handle('get-odbc-dsns', () => getOdbcDsnsOnParent());
+
+async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
   await new Promise(resolve => setTimeout(resolve, 1000));
   
   // 接続文字列の検証 & 読み取り専用属性の付与
@@ -1393,10 +1400,12 @@ ipcMain.handle('test-odbc-connection', async (event, { connectionString, sqlQuer
     return { success: false, message: '接続文字列にDSN指定が見つかりません。例: DSN=EMR_DB;UID=admin;PWD=pass;' };
   }
   return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済])' };
-});
+}
 
-// IPC通信でODBC直接同期を実行する（シミュレーション）
-ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) => {
+// IPC通信でODBCデータベース接続テストを行う（シミュレーション）
+ipcMain.handle('test-odbc-connection', (event, config) => testOdbcConnectionOnParent(config || {}));
+
+async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
   await new Promise(resolve => setTimeout(resolve, 1200));
   
   // 接続文字列の検証 & 読み取り専用属性の付与
@@ -1467,7 +1476,10 @@ ipcMain.handle('run-odbc-sync', async (event, { connectionString, sqlQuery }) =>
   }
   
   return { success: true, count: mockRows.length };
-});
+}
+
+// IPC通信でODBC直接同期を実行する（シミュレーション）
+ipcMain.handle('run-odbc-sync', (event, config) => runOdbcSyncOnParent(config || {}));
 
 // IPC通信で出棟中（進行中）の移送情報をリセットする
 ipcMain.handle('reset-database', () => {
@@ -2177,8 +2189,7 @@ ipcMain.handle('rollback-update-dist', () => {
   }
 });
 
-// スケジュールフィードの手動取り込みとウォッチャー再起動
-ipcMain.handle('trigger-schedule-feed-import', async (event, feedId) => {
+async function triggerScheduleFeedImportOnParent(feedId) {
   const db = readDB();
   const feed = (db.schedule_feeds || []).find(f => f.id === feedId);
   if (!feed) return { success: false, message: 'フィードが見つかりません' };
@@ -2187,12 +2198,17 @@ ipcMain.handle('trigger-schedule-feed-import', async (event, feedId) => {
   }
   scanAndImportScheduleFolder(feed.watch_dir, feed);
   return { success: true };
-});
+}
 
-ipcMain.handle('reload-schedule-feed-triggers', () => {
+function reloadScheduleFeedTriggersOnParent() {
   setupScheduleFeedTriggers();
   return { success: true };
-});
+}
+
+// スケジュールフィードの手動取り込みとウォッチャー再起動
+ipcMain.handle('trigger-schedule-feed-import', (event, feedId) => triggerScheduleFeedImportOnParent(feedId));
+
+ipcMain.handle('reload-schedule-feed-triggers', () => reloadScheduleFeedTriggersOnParent());
 
 // スタートアップ登録の取得・設定
 ipcMain.handle('get-startup-setting', () => {
@@ -2567,6 +2583,77 @@ function ensureApiToken() {
   return token;
 }
 
+function isValidApiToken(apiToken) {
+  const db = readDB();
+  const tokenSetting = (db.system_settings || []).find(s => s.id === 'api_token');
+  const expectedToken = tokenSetting?.value || '';
+  return Boolean(expectedToken && apiToken === expectedToken);
+}
+
+async function processParentActionRequest(method, action, bodyStr, apiToken) {
+  if (!isValidApiToken(apiToken)) {
+    console.warn(`[Security] 親機操作APIトークン認証失敗: action=${action}`);
+    return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+  if (method !== 'GET' && method !== 'POST') {
+    return { success: false, message: 'Method Not Allowed' };
+  }
+
+  let payload = {};
+  if (bodyStr) {
+    try { payload = JSON.parse(bodyStr); } catch { payload = {}; }
+  }
+
+  switch (action) {
+    case 'save-import-settings': {
+      const settings = payload.settings || {};
+      const allowed = new Set([
+        'import_directory',
+        'import_mapping',
+        'import_schedule',
+        'import_retention_policy',
+        'import_connection_type',
+        'odbc_connection_string',
+        'odbc_sql_query',
+        'smb_auth_mode',
+        'smb_username',
+        'smb_password',
+        'show_sync_time',
+        'show_import_time',
+      ]);
+      const db = readDB();
+      db.system_settings = db.system_settings || [];
+      for (const [id, value] of Object.entries(settings)) {
+        if (!allowed.has(id)) continue;
+        const rec = db.system_settings.find(s => s.id === id);
+        if (rec) rec.value = String(value ?? '');
+        else db.system_settings.push({ id, value: String(value ?? '') });
+      }
+      writeDB(db);
+      updateWatchDirectoryOnParent(settings.import_directory || '');
+      return { success: true };
+    }
+    case 'manual-import':
+      return triggerManualImportOnParent();
+    case 'update-watch-directory':
+      return updateWatchDirectoryOnParent(payload.path || payload.newPath || '');
+    case 'odbc-dsns':
+      return { success: true, ...getOdbcDsnsOnParent() };
+    case 'odbc-tables':
+      return getOdbcTablesOnParent(payload);
+    case 'odbc-test':
+      return testOdbcConnectionOnParent(payload);
+    case 'odbc-sync':
+      return runOdbcSyncOnParent(payload);
+    case 'schedule-feed-import':
+      return triggerScheduleFeedImportOnParent(payload.feedId);
+    case 'reload-schedule-feed-triggers':
+      return reloadScheduleFeedTriggersOnParent();
+    default:
+      return { success: false, message: 'Unknown parent action' };
+  }
+}
+
 // 親機としてのHTTP共有サーバー起動
 let parentHttpServer = null;
 function startParentServer() {
@@ -2664,6 +2751,9 @@ function startParentServer() {
         let result;
         if (cleanUrl.startsWith('webrtc/')) {
           result = processWebrtcRequest(req.method, cleanUrl, body);
+        } else if (cleanUrl.startsWith('parent-actions/')) {
+          const action = cleanUrl.replace(/^parent-actions\//, '').split('?')[0];
+          result = await processParentActionRequest(req.method, action, body, req.headers['x-api-token']);
         } else if (cleanUrl.startsWith('device/')) {
           const action = cleanUrl.replace(/^device\//, '').split('?')[0];
           if (action === 'heartbeat' && req.method === 'POST') {

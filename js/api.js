@@ -412,5 +412,30 @@ const API = {
     if (url) {
       return fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId }) }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
     }
+  },
+
+  async parentAction(action, payload = {}, { method = 'POST', timeoutMs = API_DEFAULT_TIMEOUT_MS } = {}) {
+    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+    const apiToken = localStorage.getItem('cfg_api_token') || '';
+    if (shareMode !== 'client' && shareMode !== 'child') {
+      throw new Error('parentAction is only for child terminals');
+    }
+    const options = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiToken ? { 'X-API-Token': apiToken } : {}),
+      },
+    };
+    if (method !== 'GET') options.body = JSON.stringify(payload || {});
+    const res = await fetchWithTimeout(`http://${parentIp}:3005/api/parent-actions/${action}`, options, timeoutMs);
+    const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
+    if (!res.ok || data.unauthorized) {
+      const err = new Error(data.message || `HTTP ${res.status}`);
+      if (res.status === 401 || data.unauthorized) err.unauthorized = true;
+      throw err;
+    }
+    return data;
   }
 };

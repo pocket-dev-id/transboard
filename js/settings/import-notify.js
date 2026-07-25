@@ -63,6 +63,62 @@ function validateReadOnlyQuery(sql) {
 }
 
 Object.assign(Settings, {
+  _isChildTerminal() {
+    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    return shareMode === 'client' || shareMode === 'child';
+  },
+
+  _parentAction(action, payload = {}, options) {
+    return API.parentAction(action, payload, options);
+  },
+
+  _runParentManualImport() {
+    return this._isChildTerminal()
+      ? this._parentAction('manual-import', {}, { timeoutMs: 60000 })
+      : window.electronAPI?.triggerManualImport?.();
+  },
+
+  _runParentWatchReload(path) {
+    return this._isChildTerminal()
+      ? this._parentAction('update-watch-directory', { path })
+      : window.electronAPI?.updateWatchDirectory?.(path);
+  },
+
+  _getParentOdbcDsns() {
+    return this._isChildTerminal()
+      ? this._parentAction('odbc-dsns', {})
+      : window.electronAPI?.getOdbcDsns?.();
+  },
+
+  _getParentOdbcTables(config) {
+    return this._isChildTerminal()
+      ? this._parentAction('odbc-tables', config, { timeoutMs: 20000 })
+      : window.electronAPI?.getOdbcTables?.(config);
+  },
+
+  _testParentOdbcConnection(config) {
+    return this._isChildTerminal()
+      ? this._parentAction('odbc-test', config, { timeoutMs: 20000 })
+      : window.electronAPI?.testOdbcConnection?.(config);
+  },
+
+  _runParentOdbcSync(config) {
+    return this._isChildTerminal()
+      ? this._parentAction('odbc-sync', config, { timeoutMs: 60000 })
+      : window.electronAPI?.runOdbcSync?.(config);
+  },
+
+  _reloadParentScheduleFeedTriggers() {
+    return this._isChildTerminal()
+      ? this._parentAction('reload-schedule-feed-triggers')
+      : window.electronAPI?.reloadScheduleFeedTriggers?.();
+  },
+
+  _triggerParentScheduleFeedImport(feedId) {
+    return this._isChildTerminal()
+      ? this._parentAction('schedule-feed-import', { feedId }, { timeoutMs: 60000 })
+      : window.electronAPI?.triggerScheduleFeedImport?.(feedId);
+  },
 
   async _renderImportSettings(body) {
     // マスタから設定レコードを取得
@@ -595,8 +651,8 @@ Object.assign(Settings, {
       const oldHtml = btn.innerHTML;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> スキャン中...';
       try {
-        if (window.electronAPI && window.electronAPI.triggerManualImport) {
-          const res = await window.electronAPI.triggerManualImport();
+        if (this._isChildTerminal() || (window.electronAPI && window.electronAPI.triggerManualImport)) {
+          const res = await this._runParentManualImport();
           if (res.success) {
             if (res.count > 0) {
               UI.toast(`📂 ${res.message}`, 'success');
@@ -625,8 +681,8 @@ Object.assign(Settings, {
       if (!sel) return;
       sel.innerHTML = '<option value="">⏳ 読み込み中...</option>';
       try {
-        const data = window.electronAPI?.getOdbcDsns
-          ? await window.electronAPI.getOdbcDsns()
+        const data = this._isChildTerminal() || window.electronAPI?.getOdbcDsns
+          ? await this._getParentOdbcDsns()
           : { system: [], user: [], drivers: [] };
 
         const opts = ['<option value="">— DSNを選択 —</option>'];
@@ -725,8 +781,8 @@ Object.assign(Settings, {
       if (sel)    sel.innerHTML = '<option value="">取得中...</option>';
 
       try {
-        const res = window.electronAPI?.getOdbcTables
-          ? await window.electronAPI.getOdbcTables({ connectionString: connStr })
+        const res = this._isChildTerminal() || window.electronAPI?.getOdbcTables
+          ? await this._getParentOdbcTables({ connectionString: connStr })
           : { success: false, error: 'デスクトップ環境が必要です', tables: [] };
 
         if (!res.success) {
@@ -796,8 +852,8 @@ Object.assign(Settings, {
       try {
         const conn = document.getElementById('cfg-odbc-conn').value.trim();
         const query = document.getElementById('cfg-odbc-query').value.trim();
-        if (window.electronAPI && window.electronAPI.testOdbcConnection) {
-          const res = await window.electronAPI.testOdbcConnection({ connectionString: conn, sqlQuery: query });
+        if (this._isChildTerminal() || (window.electronAPI && window.electronAPI.testOdbcConnection)) {
+          const res = await this._testParentOdbcConnection({ connectionString: conn, sqlQuery: query });
           if (res.success) {
             if (resultEl) resultEl.innerHTML = `<span style="color:#16a34a;font-weight:700;"><i class="fas fa-check-circle"></i> ${UI.escapeHTML(res.message)}</span>`;
             UI.toast('ODBC接続テスト成功', 'success');
@@ -825,8 +881,8 @@ Object.assign(Settings, {
       try {
         const conn = document.getElementById('cfg-odbc-conn').value.trim();
         const query = document.getElementById('cfg-odbc-query').value.trim();
-        if (window.electronAPI && window.electronAPI.runOdbcSync) {
-          const res = await window.electronAPI.runOdbcSync({ connectionString: conn, sqlQuery: query });
+        if (this._isChildTerminal() || (window.electronAPI && window.electronAPI.runOdbcSync)) {
+          const res = await this._runParentOdbcSync({ connectionString: conn, sqlQuery: query });
           if (res.success) {
             UI.toast(`✅ データベース同期が完了しました (${res.count}件のレコードを処理)`, 'success');
             await App.loadMasters();
@@ -1174,22 +1230,29 @@ Object.assign(Settings, {
       };
 
       try {
-        const promises = [
-          API.patch('system_settings', 'import_directory', { value: newPath }),
-          API.patch('system_settings', 'import_mapping', { value: JSON.stringify(mappingData) }),
-          API.patch('system_settings', 'import_schedule', { value: JSON.stringify(scheduleData) }),
-          API.patch('system_settings', 'import_retention_policy', { value: JSON.stringify(policyData) }),
-          API.patch('system_settings', 'import_connection_type', { value: selectedConnType }),
-          API.patch('system_settings', 'odbc_connection_string', { value: odbcConnVal }),
-          API.patch('system_settings', 'odbc_sql_query', { value: odbcQueryVal }),
-          API.patch('system_settings', 'smb_auth_mode', { value: smbAuthMode }),
-          API.patch('system_settings', 'smb_username', { value: smbUsername }),
-          API.patch('system_settings', 'smb_password', { value: smbPassword }),
-          API.patch('system_settings', 'show_sync_time', { value: showSyncTimeVal }),
-          API.patch('system_settings', 'show_import_time', { value: showImportTimeVal }),
-        ];
+        const settingsPayload = {
+          import_directory: newPath,
+          import_mapping: JSON.stringify(mappingData),
+          import_schedule: JSON.stringify(scheduleData),
+          import_retention_policy: JSON.stringify(policyData),
+          import_connection_type: selectedConnType,
+          odbc_connection_string: odbcConnVal,
+          odbc_sql_query: odbcQueryVal,
+          smb_auth_mode: smbAuthMode,
+          smb_username: smbUsername,
+          smb_password: smbPassword,
+          show_sync_time: showSyncTimeVal,
+          show_import_time: showImportTimeVal,
+        };
 
-        await Promise.all(promises);
+        if (this._isChildTerminal()) {
+          await this._parentAction('save-import-settings', { settings: settingsPayload });
+        } else {
+          const promises = Object.entries(settingsPayload).map(([id, value]) =>
+            API.patch('system_settings', id, { value })
+          );
+          await Promise.all(promises);
+        }
 
         // AppStateのキャッシュも更新
         const updateSetting = (id, val) => {
@@ -1204,9 +1267,7 @@ Object.assign(Settings, {
         updateSetting('show_import_time', showImportTimeVal);
 
         // メインプロセスへ変更通知（監視先およびトリガーを再設定）
-        if (window.electronAPI && window.electronAPI.updateWatchDirectory) {
-          await window.electronAPI.updateWatchDirectory(newPath);
-        }
+        await this._runParentWatchReload(newPath);
 
         UI.toast('連携設定を保存しました。監視フォルダ・ポリシーは即時反映されます。スケジュール変更は次の検知タイミングから有効です。', 'success', 6000);
         
@@ -2030,9 +2091,7 @@ Object.assign(Settings, {
         } else {
           await API.create('schedule_feeds', data);
         }
-        if (window.electronAPI?.reloadScheduleFeedTriggers) {
-          await window.electronAPI.reloadScheduleFeedTriggers();
-        }
+        await this._reloadParentScheduleFeedTriggers();
         closeForm();
         UI.toast('スケジュール取り込み設定を保存しました', 'success');
         this._renderScheduleFeeds(body);
@@ -2060,21 +2119,19 @@ Object.assign(Settings, {
           for (const item of toDelete) {
             await API.remove('schedule_items', item.id);
           }
-          if (window.electronAPI?.reloadScheduleFeedTriggers) {
-            await window.electronAPI.reloadScheduleFeedTriggers();
-          }
+          await this._reloadParentScheduleFeedTriggers();
           UI.toast('削除しました', 'success');
           this._renderScheduleFeeds(body);
         } catch (err) {
           UI.toast('削除に失敗しました', 'danger');
         }
       } else if (importBtn) {
-        if (!window.electronAPI?.triggerScheduleFeedImport) return;
+        if (!this._isChildTerminal() && !window.electronAPI?.triggerScheduleFeedImport) return;
         importBtn.disabled = true;
         const oldHtml = importBtn.innerHTML;
         importBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
         try {
-          const res = await window.electronAPI.triggerScheduleFeedImport(importBtn.dataset.feedId);
+          const res = await this._triggerParentScheduleFeedImport(importBtn.dataset.feedId);
           if (res?.success) UI.toast('手動取り込みを実行しました', 'success');
           else UI.toast(res?.message || '取り込み失敗', 'warning');
         } catch (err) {
