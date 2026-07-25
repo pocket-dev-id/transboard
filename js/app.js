@@ -275,7 +275,7 @@ const ParentServerMonitor = {
     const parentIp = localStorage.getItem('cfg_parent_ip');
     if (!parentIp) return true;
     try {
-      const res = await fetch(`http://${parentIp}:3005/api/tables/wards`, { signal: AbortSignal.timeout(5000) });
+      const res = await parentFetch(`http://${parentIp}:3005/api/tables/wards`, {}, 5000);
       if (res.ok) {
         if (this._degraded) this._setDegraded(false);
         return true;
@@ -485,19 +485,33 @@ const App = {
       }
     });
 
-    // システムリセットボタン
+    // システムリセットボタン（ヘッダーに常時表示される破壊的操作のため、
+    // 設定画面と同じ管理者パスコードで保護する）
     document.getElementById('btn-system-reset').addEventListener('click', async () => {
-      if (!confirm('出棟中の移送情報をリセットしますか？\n（患者情報やマスタデータは消去されません）')) return;
-      if (window.electronAPI) {
-        await window.electronAPI.resetDatabase();
-      } else {
-        await this._resetAllActiveEvents();
+      const doReset = async () => {
+        if (!await UI.confirmModal('出棟中の移送情報をリセットしますか？', {
+          title: 'システムリセット',
+          detail: '患者情報やマスタデータは消去されません。',
+          type: 'danger',
+          confirmLabel: 'リセットする'
+        })) return;
+        if (window.electronAPI) {
+          await window.electronAPI.resetDatabase();
+        } else {
+          await this._resetAllActiveEvents();
+        }
+        this._prevNotified = new Set();
+        await this.loadMasters();
+        await this.refreshData();
+        WardDashboard.render();
+        UI.toast('出棟中の移送情報をリセットしました', 'info');
+      };
+
+      if (window.isAdminSession) {
+        await doReset();
+        return;
       }
-      this._prevNotified = new Set();
-      await this.loadMasters();
-      await this.refreshData();
-      WardDashboard.render();
-      UI.toast('出棟中の移送情報をリセットしました', 'info');
+      PasscodeModal.open(() => { doReset(); });
     });
 
     // タイムライン日付
@@ -1544,7 +1558,7 @@ const App = {
   _applyTheme() {
     const localTheme = localStorage.getItem('cfg_theme_style');
     const themeStyle = localTheme || AppState.getSettingRaw('theme_style', 'light');
-    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd');
+    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd', 'theme-apple', 'theme-material', 'theme-fluent');
     document.body.classList.add(`theme-${themeStyle}`);
     return themeStyle;
   },

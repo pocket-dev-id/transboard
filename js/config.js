@@ -145,6 +145,58 @@ const CONFIG = {
   },
 
   // ロール定義 (セキュリティ #5: RBAC基盤)
+  HIDEABLE_STATUSES: ['MOVING', 'ARRIVED', 'NEARLY_DONE'],
+
+  STATUS_SCOPE: {
+    WARD: 'ward',
+    EXAM: 'exam',
+  },
+
+  getHiddenStatuses() {
+    try {
+      const raw = AppState?.getSettingJSON?.('hidden_statuses', []);
+      if (!Array.isArray(raw)) return [];
+      return raw.filter(status => this.HIDEABLE_STATUSES.includes(status));
+    } catch {
+      return [];
+    }
+  },
+
+  isStatusHidden(status) {
+    return this.getHiddenStatuses().includes(status);
+  },
+
+  getOperationalActiveStatuses() {
+    const hidden = new Set(this.getHiddenStatuses());
+    return this.ACTIVE_STATUSES.filter(status => !hidden.has(status));
+  },
+
+  getAllowedActions(status, scope = 'ward') {
+    const source = scope === this.STATUS_SCOPE.EXAM ? this.EXAM_ROOM_ACTIONS : this.ACTION_BUTTONS;
+    const hidden = new Set(this.getHiddenStatuses());
+    const result = [];
+    const seen = new Set();
+    const visit = (actions) => {
+      actions.forEach(action => {
+        if (hidden.has(action.toStatus)) {
+          visit(source[action.toStatus] || []);
+          return;
+        }
+        if (seen.has(action.toStatus)) return;
+        seen.add(action.toStatus);
+        result.push(action);
+      });
+    };
+    visit(source[status] || []);
+    return result;
+  },
+
+  isTransitionAllowed(fromStatus, toStatus, scope = 'ward') {
+    if (!fromStatus || !toStatus) return false;
+    if (fromStatus === toStatus) return true;
+    return this.getAllowedActions(fromStatus, scope).some(action => action.toStatus === toStatus);
+  },
+
   ROLES: {
     ADMIN:     'admin',
     NURSE:     'nurse',

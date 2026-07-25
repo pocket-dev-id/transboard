@@ -14,6 +14,10 @@ const { Readable } = require('stream');
 // 子機(file://)から親機のプライベートIPへのfetchがパーミッション要求扱いになり、
 // 既定拒否のパーミッションハンドラにブロックされて親子間の同期が全断するため、
 // 院内LAN専用アプリとして従来通りの挙動に固定する。app.whenReady() より前に呼ぶ必要がある。
+// 【フォールバック】実機で本フラグだけではLNAブロックを回避できないケースが確認されたため、
+// 子機→親機のHTTP通信自体をレンダラーのfetch()からメインプロセス(Node httpモジュール)経由に
+// 変更し、ブラウザのネットワークサービス層を経由しないようにした（parent-http-request参照）。
+// このフラグはPNAプリフライト等の副次的な影響を避けるための保険として残す。
 app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks');
 
 let mainWindow;
@@ -1620,6 +1624,63 @@ const ACTIVE_TRANSFER_STATUSES = new Set([
   'NEARLY_DONE',
   'PICKUP_REQUIRED',
 ]);
+const HIDEABLE_TRANSFER_STATUSES = new Set(['MOVING', 'ARRIVED', 'NEARLY_DONE']);
+const WARD_STATUS_ACTIONS = {
+  DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
+  MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
+  ARRIVED: ['IN_EXAM', 'CANCELLED'],
+  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'CANCELLED'],
+  NEARLY_DONE: ['PICKUP_REQUIRED', 'CANCELLED'],
+  PICKUP_REQUIRED: ['RETURNED', 'CANCELLED'],
+  RETURNED: [],
+  CANCELLED: [],
+};
+const EXAM_STATUS_ACTIONS = {
+  DEPART_REGISTERED: ['ARRIVED'],
+  MOVING: ['ARRIVED'],
+  ARRIVED: ['IN_EXAM'],
+  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED'],
+  NEARLY_DONE: ['PICKUP_REQUIRED'],
+  PICKUP_REQUIRED: [],
+};
+
+function getHiddenTransferStatuses(db) {
+  const setting = (db.system_settings || []).find(s => s.id === 'hidden_statuses');
+  if (!setting || !setting.value) return new Set();
+  try {
+    const parsed = JSON.parse(setting.value);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter(status => HIDEABLE_TRANSFER_STATUSES.has(status)));
+  } catch {
+    return new Set();
+  }
+}
+
+function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIONS) {
+  const hidden = getHiddenTransferStatuses(db);
+  const result = [];
+  const seen = new Set();
+  const visit = (targets) => {
+    targets.forEach(status => {
+      if (hidden.has(status)) {
+        visit(actionMap[status] || []);
+        return;
+      }
+      if (seen.has(status)) return;
+      seen.add(status);
+      result.push(status);
+    });
+  };
+  visit(actionMap[fromStatus] || []);
+  return result;
+}
+
+function isTransferStatusTransitionAllowed(fromStatus, toStatus, db) {
+  if (!fromStatus || !toStatus) return false;
+  if (fromStatus === toStatus) return true;
+  return getAllowedTransferTargets(fromStatus, db, WARD_STATUS_ACTIONS).includes(toStatus) ||
+    getAllowedTransferTargets(fromStatus, db, EXAM_STATUS_ACTIONS).includes(toStatus);
+}
 
 // 共通のデータベース操作処理関数
 async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null) {
@@ -1741,6 +1802,16 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     const index = list.findIndex(x => String(x.id) === String(data.id));
     if (index !== -1) {
+      if (
+        table === 'transfer_events' &&
+        Object.prototype.hasOwnProperty.call(data, 'current_status') &&
+        !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
+      ) {
+        return {
+          success: false,
+          message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
+        };
+      }
       list[index] = { ...list[index], ...data };
       console.log(`[DB] POST (Update instead of duplicate): table=${table}, id=${data.id}`);
     } else {
@@ -1777,6 +1848,20 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       if (!Array.isArray(bulkData)) {
         return { success: false, message: 'Body must be an array for bulk updates' };
       }
+      if (table === 'transfer_events') {
+        for (const patchItem of bulkData) {
+          if (!Object.prototype.hasOwnProperty.call(patchItem, 'current_status')) continue;
+          const targetId = patchItem.id;
+          const index = list.findIndex(x => String(x.id) === String(targetId));
+          if (index === -1) continue;
+          if (!isTransferStatusTransitionAllowed(list[index].current_status, patchItem.current_status, db)) {
+            return {
+              success: false,
+              message: `Invalid status transition: ${list[index].current_status} -> ${patchItem.current_status}`,
+            };
+          }
+        }
+      }
       const updatedItems = [];
       bulkData.forEach(patchItem => {
         const targetId = patchItem.id;
@@ -1801,6 +1886,16 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (index === -1) {
       console.warn(`[DB] PATCH Not Found: table=${table}, id=${id}`);
       return { success: false, message: 'Not Found' };
+    }
+    if (
+      table === 'transfer_events' &&
+      Object.prototype.hasOwnProperty.call(data, 'current_status') &&
+      !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
+    ) {
+      return {
+        success: false,
+        message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
+      };
     }
     list[index] = { ...list[index], ...data };
     if (!writeDB(db)) {
@@ -1845,6 +1940,55 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
 ipcMain.handle('webrtc-request', async (event, { url, options }) => {
   const method = (options.method || 'GET').toUpperCase();
   return processWebrtcRequest(method, url, options.body || '');
+});
+
+// 子機(レンダラーのfile://ページ)からの親機へのHTTPリクエストをメインプロセス経由で中継する。
+// ChromiumのLocal Network Access(LNA)はレンダラーのfetch()をサブリソースとしてブロックし得るが、
+// メインプロセス(Node.js)のhttpモジュールはブラウザのネットワークサービス層を経由しないためLNAの対象外。
+// disable-featuresフラグだけでは環境によりLNAを完全に無効化できない実機報告があったための恒久対策。
+function parentHttpRequest({ url, method = 'GET', headers = {}, body, timeoutMs = 8000 }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    let req;
+    try {
+      req = http.request(url, { method, headers, timeout: timeoutMs }, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          finish({
+            ok: true,
+            status: res.statusCode,
+            headers: res.headers,
+            bodyText: Buffer.concat(chunks).toString('utf-8'),
+          });
+        });
+      });
+    } catch (e) {
+      finish({ ok: false, status: 0, error: e.message || 'REQUEST_ERROR' });
+      return;
+    }
+
+    req.on('timeout', () => {
+      req.destroy();
+      finish({ ok: false, status: 0, error: 'TIMEOUT' });
+    });
+    req.on('error', (e) => {
+      finish({ ok: false, status: 0, error: e.message || 'NETWORK_ERROR' });
+    });
+
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+ipcMain.handle('parent-http-request', async (event, opts) => {
+  return parentHttpRequest(opts);
 });
 
 // アプリバージョンを返す
@@ -2563,6 +2707,19 @@ function getActiveDevices() {
   const now = Date.now();
   return Object.values(connectedDevices).filter(d => (now - d.lastSeen) < DEVICE_TIMEOUT_MS);
 }
+
+// 接続機器レジストリの定期クリーンアップ（切断・再インストール等で使われなくなった
+// deviceIdがconnectedDevicesに残り続けメモリを圧迫するのを防ぐ。表示側の
+// getActiveDevicesは読み取り時にフィルタするだけで削除しないため、別途GCする）
+const DEVICE_ENTRY_MAX_AGE_MS = 10 * 60 * 1000; // 10分無応答でレジストリから削除
+setInterval(() => {
+  const now = Date.now();
+  for (const deviceId in connectedDevices) {
+    if ((now - connectedDevices[deviceId].lastSeen) >= DEVICE_ENTRY_MAX_AGE_MS) {
+      delete connectedDevices[deviceId];
+    }
+  }
+}, 60000); // 60秒毎に実行
 
 // APIトークンの生成・確保（セキュリティ: 患者データを含むテーブルへの外部アクセス保護）
 // 未設定の場合のみランダムトークンを生成して保存する（既存トークンは維持）

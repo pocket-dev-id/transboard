@@ -2668,6 +2668,144 @@ body.theme-cvd {
   --clr-cancelled-text: #475569;
 }
 
+/* --- Apple (Human Interface Guidelines) 風テーマ (.theme-apple) --- */
+/* iOS/macOSのシステムカラー・すりガラス調(vibrancy)・大きめの角丸を再現 */
+body.theme-apple {
+  --clr-bg: linear-gradient(135deg, #f2f2f7 0%, #e5e5ea 100%);
+  --clr-surface: rgba(255, 255, 255, 0.78);
+  --clr-border: rgba(60, 60, 67, 0.12);
+  --clr-text: #1c1c1e;
+  --clr-text-muted: #8e8e93;
+  --clr-primary: #007aff;
+  --clr-primary-dark: #0060df;
+  --clr-header-bg: rgba(28, 28, 30, 0.85);
+  --border-header: none;
+  --radius: 14px;
+  --radius-lg: 20px;
+
+  /* iOS System Colors */
+  --clr-in-bed: rgba(242, 242, 247, 0.6);
+  --clr-in-bed-border: rgba(60, 60, 67, 0.18);
+  --clr-depart-reg: rgba(0, 122, 255, 0.12);
+  --clr-depart-reg-border: #007aff;
+  --clr-depart-reg-text: #0040dd;
+  --clr-moving: rgba(175, 82, 222, 0.12);
+  --clr-moving-border: #af52de;
+  --clr-moving-text: #6b21a8;
+  --clr-arrived: rgba(50, 173, 230, 0.14);
+  --clr-arrived-border: #32ade6;
+  --clr-in-exam: rgba(255, 204, 0, 0.16);
+  --clr-in-exam-border: #ffcc00;
+  --clr-in-exam-text: #7a5900;
+  --clr-nearly-done: rgba(255, 149, 0, 0.15);
+  --clr-nearly-done-border: #ff9500;
+  --clr-nearly-done-text: #7a3d00;
+  --clr-pickup: rgba(255, 59, 48, 0.14);
+  --clr-pickup-border: #ff3b30;
+  --clr-pickup-text: #8a0e08;
+  --clr-returned: rgba(52, 199, 89, 0.14);
+  --clr-returned-border: #34c759;
+  --clr-returned-text: #14532d;
+  --clr-cancelled: rgba(142, 142, 147, 0.16);
+  --clr-cancelled-border: #8e8e93;
+  --clr-cancelled-text: #48484a;
+}
+body.theme-apple #app-header {
+  background: #1c1c1e;
+}
+
+/* --- Google Material Design 風テーマ (.theme-material) --- */
+/* Google Workspace / Material 3 のカラーパレットとフラットな面を再現 */
+body.theme-material {
+  --clr-bg: linear-gradient(135deg, #f8f9fa 0%, #e8eaed 100%);
+  --clr-surface: rgba(255, 255, 255, 0.92);
+  --clr-border: rgba(218, 220, 224, 0.85);
+  --clr-text: #202124;
+  --clr-text-muted: #5f6368;
+  --clr-primary: #1a73e8;
+  --clr-primary-dark: #174ea6;
+  --clr-header-bg: rgba(32, 33, 36, 0.92);
+  --border-header: none;
+  --radius: 12px;
+  --radius-lg: 20px;
+
+  /* Google Workspace / Material パレット */
+  --clr-in-bed: rgba(248, 249, 250, 0.7);
+  --clr-in-bed-border: rgba(218, 220, 224, 0.9);
+  --clr-depart-reg: rgba(26, 115, 232, 0.1);
+  --clr-depart-reg-border: #1a73e8;
+  --clr-depart-reg-text: #174ea6;
+  --clr-moving: rgba(161, 66, 244, 0.1);
+  --clr-moving-border: #a142f4;
+  --clr-moving-text: #6a1fc2;
+  --clr-arrived: rgba(18, 181, 203, 0.12);
+  --clr-arrived-border: #12b5cb;
+  --clr-in-exam: rgba(251, 188, 4, 0.16);
+  --clr-in-exam-border: #fbbc04;
+  --clr-in-exam-text: #7d5c00;
+  --clr-nearly-done: rgba(250, 123, 23, 0.14);
+  --clr-nearly-done-border: #fa7b17;
+  --clr-nearly-done-text: #7a3900;
+  --clr-pickup: rgba(234, 67, 53, 0.13);
+  --clr-pickup-border: #ea4335;
+  --clr-pickup-text: #8a1a10;
+  --clr-returned: rgba(52, 168, 83, 0.13);
+  --clr-returned-border: #34a853;
+  --clr-returned-text: #0d4a20;
+  --clr-cancelled: rgba(128, 134, 139, 0.14);
+  --clr-cancelled-border: #80868b;
+  --clr-cancelled-text: #3c4043;
+}
+body.theme-material #app-header {
+  background: #1a73e8;
+}
+
+/* --- Microsoft Fluent 2 風テーマ (.theme-fluent) --- */
+/* Windows 11 / Fluent 2 のニュートラルカラーと控えめな角丸を再現 */
+body.theme-fluent {
+  --clr-bg: linear-gradient(135deg, #faf9f8 0%, #e8e6e4 100%);
+  --clr-surface: rgba(255, 255, 255, 0.82);
+  --clr-border: rgba(225, 225, 225, 0.75);
+  --clr-text: #242424;
+  --clr-text-muted: #616161;
+  --clr-primary: #0078d4;
+  --clr-primary-dark: #005a9e;
+  --clr-header-bg: rgba(32, 31, 30, 0.88);
+  --border-header: none;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  /* Fluent UI 共有カラーランプ */
+  --clr-in-bed: rgba(250, 249, 248, 0.7);
+  --clr-in-bed-border: rgba(225, 225, 225, 0.85);
+  --clr-depart-reg: rgba(0, 120, 212, 0.1);
+  --clr-depart-reg-border: #0078d4;
+  --clr-depart-reg-text: #004578;
+  --clr-moving: rgba(135, 100, 184, 0.12);
+  --clr-moving-border: #8764b8;
+  --clr-moving-text: #52398a;
+  --clr-arrived: rgba(0, 183, 195, 0.13);
+  --clr-arrived-border: #00b7c3;
+  --clr-in-exam: rgba(255, 185, 0, 0.16);
+  --clr-in-exam-border: #ffb900;
+  --clr-in-exam-text: #7a5900;
+  --clr-nearly-done: rgba(247, 99, 12, 0.14);
+  --clr-nearly-done-border: #f7630c;
+  --clr-nearly-done-text: #7a3000;
+  --clr-pickup: rgba(209, 52, 56, 0.13);
+  --clr-pickup-border: #d13438;
+  --clr-pickup-text: #7a1215;
+  --clr-returned: rgba(16, 124, 16, 0.13);
+  --clr-returned-border: #107c10;
+  --clr-returned-text: #0e3f0e;
+  --clr-cancelled: rgba(115, 115, 115, 0.14);
+  --clr-cancelled-border: #737373;
+  --clr-cancelled-text: #3b3b3b;
+}
+body.theme-fluent #app-header {
+  background: #201f1e;
+}
+
 /* --- アニメーション省略 (prefers-reduced-motion) --- */
 /* てんかん対応環境・視覚過敏ユーザー向け。OSレベルのアニメーション削減設定を尊重する */
 @media (prefers-reduced-motion: reduce) {

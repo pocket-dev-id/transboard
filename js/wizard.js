@@ -280,6 +280,9 @@ const Wizard = {
             <option value="light"         ${this.config.theme_style === 'light'         ? 'selected' : ''}>標準ライト</option>
             <option value="dark"          ${this.config.theme_style === 'dark'          ? 'selected' : ''}>ダーク</option>
             <option value="blue"          ${this.config.theme_style === 'blue'          ? 'selected' : ''}>メディカルブルー</option>
+            <option value="apple"         ${this.config.theme_style === 'apple'         ? 'selected' : ''}>Apple (Human Interface)</option>
+            <option value="material"      ${this.config.theme_style === 'material'      ? 'selected' : ''}>Google (Material Design)</option>
+            <option value="fluent"        ${this.config.theme_style === 'fluent'        ? 'selected' : ''}>Microsoft (Fluent 2)</option>
             <option value="high-contrast" ${this.config.theme_style === 'high-contrast' ? 'selected' : ''}>高コントラスト</option>
             <option value="cvd"           ${this.config.theme_style === 'cvd'           ? 'selected' : ''}>色覚サポート (CVD対応)</option>
           </select>
@@ -332,7 +335,7 @@ const Wizard = {
     const modeLabel   = this.config.share_mode === 'parent' ? '親機モード' : '子機モード';
     const connLabels  = { csv: 'CSVファイル連携', odbc: 'ODBCデータベース連携', none: '手動入力' };
     const admLabels   = { csv: 'CSVインポート', manual: '手動登録', hybrid: 'ハイブリッド' };
-    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
+    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', apple: 'Apple (Human Interface)', material: 'Google (Material Design)', fluent: 'Microsoft (Fluent 2)', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
 
     const rows = [
       ['稼働モード',     modeLabel],
@@ -458,10 +461,7 @@ const Wizard = {
         `  navigator.onLine=${navigator.onLine}`,
       ];
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
+        const res = await parentFetch(url, {}, 4000);
         if (res.ok) {
           const data = await res.json();
           logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
@@ -471,13 +471,10 @@ const Wizard = {
           // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
           const token = document.getElementById('wizard-api-token')?.value.trim() || '';
           if (token) {
-            const c2 = new AbortController();
-            const t2 = setTimeout(() => c2.abort(), 4000);
             try {
-              const res2 = await fetch(`http://${parentIp}:3005/api/tables/beds`, {
-                headers: { 'X-API-Token': token }, signal: c2.signal
-              });
-              clearTimeout(t2);
+              const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
+                headers: { 'X-API-Token': token }
+              }, 4000);
               if (res2.ok) {
                 logLines.push(`  トークン検証: 成功 status=${res2.status}`);
                 if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件・APIトークン認証もOK）</span>`;
@@ -489,7 +486,6 @@ const Wizard = {
                 if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証でHTTPエラー ${res2.status}</span>`;
               }
             } catch (e2) {
-              clearTimeout(t2);
               logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
               if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証中にエラー（${UI.escapeHTML(e2.message || e2.name)}）</span>`;
             }

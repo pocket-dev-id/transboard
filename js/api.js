@@ -23,6 +23,33 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = API_DEFAULT_TIMEO
   }
 }
 
+// 子機→親機への通信専用フェッチ。メインプロセス経由(Node httpモジュール)で中継することで、
+// レンダラーのfetch()にかかるChromiumのLocal Network Access制限を回避する。
+// window.electronAPIが無い環境（ブラウザ単体テスト等）では従来通りfetchにフォールバックする。
+async function parentFetch(url, options = {}, timeoutMs = API_DEFAULT_TIMEOUT_MS) {
+  if (window.electronAPI && window.electronAPI.parentHttpRequest) {
+    const result = await window.electronAPI.parentHttpRequest({
+      url,
+      method: (options.method || 'GET').toUpperCase(),
+      headers: options.headers || {},
+      body: options.body,
+      timeoutMs,
+    });
+    if (!result.ok) {
+      const err = new Error(result.error === 'TIMEOUT' ? 'タイムアウトしました' : (result.error || 'ネットワークエラー'));
+      err.name = result.error === 'TIMEOUT' ? 'AbortError' : 'NetworkError';
+      throw err;
+    }
+    return {
+      ok: result.status >= 200 && result.status < 300,
+      status: result.status,
+      json: async () => (result.bodyText ? JSON.parse(result.bodyText) : null),
+      text: async () => result.bodyText || '',
+    };
+  }
+  return fetchWithTimeout(url, options, timeoutMs);
+}
+
 const API = {
 
   /* ---------- 汎用フェッチ ---------- */
@@ -37,7 +64,7 @@ const API = {
         const optionsWithToken = apiToken
           ? { ...options, headers: { ...(options.headers || {}), 'X-API-Token': apiToken } }
           : options;
-        const res = await fetchWithTimeout(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
+        const res = await parentFetch(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
         if (res.status === 204) return null;
         const data = await res.json();
         if (!res.ok) {
@@ -191,7 +218,7 @@ const API = {
     return this.create('transfer_events', data);
   },
 
-  async updateEventStatus(eventId, newStatus, extraFields = {}) {
+  async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD) {
     const now = Date.now();
     const statusTimeMap = {
       MOVING: 'departed_at',
@@ -216,6 +243,10 @@ const API = {
       const current = await this.getOne('transfer_events', eventId);
       if (current && current.current_status) fromStatus = current.current_status;
     } catch (e) { /* 取得失敗時はnullのまま */ }
+
+    if (fromStatus && !CONFIG.isTransitionAllowed(fromStatus, newStatus, scope)) {
+      throw new Error(`Invalid status transition: ${fromStatus} -> ${newStatus}`);
+    }
 
     const updated = await this.patch('transfer_events', eventId, patch);
     // ログを記録
@@ -333,7 +364,7 @@ const API = {
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetchWithTimeout(`http://${parentIp}:3005/api/webrtc/send`, {
+      return parentFetch(`http://${parentIp}:3005/api/webrtc/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(msg)
@@ -364,7 +395,7 @@ const API = {
     const qs = new URLSearchParams({ id: myId, client: clientId || myId }).toString();
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetchWithTimeout(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {}, API_SIGNALING_TIMEOUT_MS)
+      return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {}, API_SIGNALING_TIMEOUT_MS)
         .then(r => r.json());
     }
 
@@ -384,7 +415,7 @@ const API = {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     if (shareMode !== 'client' && shareMode !== 'child') return;
-    return fetchWithTimeout(`http://${parentIp}:3005/api/device/heartbeat`, {
+    return parentFetch(`http://${parentIp}:3005/api/device/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(info)
@@ -395,7 +426,7 @@ const API = {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     if (shareMode === 'client' || shareMode === 'child') {
-      return fetchWithTimeout(`http://${parentIp}:3005/api/device/list`, {}, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
+      return parentFetch(`http://${parentIp}:3005/api/device/list`, {}, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
     }
     if (window.electronAPI) {
       return window.electronAPI.dbRequest({ url: 'device/list', options: { method: 'GET' } }).catch(() => ({ success: false, devices: [] }));
@@ -410,7 +441,7 @@ const API = {
       ? `http://${parentIp}:3005/api/device/disconnect`
       : null;
     if (url) {
-      return fetchWithTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId }) }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
+      return parentFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId }) }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
     }
   },
 
