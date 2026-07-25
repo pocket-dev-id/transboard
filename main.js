@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, ipcMain, powerSaveBlocker, safeStorage, Notification: ElectronNotification, dialog } = require('electron');
 const path = require('path');
+const { Tray, Menu } = require('electron');
 const fs = require('fs');
 const chokidar = require('chokidar');
 const csv = require('csv-parser');
@@ -21,6 +22,8 @@ const { Readable } = require('stream');
 app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks');
 
 let mainWindow;
+let tray = null;
+let isQuitting = false;
 let currentWatcher = null;
 let currentWatchDir = null;
 let nfcProcess = null;
@@ -71,6 +74,7 @@ function stopNfcWatcher() {
 const USER_DATA_DIR = app.getPath('userData');
 const COMMON_DATA_DIR = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'transboard');
 const GLOBAL_CONFIG_FILE = path.join(COMMON_DATA_DIR, 'storage_mode.json');
+const TERMINAL_ROLE_FILE = path.join(USER_DATA_DIR, 'terminal_role.json');
 
 function checkCommonWritePermission() {
   try {
@@ -549,6 +553,126 @@ function writeDB(data) {
   }
 }
 
+function getSettingRecord(db, id) {
+  return (db.system_settings || []).find(s => s.id === id);
+}
+
+function normalizeShareMode(value) {
+  return value === 'client' || value === 'child' ? 'client' : 'parent';
+}
+
+function readTerminalRole() {
+  try {
+    if (!fs.existsSync(TERMINAL_ROLE_FILE)) return null;
+    const role = JSON.parse(fs.readFileSync(TERMINAL_ROLE_FILE, 'utf8'));
+    if (!role || typeof role !== 'object') return null;
+    return {
+      shareMode: normalizeShareMode(role.shareMode || role.share_mode),
+      parentIp: String(role.parentIp || role.parent_ip || ''),
+      updatedAt: Number(role.updatedAt || 0) || 0,
+    };
+  } catch (err) {
+    console.warn('[Role] 端末役割ファイルの読み込みに失敗:', err.message);
+    return null;
+  }
+}
+
+function writeTerminalRole({ shareMode, parentIp = '' }) {
+  try {
+    const role = {
+      shareMode: normalizeShareMode(shareMode),
+      parentIp: String(parentIp || ''),
+      updatedAt: Date.now(),
+    };
+    safeWriteFile(TERMINAL_ROLE_FILE, JSON.stringify(role, null, 2));
+    return role;
+  } catch (err) {
+    console.warn('[Role] 端末役割ファイルの保存に失敗:', err.message);
+    return null;
+  }
+}
+
+function syncTerminalRoleFromLocalDbRequest(url, method, bodyStr) {
+  if (!/^tables\/system_settings\/(share_mode|parent_ip)$/.test(url || '')) return;
+  if (method !== 'PATCH' && method !== 'PUT' && method !== 'POST') return;
+  try {
+    const body = JSON.parse(bodyStr || '{}');
+    const current = readTerminalRole() || {};
+    const id = url.split('/').pop();
+    const next = {
+      shareMode: current.shareMode || 'parent',
+      parentIp: current.parentIp || '',
+    };
+    if (id === 'share_mode') next.shareMode = body.value;
+    if (id === 'parent_ip') next.parentIp = body.value;
+    writeTerminalRole(next);
+  } catch (err) {
+    console.warn('[Role] 端末役割の同期に失敗:', err.message);
+  }
+}
+
+function isLocalParentAddress(parentIp) {
+  const value = String(parentIp || '').trim().toLowerCase();
+  if (!value) return true;
+  if (value === 'localhost' || value === '127.0.0.1' || value === '::1') return true;
+  const localAddresses = new Set();
+  Object.values(os.networkInterfaces()).forEach(addrs => {
+    (addrs || []).forEach(addr => {
+      if (addr && addr.address) localAddresses.add(String(addr.address).toLowerCase());
+    });
+  });
+  return localAddresses.has(value);
+}
+
+function repairShareModeBeforeServerStart() {
+  const db = readDB();
+  db.system_settings = db.system_settings || [];
+  const shareModeSetting = getSettingRecord(db, 'share_mode');
+  const parentIpSetting = getSettingRecord(db, 'parent_ip');
+  const dbShareMode = normalizeShareMode(shareModeSetting?.value);
+  const dbParentIp = String(parentIpSetting?.value || '');
+  let terminalRole = readTerminalRole();
+
+  if (!terminalRole) {
+    const inferredShareMode = dbShareMode === 'client' && isLocalParentAddress(dbParentIp)
+      ? 'parent'
+      : dbShareMode;
+    terminalRole = writeTerminalRole({ shareMode: inferredShareMode, parentIp: dbParentIp }) ||
+      { shareMode: inferredShareMode, parentIp: dbParentIp };
+  }
+
+  const roleShareMode = normalizeShareMode(terminalRole.shareMode);
+  const roleParentIp = String(terminalRole.parentIp || '');
+  let changed = false;
+
+  if (shareModeSetting) {
+    if (normalizeShareMode(shareModeSetting.value) !== roleShareMode) {
+      shareModeSetting.value = roleShareMode;
+      changed = true;
+    }
+  } else {
+    db.system_settings.push({ id: 'share_mode', value: roleShareMode });
+    changed = true;
+  }
+
+  if (parentIpSetting) {
+    if (String(parentIpSetting.value || '') !== roleParentIp) {
+      parentIpSetting.value = roleParentIp;
+      changed = true;
+    }
+  } else {
+    db.system_settings.push({ id: 'parent_ip', value: roleParentIp });
+    changed = true;
+  }
+
+  if (changed) {
+    writeDB(db);
+    console.warn(`[Role] 起動時にshare_modeを端末役割(${roleShareMode})へ自動修復しました`);
+  }
+
+  return roleShareMode;
+}
+
 // SMBネットワーク共有フォルダの同期認証（Windows用）
 function authenticateSMBSync(watchPath) {
   if (!watchPath || !watchPath.startsWith('\\\\')) return;
@@ -647,6 +771,24 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
+  mainWindow.on('close', (event) => {
+    const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+    if (!isQuitting && shareMode === 'parent') {
+      event.preventDefault();
+      mainWindow.hide();
+      if (tray) {
+        tray.displayBalloon?.({
+          title: 'TransBoard',
+          content: '親機サーバーはバックグラウンドで稼働中です。',
+        });
+      }
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
   mainWindow.on('enter-full-screen', () => {
     mainWindow.webContents.send('fullscreen-changed', true);
   });
@@ -655,6 +797,36 @@ function createWindow() {
   });
 
   console.log(`[DB] ローカルデータベースファイルの場所: ${DB_FILE}`);
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray() {
+  if (tray) return;
+  const iconPath = fs.existsSync(path.join(__dirname, 'build', 'icon.ico'))
+    ? path.join(__dirname, 'build', 'icon.ico')
+    : path.join(__dirname, 'build', 'icon.png');
+  tray = new Tray(iconPath);
+  tray.setToolTip('TransBoard 親機サーバー');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'TransBoardを開く', click: showMainWindow },
+    { type: 'separator' },
+    {
+      label: '終了',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+  tray.on('double-click', showMainWindow);
 }
 
 let currentIntervalTimer = null;
@@ -2109,7 +2281,9 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
   if (url === 'status/update') {
     return processStatusUpdateRequest(method, options.body || '', false);
   }
-  return processDbRequest(method, url, options.body || '', false);
+  const result = await processDbRequest(method, url, options.body || '', false);
+  syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
+  return result;
 });
 
 // IPC通信でフロントからのWebRTCシグナリング操作を仲介する
@@ -3161,22 +3335,31 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
+  app.on('before-quit', () => {
+    isQuitting = true;
+  });
+
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
       mainWindow.focus();
     }
   });
 
 app.whenReady().then(() => {
+  const shareMode = repairShareModeBeforeServerStart();
   createWindow();
+  if (shareMode === 'parent') {
+    createTray();
+  }
   setupImportTrigger();
   setupScheduleFeedTriggers();
 
   // ネットワーク共有モードに基づき、必要に応じて親機サーバーを起動
   const db = readDB();
-  const shareModeSetting = db.system_settings?.find(s => s.id === 'share_mode') || { value: 'parent' };
-  if (shareModeSetting.value !== 'client') {
+  const shareModeSetting = db.system_settings?.find(s => s.id === 'share_mode') || { value: shareMode };
+  if (normalizeShareMode(shareModeSetting.value) !== 'client') {
     startParentServer();
   }
 
@@ -3187,6 +3370,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    else if (mainWindow) showMainWindow();
   });
 }).catch(err => {
   console.error('[App] 起動中にエラーが発生しました:', err);
@@ -3197,5 +3381,7 @@ app.whenReady().then(() => {
 } // end of gotTheLock else block
 
 app.on('window-all-closed', () => {
+  const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+  if (shareMode === 'parent') return;
   if (process.platform !== 'darwin') app.quit();
 });
