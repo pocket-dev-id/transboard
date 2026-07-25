@@ -181,7 +181,15 @@ const ExamRoom = {
       const bed = AppState.getBedById(matchEvent.bed_id);
       const bedName = bed ? UI.formatBedName(bed) : '患者';
       const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
-      const nextLabel = CONFIG.STATUS_LABEL[action.toStatus] || action.toStatus;
+      const actionLabels = AppState.getSettingJSON('action_button_labels', {});
+      const directExamStart = (
+        action.toStatus === 'IN_EXAM' &&
+        CONFIG.isStatusHidden('ARRIVED') &&
+        ['DEPART_REGISTERED', 'MOVING'].includes(matchEvent.current_status)
+      );
+      const nextLabel = directExamStart
+        ? (actionLabels[`EXAM:${matchEvent.current_status}:IN_EXAM`] || '到着・検査開始')
+        : (CONFIG.STATUS_LABEL[action.toStatus] || action.toStatus);
       const optionsText = actions.length > 1
         ? `\n候補: ${actions.map(a => CONFIG.STATUS_LABEL[a.toStatus] || a.toStatus).join(' / ')}`
         : '';
@@ -191,7 +199,7 @@ const ExamRoom = {
       }
 
       await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM);
-      const label = CONFIG.STATUS_LABEL[action.toStatus];
+      const label = nextLabel;
       UI.toast(`[ICスキャン] ${bedName} → ${label}`, 'success');
       UI.playScanSound(true);
       this._pendingFlashEventId = matchEvent.id;
@@ -466,11 +474,20 @@ const ExamRoom = {
       : '';
 
     const actions = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.EXAM);
-    const actionBtns = actions.map(a =>
-      `<button class="btn ${a.cls} btn-sm" data-exam-action="${a.toStatus}" data-event-id="${event.id}">
-        ${a.label}
+    const actionLabels = AppState.getSettingJSON('action_button_labels', {});
+    const actionBtns = actions.map(a => {
+      const directExamStart = (
+        a.toStatus === 'IN_EXAM' &&
+        CONFIG.isStatusHidden('ARRIVED') &&
+        ['DEPART_REGISTERED', 'MOVING'].includes(event.current_status)
+      );
+      const label = directExamStart
+        ? (actionLabels[`EXAM:${event.current_status}:IN_EXAM`] || '到着・検査開始')
+        : a.label;
+      return `<button class="btn ${a.cls} btn-sm" data-exam-action="${a.toStatus}" data-event-id="${event.id}">
+        ${label}
       </button>`
-    ).join('');
+    }).join('');
 
     // 経過時間タイマーと標準時間超過の判定
     let elapsedHtml = '';

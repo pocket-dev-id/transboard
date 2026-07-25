@@ -219,82 +219,15 @@ const API = {
   },
 
   async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD) {
-    const now = Date.now();
-    const statusTimeMap = {
-      MOVING: 'departed_at',
-      ARRIVED: 'arrived_at',
-      IN_EXAM: 'exam_started_at',
-      NEARLY_DONE: 'nearly_done_at',
-      PICKUP_REQUIRED: 'pickup_ready_at',
-      RETURNED: 'returned_at',
-    };
-    const patch = { current_status: newStatus, ...extraFields };
-    if (statusTimeMap[newStatus]) {
-      patch[statusTimeMap[newStatus]] = now;
+    const result = await this._fetch('status/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId, newStatus, extraFields, scope }),
+    });
+    if (result && result.success === false) {
+      throw new Error(result.message || 'Status update failed');
     }
-    // NEARLY_DONEの場合、設定値に基づいて迎え目安を再計算
-    if (newStatus === 'NEARLY_DONE') {
-      const ndMin = AppState.getSettingInt('nearly_done_minutes', 10);
-      patch.estimated_pickup_at = now + (ndMin > 0 ? ndMin : 10) * 60 * 1000;
-    }
-    // ログ用に遷移前のステータスを取得
-    let fromStatus = null;
-    try {
-      const current = await this.getOne('transfer_events', eventId);
-      if (current && current.current_status) fromStatus = current.current_status;
-    } catch (e) { /* 取得失敗時はnullのまま */ }
-
-    if (fromStatus && !CONFIG.isTransitionAllowed(fromStatus, newStatus, scope)) {
-      throw new Error(`Invalid status transition: ${fromStatus} -> ${newStatus}`);
-    }
-
-    const updated = await this.patch('transfer_events', eventId, patch);
-    // ログを記録
-    await this.addStatusLog(eventId, fromStatus, newStatus, 'UI操作');
-
-    // 状態変化による自動音声合成アナウンスのシグナリング送信
-    try {
-      const event = await this.getOne('transfer_events', eventId);
-      if (event) {
-        const bed = AppState.getBedById(event.bed_id);
-        const bedName = bed ? `${bed.bed_number}号床` : '患者';
-        const room = AppState.getExamRoomById(event.exam_room_id);
-        const roomName = room ? room.name : '検査室';
-        const ward = AppState.wards.find(w => w.id === event.ward_id);
-        const wardName = ward ? ward.name : '病棟';
-
-        let speechText = '';
-        let toId = '';
-        let fromId = '';
-
-        if (newStatus === 'MOVING') {
-          speechText = `${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`;
-          toId = event.exam_room_id;
-          fromId = event.ward_id;
-        } else if (newStatus === 'ARRIVED') {
-          speechText = `${roomName}に、${bedName}が到着しました。`;
-          toId = event.ward_id;
-          fromId = event.exam_room_id;
-        } else if (newStatus === 'PICKUP_REQUIRED') {
-          speechText = `${roomName}から、${bedName}のお迎え要請です。`;
-          toId = event.ward_id;
-          fromId = event.exam_room_id;
-        }
-
-        if (speechText && toId) {
-          await this.webrtcSend({
-            from: fromId,
-            to: toId,
-            type: 'speech',
-            text: speechText
-          });
-        }
-      }
-    } catch(err) {
-      console.error('[Speech Signal Error]', err);
-    }
-
-    return updated;
+    return result;
   },
 
   /* ---------- 操作監査ログ (データ #2) ---------- */
@@ -460,7 +393,7 @@ const API = {
       },
     };
     if (method !== 'GET') options.body = JSON.stringify(payload || {});
-    const res = await fetchWithTimeout(`http://${parentIp}:3005/api/parent-actions/${action}`, options, timeoutMs);
+    const res = await parentFetch(`http://${parentIp}:3005/api/parent-actions/${action}`, options, timeoutMs);
     const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
     if (!res.ok || data.unauthorized) {
       const err = new Error(data.message || `HTTP ${res.status}`);

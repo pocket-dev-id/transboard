@@ -1682,6 +1682,162 @@ function isTransferStatusTransitionAllowed(fromStatus, toStatus, db) {
     getAllowedTransferTargets(fromStatus, db, EXAM_STATUS_ACTIONS).includes(toStatus);
 }
 
+function isScopedTransferStatusTransitionAllowed(fromStatus, toStatus, db, scope = 'ward') {
+  if (!fromStatus || !toStatus) return false;
+  if (fromStatus === toStatus) return true;
+  const actionMap = scope === 'exam' ? EXAM_STATUS_ACTIONS : WARD_STATUS_ACTIONS;
+  return getAllowedTransferTargets(fromStatus, db, actionMap).includes(toStatus);
+}
+
+function getSystemSettingInt(db, id, fallback) {
+  const setting = (db.system_settings || []).find(s => s.id === id);
+  const value = parseInt(setting?.value, 10);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function sanitizeStatusExtraFields(extraFields) {
+  const allowed = new Set(['patient_ic_tag_id', 'note', 'escort_staff_id', 'estimated_pickup_at']);
+  const clean = {};
+  if (!extraFields || typeof extraFields !== 'object' || Array.isArray(extraFields)) return clean;
+  Object.entries(extraFields).forEach(([key, value]) => {
+    if (allowed.has(key)) clean[key] = value;
+  });
+  return clean;
+}
+
+function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirectExamStart) {
+  const bed = (db.beds || []).find(b => b.id === event.bed_id);
+  const bedName = bed ? `${bed.bed_number}号床` : '患者';
+  const room = (db.exam_rooms || []).find(r => r.id === event.exam_room_id);
+  const roomName = room ? room.name : '検査室';
+  const ward = (db.wards || []).find(w => w.id === event.ward_id);
+  const wardName = ward ? ward.name : '病棟';
+
+  if (newStatus === 'MOVING') {
+    return {
+      from: event.ward_id,
+      to: event.exam_room_id,
+      type: 'speech',
+      text: `${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`,
+    };
+  }
+  if (newStatus === 'ARRIVED' || filledArrivedAtForDirectExamStart) {
+    return {
+      from: event.exam_room_id,
+      to: event.ward_id,
+      type: 'speech',
+      text: `${roomName}に、${bedName}が到着しました。`,
+    };
+  }
+  if (newStatus === 'PICKUP_REQUIRED') {
+    return {
+      from: event.exam_room_id,
+      to: event.ward_id,
+      type: 'speech',
+      text: `${roomName}から、${bedName}のお迎え要請です。`,
+    };
+  }
+  return null;
+}
+
+async function processStatusUpdateRequest(method, bodyStr, isExternal = false, apiToken = null) {
+  if (method !== 'POST') {
+    return { success: false, message: 'Method Not Allowed' };
+  }
+  if (isExternal && !isValidApiToken(apiToken)) {
+    console.warn('[Security] ステータス更新APIトークン認証失敗');
+    return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+
+  let payload;
+  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+    return { success: false, message: 'リクエストボディのJSONが不正です' };
+  }
+
+  const eventId = payload.eventId;
+  const newStatus = payload.newStatus;
+  const extraFields = sanitizeStatusExtraFields(payload.extraFields);
+  const scope = payload.scope === 'exam' ? 'exam' : 'ward';
+
+  if (!eventId || !newStatus) {
+    return { success: false, message: 'eventId and newStatus are required' };
+  }
+
+  const db = readDB();
+  const list = db.transfer_events || [];
+  const index = list.findIndex(x => String(x.id) === String(eventId));
+  if (index === -1) {
+    return { success: false, message: 'Not Found' };
+  }
+
+  const current = list[index];
+  const fromStatus = current.current_status || null;
+  if (!isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
+    return {
+      success: false,
+      message: `Invalid status transition: ${fromStatus} -> ${newStatus}`,
+    };
+  }
+
+  const now = Date.now();
+  const statusTimeMap = {
+    MOVING: 'departed_at',
+    ARRIVED: 'arrived_at',
+    IN_EXAM: 'exam_started_at',
+    NEARLY_DONE: 'nearly_done_at',
+    PICKUP_REQUIRED: 'pickup_ready_at',
+    RETURNED: 'returned_at',
+  };
+  const patch = { current_status: newStatus, ...extraFields };
+  if (statusTimeMap[newStatus]) {
+    patch[statusTimeMap[newStatus]] = now;
+  }
+
+  const hidden = getHiddenTransferStatuses(db);
+  const filledArrivedAtForDirectExamStart = (
+    scope === 'exam' &&
+    newStatus === 'IN_EXAM' &&
+    hidden.has('ARRIVED') &&
+    ['DEPART_REGISTERED', 'MOVING'].includes(fromStatus) &&
+    !current.arrived_at
+  );
+  if (filledArrivedAtForDirectExamStart) {
+    patch.arrived_at = now;
+  }
+
+  if (newStatus === 'NEARLY_DONE') {
+    const ndMin = getSystemSettingInt(db, 'nearly_done_minutes', 10);
+    patch.estimated_pickup_at = now + (ndMin > 0 ? ndMin : 10) * 60 * 1000;
+  }
+
+  list[index] = { ...current, ...patch };
+  db.transfer_status_logs = db.transfer_status_logs || [];
+  db.transfer_status_logs.push({
+    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    transfer_event_id: eventId,
+    from_status: fromStatus,
+    to_status: newStatus,
+    changed_by: 'UI操作',
+    changed_at: now,
+    note: '',
+  });
+  if (db.transfer_status_logs.length > 1000) {
+    db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
+  }
+
+  if (!writeDB(db)) {
+    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+
+  const speechMsg = createStatusSpeechMessage(db, list[index], newStatus, filledArrivedAtForDirectExamStart);
+  if (speechMsg && speechMsg.to) {
+    processWebrtcRequest('POST', 'webrtc/send', JSON.stringify(speechMsg));
+  }
+
+  console.log(`[Status] Updated: id=${eventId}, ${fromStatus} -> ${newStatus}, scope=${scope}`);
+  return list[index];
+}
+
 // 共通のデータベース操作処理関数
 async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null) {
   const db = readDB();
@@ -1803,6 +1959,13 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     const index = list.findIndex(x => String(x.id) === String(data.id));
     if (index !== -1) {
       if (
+        isExternal &&
+        table === 'transfer_events' &&
+        Object.prototype.hasOwnProperty.call(data, 'current_status')
+      ) {
+        return { success: false, message: 'Use status/update for status changes' };
+      }
+      if (
         table === 'transfer_events' &&
         Object.prototype.hasOwnProperty.call(data, 'current_status') &&
         !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
@@ -1849,6 +2012,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         return { success: false, message: 'Body must be an array for bulk updates' };
       }
       if (table === 'transfer_events') {
+        if (isExternal && bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))) {
+          return { success: false, message: 'Use status/update for status changes' };
+        }
         for (const patchItem of bulkData) {
           if (!Object.prototype.hasOwnProperty.call(patchItem, 'current_status')) continue;
           const targetId = patchItem.id;
@@ -1886,6 +2052,13 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (index === -1) {
       console.warn(`[DB] PATCH Not Found: table=${table}, id=${id}`);
       return { success: false, message: 'Not Found' };
+    }
+    if (
+      isExternal &&
+      table === 'transfer_events' &&
+      Object.prototype.hasOwnProperty.call(data, 'current_status')
+    ) {
+      return { success: false, message: 'Use status/update for status changes' };
     }
     if (
       table === 'transfer_events' &&
@@ -1933,6 +2106,9 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
     return { success: true };
   }
   const method = (options.method || 'GET').toUpperCase();
+  if (url === 'status/update') {
+    return processStatusUpdateRequest(method, options.body || '', false);
+  }
   return processDbRequest(method, url, options.body || '', false);
 });
 
@@ -2908,6 +3084,8 @@ function startParentServer() {
         let result;
         if (cleanUrl.startsWith('webrtc/')) {
           result = processWebrtcRequest(req.method, cleanUrl, body);
+        } else if (cleanUrl === 'status/update') {
+          result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token']);
         } else if (cleanUrl.startsWith('parent-actions/')) {
           const action = cleanUrl.replace(/^parent-actions\//, '').split('?')[0];
           result = await processParentActionRequest(req.method, action, body, req.headers['x-api-token']);

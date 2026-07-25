@@ -44,7 +44,9 @@ Object.assign(Settings, {
       { key: 'NEARLY_DONE:PICKUP_REQUIRED',       label: '迎え要',          scope: '病棟側' },
       { key: 'PICKUP_REQUIRED:RETURNED',          label: '帰棟完了',        scope: '病棟側' },
       { key: 'EXAM:DEPART_REGISTERED:ARRIVED',    label: '到着',            scope: '検査室側' },
+      { key: 'EXAM:DEPART_REGISTERED:IN_EXAM',    label: '到着・検査開始',  scope: '検査室側' },
       { key: 'EXAM:MOVING:ARRIVED',               label: '到着',            scope: '検査室側' },
+      { key: 'EXAM:MOVING:IN_EXAM',               label: '到着・検査開始',  scope: '検査室側' },
       { key: 'EXAM:ARRIVED:IN_EXAM',              label: '検査開始',        scope: '検査室側' },
       { key: 'EXAM:IN_EXAM:NEARLY_DONE',          label: 'あと10分',        scope: '検査室側' },
       { key: 'EXAM:IN_EXAM:PICKUP_REQUIRED',      label: '終了（迎え要）',  scope: '検査室側' },
@@ -58,6 +60,7 @@ Object.assign(Settings, {
     const statusColors   = AppState.getSettingJSON('status_colors', {});
     const actionLabels   = AppState.getSettingJSON('action_button_labels', {});
     const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
+    const skipArrivedStep = hiddenStatuses.includes('ARRIVED');
 
     const statusLabelRows = STATUS_ORDER.map(sid => `
       <tr>
@@ -231,6 +234,17 @@ Object.assign(Settings, {
           </div>
         </div>
 
+        <div class="settings-section" style="margin-bottom:24px;">
+          <h4 class="settings-section-title"><i class="fas fa-toggle-on"></i> 検査室到着ステップ</h4>
+          <label style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; background:#f8fafc; max-width:720px;">
+            <input type="checkbox" id="chk-skip-arrived-step" ${skipArrivedStep ? 'checked' : ''} style="margin-top:3px;">
+            <span>
+              <strong>「検査室到着」と「検査開始」を統合する</strong><br>
+              <span style="font-size:12px; color:#64748b;">ONにすると検査室側の到着操作で直接「検査中」へ進み、到着時刻と検査開始時刻を同時に記録します。OFFでは従来どおり「検査室到着」後に「検査開始」を押します。</span>
+            </span>
+          </label>
+        </div>
+
         <div class="settings-section">
           <h4 class="settings-section-title"><i class="fas fa-eye-slash"></i> 使用しない中間ステータス</h4>
           <p style="font-size:12px; color:#64748b; margin-bottom:8px;">選択した中間ステータスは運用フローから除外されます。病棟・検査室・ICスキャン・子機からの更新にも反映され、可能な場合は次の有効なステータスへ直接進めます。<br>例: 検査室到着（ARRIVED）を使わず移動中から直接検査中に遷移する運用フロー。</p>
@@ -368,6 +382,17 @@ Object.assign(Settings, {
     };
 
     // #5 非表示ステータスの保存
+    const skipArrivedChk = document.getElementById('chk-skip-arrived-step');
+    const arrivedHiddenChk = body.querySelector('.hidden-status-chk[data-status="ARRIVED"]');
+    if (skipArrivedChk && arrivedHiddenChk) {
+      skipArrivedChk.addEventListener('change', () => {
+        arrivedHiddenChk.checked = skipArrivedChk.checked;
+      });
+      arrivedHiddenChk.addEventListener('change', () => {
+        skipArrivedChk.checked = arrivedHiddenChk.checked;
+      });
+    }
+
     document.getElementById('btn-save-hidden-statuses').onclick = async () => {
       const hidden = [];
       body.querySelectorAll('.hidden-status-chk:checked').forEach(chk => hidden.push(chk.dataset.status));
