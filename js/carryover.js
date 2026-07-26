@@ -100,7 +100,9 @@ const CarryoverModal = {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
-      await API.updateEventStatus(eventId, action);
+      // 日跨ぎ整理は通常フロー外のため、現状態に関わらず終端状態へ強制クローズする
+      // （通常のupdateEventStatusだと例: IN_EXAM→RETURNED が遷移検証で拒否される）
+      await API.reconcileCarriedOverEvent(eventId, action);
       UI.toast(action === 'RETURNED' ? '帰棟完了にしました' : '移送をキャンセルしました', 'success');
       // 盤面へ反映
       await App.refreshData();

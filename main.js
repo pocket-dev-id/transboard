@@ -2126,6 +2126,9 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   const expectedStatus = payload.expectedStatus || null;
   const extraFields = sanitizeStatusExtraFields(payload.extraFields);
   const scope = payload.scope === 'exam' ? 'exam' : 'ward';
+  // 日跨ぎ（帰棟し忘れ）整理は通常フロー外の操作のため、終端状態(RETURNED/CANCELLED)への
+  // 直接クローズに限り遷移検証をバイパスする。アクティブ状態への強制遷移は許可しない。
+  const reconcile = payload.reconcile === true && ['RETURNED', 'CANCELLED'].includes(newStatus);
 
   if (!eventId || !newStatus) {
     return { success: false, message: 'eventId and newStatus are required' };
@@ -2146,7 +2149,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   if (fromStatus === newStatus) {
     return { success: true, idempotent: true, event: current };
   }
-  if (!isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
+  if (!reconcile && !isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
     return {
       success: false,
       message: `Invalid status transition: ${fromStatus} -> ${newStatus}`,
@@ -2191,9 +2194,9 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     transfer_event_id: eventId,
     from_status: fromStatus,
     to_status: newStatus,
-    changed_by: 'UI操作',
+    changed_by: reconcile ? '日跨ぎ整理' : 'UI操作',
     changed_at: now,
-    note: '',
+    note: reconcile ? '前日から未完了の出棟を整理' : '',
   });
   if (db.transfer_status_logs.length > 1000) {
     db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
@@ -2205,7 +2208,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     result: 'success',
     before: summarizeAuditRecord('transfer_events', current),
     after: summarizeAuditRecord('transfer_events', list[index]),
-    details: { fromStatus, toStatus: newStatus, scope },
+    details: { fromStatus, toStatus: newStatus, scope, reconcile: reconcile || undefined },
   });
 
   if (!writeDB(db)) {

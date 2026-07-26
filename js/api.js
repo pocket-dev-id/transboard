@@ -252,6 +252,20 @@ const API = {
     return result;
   },
 
+  // 日跨ぎ（帰棟し忘れ）整理: 現状態に関わらず終端状態(RETURNED/CANCELLED)へ強制クローズする。
+  // 通常のupdateEventStatusと異なり遷移検証をバイパスする（サーバ側でreconcileフラグを解釈）。
+  async reconcileCarriedOverEvent(eventId, newStatus) {
+    const result = await this._fetch('status/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId, newStatus, reconcile: true, scope: 'ward' }),
+    });
+    if (result && result.success === false) {
+      throw new Error(result.message || 'Reconcile failed');
+    }
+    return result;
+  },
+
   /* ---------- 操作監査ログ (データ #2) ---------- */
   async patchEventFields(eventId, fields = {}, expectedStatus = null) {
     const payload = expectedStatus ? { ...fields, expectedStatus } : { ...fields };
