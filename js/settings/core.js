@@ -19,12 +19,14 @@ const SETTINGS_TAB_DEFS = {
   schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
   notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
   network: ['fa-network-wired', '共有・ネットワーク設定', 'mixed', '混在'],
+  terminal_behavior: ['fa-desktop', '端末表示・動作', 'terminal', '端末'],
+  access_protection: ['fa-lock', 'アクセス保護', 'mixed', '共通'],
   maintenance: ['fa-toolbox', 'システム保守', 'terminal', '端末'],
 };
 
 const SETTINGS_TAB_GROUPS = {
   child: [
-    ['端末・接続', ['network', 'notifications']],
+    ['端末・接続', ['network', 'terminal_behavior', 'notifications', 'access_protection']],
     ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
     ['保守', ['maintenance']],
@@ -32,7 +34,8 @@ const SETTINGS_TAB_GROUPS = {
   parent: [
     ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
-    ['端末・接続/保守', ['network', 'notifications', 'maintenance']],
+    ['端末・接続', ['network', 'terminal_behavior', 'notifications', 'access_protection']],
+    ['保守', ['maintenance']],
   ],
 };
 
@@ -42,7 +45,9 @@ const SETTINGS_TAB_CATEGORIES = {
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
-  notifications: 'terminal', network: 'mixed', maintenance: 'mixed',
+  notifications: 'terminal', network: 'mixed',
+  terminal_behavior: 'terminal', access_protection: 'mixed',
+  maintenance: 'mixed',
 };
 
 const SETTINGS_CATEGORY_META = {
@@ -241,6 +246,8 @@ const Settings = {
       speech_templates: '_renderSpeechTemplates',
       schedule_feeds: '_renderScheduleFeeds',
       network: '_renderNetworkSettings',
+      terminal_behavior: '_renderTerminalBehaviorSettings',
+      access_protection: '_renderAccessProtectionSettings',
       maintenance: '_renderMaintenanceSettings',
       status_customize: '_renderStatusCustomize',
     };
