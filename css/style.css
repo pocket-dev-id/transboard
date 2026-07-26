@@ -1600,6 +1600,11 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
   border-color: #f59e0b;
   color: #78350f;
 }
+.settings-category-banner--mixed {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #475569;
+}
 .settings-category-banner i { font-size: 14px; flex-shrink: 0; }
 
 .settings-guide-card {
@@ -1766,6 +1771,18 @@ body.theme-dark .odbc-input { background: #1e293b; border-color: #334155; color:
 }
 .settings-badge--shared { background: #f1f5f9; color: #475569; }
 .settings-badge--parent { background: #fee2e2; color: #b91c1c; }
+.settings-badge--terminal { background: #e0f2fe; color: #0369a1; }
+
+/* ---- システム保守タブ: 「このアプリについて」情報グリッド ---- */
+.maint-info-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 16px;
+}
+.maint-info-item { display: flex; flex-direction: column; gap: 2px; }
+.maint-info-item--wide { grid-column: 1 / -1; }
+.maint-info-label { font-size: 10.5px; color: var(--clr-text-muted); }
+.maint-info-value { font-size: 13px; font-weight: 700; color: var(--clr-text); }
+.maint-info-value--mono { font-family: 'Roboto Mono', Consolas, monospace; font-weight: 400; font-size: 11px; word-break: break-all; }
+.maint-info-value--warn { color: #b45309; }
 
 /* 設定テーブル内の入力・カラーピッカー共通スタイル（デザイン#1） */
 .settings-input-text {
