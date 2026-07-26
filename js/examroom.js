@@ -198,7 +198,7 @@ const ExamRoom = {
         return;
       }
 
-      await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM);
+      await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM, matchEvent.current_status);
       const label = nextLabel;
       UI.toast(`[ICスキャン] ${bedName} → ${label}`, 'success');
       UI.playScanSound(true);
@@ -208,6 +208,10 @@ const ExamRoom = {
       await App.refreshData();
     } catch (err) {
       console.error(err);
+      if (await App.handleDataConflict(err)) {
+        UI.playScanSound(false);
+        return;
+      }
       UI.toast('ICスキャン処理中にエラーが発生しました', 'danger');
       UI.playScanSound(false);
     }
@@ -385,7 +389,7 @@ const ExamRoom = {
         btn.addEventListener('click', () => {
           const eventId = btn.dataset.eventId;
           const newStatus = btn.dataset.examAction;
-          this._updateStatus(eventId, newStatus);
+          this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null);
         });
       });
 
@@ -466,11 +470,11 @@ const ExamRoom = {
     const showNames = nameChk ? nameChk.checked : false;
 
     // 描画段階で直接値を「＊＊＊＊」にする（ブラウザの描画ラグによる一瞬の露出を根本防止）
-    const patientNameText = bed && bed.patient_name 
-      ? (showNames ? bed.patient_name : '＊＊＊＊') 
+    const patientNameText = bed && bed.patient_name
+      ? (showNames ? UI.escapeHTML(bed.patient_name) : '＊＊＊＊')
       : null;
-    const patientIdText = bed && bed.patient_name 
-      ? (showNames ? (bed.patient_id || '') : '＊＊＊＊') 
+    const patientIdText = bed && bed.patient_name
+      ? (showNames ? UI.escapeHTML(bed.patient_id || '') : '＊＊＊＊')
       : '';
 
     const actions = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.EXAM);
@@ -484,8 +488,8 @@ const ExamRoom = {
       const label = directExamStart
         ? (actionLabels[`EXAM:${event.current_status}:IN_EXAM`] || '到着・検査開始')
         : a.label;
-      return `<button class="btn ${a.cls} btn-sm" data-exam-action="${a.toStatus}" data-event-id="${event.id}">
-        ${label}
+      return `<button class="btn ${UI.escapeHTML(a.cls)} btn-sm" data-exam-action="${UI.escapeHTML(a.toStatus)}" data-event-id="${UI.escapeHTML(event.id)}" data-current-status="${UI.escapeHTML(event.current_status)}">
+        ${UI.escapeHTML(label)}
       </button>`
     }).join('');
 
@@ -510,14 +514,14 @@ const ExamRoom = {
 
     let icHtml = '';
     if (event.patient_ic_tag_id) {
-      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; vertical-align:middle; margin-left:6px;" title="ICカードID: ${event.patient_ic_tag_id}"><i class="fas fa-id-card"></i> IC</span>`;
+      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; vertical-align:middle; margin-left:6px;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
 
     return `
-      <div class="exam-queue-card status-${event.current_status}" data-event-id="${event.id}">
+      <div class="exam-queue-card status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
         <div class="exam-card-header" style="display:flex; justify-content:space-between; align-items:center;">
           <div style="display:flex; flex-direction:column; gap:2px;">
-            <span class="exam-card-bed">${bed ? UI.formatBedName(bed) : '?'} ${icHtml}</span>
+            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatBedName(bed)) : '?'} ${icHtml}</span>
             ${patientNameText ? `
               <div class="exam-patient-name" style="font-weight:700; font-size:12px; color:#1e293b; display:block; position:relative; min-height:16px;">${patientNameText}</div>
               <div class="exam-patient-name" style="font-size:10px; color:#64748b; display:block; position:relative; min-height:12px; margin-top:2px;">${patientIdText}</div>
@@ -528,7 +532,7 @@ const ExamRoom = {
         <div class="exam-card-info">
           <div class="exam-card-info-row">
             <span class="label">検査種別</span>
-            <span>${examType ? examType.name : '--'}</span>
+            <span>${examType ? UI.escapeHTML(examType.name) : '--'}</span>
           </div>
           <div class="exam-card-info-row">
             <span class="label">出棟時刻</span>
@@ -543,24 +547,24 @@ const ExamRoom = {
           <div class="exam-card-info-row" style="align-items: center;">
             <span class="label">迎え目安</span>
             <span style="display:inline-flex; align-items:center; gap:4px;">
-              <input type="time" class="exam-pickup-time-input" data-event-id="${event.id}" value="${UI.formatTime(event.estimated_pickup_at)}" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 12px; font-weight: bold; width: 80px; height: 24px; box-sizing: border-box;">
-              <button class="btn btn-primary btn-sm btn-update-exam-pickup" data-event-id="${event.id}" style="padding: 2px 6px; font-size: 11px; width: auto; height: 24px; min-width: 0; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;">変更</button>
+              <input type="time" class="exam-pickup-time-input" data-event-id="${UI.escapeHTML(event.id)}" value="${UI.formatTime(event.estimated_pickup_at)}" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 12px; font-weight: bold; width: 80px; height: 24px; box-sizing: border-box;">
+              <button class="btn btn-primary btn-sm btn-update-exam-pickup" data-event-id="${UI.escapeHTML(event.id)}" style="padding: 2px 6px; font-size: 11px; width: auto; height: 24px; min-width: 0; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;">変更</button>
             </span>
           </div>` : ''}
           ${event.note ? `
           <div class="exam-card-info-row">
             <span class="label">備考</span>
-            <span>${event.note}</span>
+            <span>${UI.escapeHTML(event.note)}</span>
           </div>` : ''}
           ${staff ? `
           <div class="exam-card-info-row">
             <span class="label">付き添い</span>
-            <span><i class="fas fa-user-nurse"></i> ${staff.name}</span>
+            <span><i class="fas fa-user-nurse"></i> ${UI.escapeHTML(staff.name)}</span>
           </div>` : ''}
         </div>
         <div class="exam-card-actions">
           ${actionBtns}
-          <button class="btn btn-success btn-sm btn-call-ward" data-event-id="${event.id}">
+          <button class="btn btn-success btn-sm btn-call-ward" data-event-id="${UI.escapeHTML(event.id)}">
             <i class="fas fa-phone"></i> 病棟へコール
           </button>
         </div>
@@ -568,12 +572,19 @@ const ExamRoom = {
     `;
   },
 
-  async _updateStatus(eventId, newStatus) {
+  async _updateStatus(eventId, newStatus, expectedStatus = null) {
     const event = AppState.activeEvents.find(e => e.id === eventId) ||
                   AppState.todayEvents.find(e => e.id === eventId);
+    const currentStatus = expectedStatus || event?.current_status || null;
+    if (!currentStatus) {
+      await App.refreshData({ force: true });
+      await this._renderQueue();
+      UI.toast('他端末で更新済みです。最新状態に更新しました。', 'warning');
+      return;
+    }
 
     try {
-      await API.updateEventStatus(eventId, newStatus, {}, CONFIG.STATUS_SCOPE.EXAM);
+      await API.updateEventStatus(eventId, newStatus, {}, CONFIG.STATUS_SCOPE.EXAM, currentStatus);
       const label = CONFIG.STATUS_LABEL[newStatus];
       UI.toast(`${label} に更新しました`, 'success');
       UI.playScanSound(true);
@@ -583,6 +594,10 @@ const ExamRoom = {
       await App.refreshData();
     } catch (e) {
       console.error(e);
+      if (await App.handleDataConflict(e)) {
+        UI.playScanSound(false);
+        return;
+      }
       UI.toast('更新に失敗しました', 'danger');
       UI.playScanSound(false);
     }

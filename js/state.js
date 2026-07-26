@@ -27,6 +27,8 @@ const AppState = {
   // 汎用スケジュールアイテム (タイムライン用)
   scheduleItems: [],
 
+  scheduleFeeds: [],
+
   // 全イベント (履歴用)
   allEvents: [],
 

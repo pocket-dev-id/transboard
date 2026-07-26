@@ -32,6 +32,29 @@ const PasscodeHash = {
     return input === stored; // レガシー平文の後方互換
   },
 
+  isWeakRaw(raw) {
+    const value = String(raw || '').trim();
+    if (value.length < 6) return true;
+    if (/^(\d)\1+$/.test(value)) return true;
+    if (['000000', '111111', '123456', '654321', '12345678', 'password', 'passcode'].includes(value.toLowerCase())) return true;
+    const digits = value.split('').map(ch => Number(ch));
+    if (digits.every(n => Number.isInteger(n))) {
+      const asc = digits.every((n, i) => i === 0 || n === digits[i - 1] + 1);
+      const desc = digits.every((n, i) => i === 0 || n === digits[i - 1] - 1);
+      if (asc || desc) return true;
+    }
+    return false;
+  },
+
+  async requiresInitialSetup(stored) {
+    const value = String(stored || '').trim();
+    if (!value || value === '0000') return true;
+    if (value.startsWith('SHA256:')) {
+      return value === await this.hash('0000');
+    }
+    return this.isWeakRaw(value);
+  },
+
   getRateState() {
     try { return JSON.parse(localStorage.getItem('_pc_rate') || '{}'); } catch { return {}; }
   },
@@ -66,17 +89,40 @@ const PasscodeHash = {
 
 const PasscodeModal = {
   _onSuccess: null,
+  _mode: 'verify',
   SESSION_TIMEOUT_MS: 5 * 60 * 1000,
   _sessionTimer: null,
   _lastActivityAt: 0,
 
-  open(onSuccess) {
+  open(onSuccess, { setup = false } = {}) {
     this._onSuccess = onSuccess;
+    this._mode = setup ? 'setup' : 'verify';
 
     const input = document.getElementById('passcode-input');
     if (input) input.value = '';
     const errMsg = document.getElementById('passcode-error-msg');
     if (errMsg) errMsg.style.display = 'none';
+    const title = document.getElementById('passcode-modal-title');
+    if (title) {
+      title.innerHTML = setup
+        ? '<i class="fas fa-lock"></i> 初回パスコード設定'
+        : '<i class="fas fa-lock"></i> 管理者ロック解除';
+    }
+    const closeBtn = document.getElementById('passcode-modal-close');
+    if (closeBtn) closeBtn.style.display = '';
+    const cancelBtn = document.getElementById('btn-passcode-cancel');
+    if (cancelBtn) cancelBtn.style.display = '';
+    const submitBtn = document.getElementById('btn-passcode-submit');
+    if (submitBtn) submitBtn.textContent = setup ? '設定して開く' : '認証';
+    const note = document.querySelector('#passcode-modal-body label');
+    if (note) {
+      note.textContent = setup
+        ? '初期パスコードのままでは設定画面を開けません。6桁以上の新しいパスコードを設定してください。'
+        : '設定画面を開くにはパスコードを入力してください。';
+    }
+    if (input) {
+      input.placeholder = setup ? '新しいパスコード' : 'パスコードを入力';
+    }
 
     const overlay = document.getElementById('passcode-modal-overlay');
     if (overlay) overlay.classList.remove('hidden');
@@ -90,6 +136,7 @@ const PasscodeModal = {
     const overlay = document.getElementById('passcode-modal-overlay');
     if (overlay) overlay.classList.add('hidden');
     this._onSuccess = null;
+    this._mode = 'verify';
   },
 
   unlock() {
@@ -174,6 +221,10 @@ const PasscodeModal = {
     }
 
     const inputVal = input.value;
+    if (this._mode === 'setup') {
+      await this.submitInitialSetup(inputVal);
+      return;
+    }
     const requiredPasscode = await this.getRequiredPasscode();
 
     const ok = await PasscodeHash.verify(inputVal, requiredPasscode);
@@ -195,6 +246,38 @@ const PasscodeModal = {
       }
       input.value = '';
       input.focus();
+    }
+  },
+
+  async submitInitialSetup(inputVal) {
+    const errMsg = document.getElementById('passcode-error-msg');
+    if (PasscodeHash.isWeakRaw(inputVal)) {
+      if (errMsg) {
+        errMsg.textContent = '6桁以上で、連番・同一数字のみ・推測されやすい値は避けてください';
+        errMsg.style.display = 'block';
+      }
+      return;
+    }
+    try {
+      const hashed = await PasscodeHash.hash(inputVal);
+      await API.patch('system_settings', 'admin_passcode', { value: hashed });
+      const cached = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
+      if (cached) cached.value = hashed;
+      else {
+        if (!Array.isArray(AppState.systemSettings)) AppState.systemSettings = [];
+        AppState.systemSettings.push({ id: 'admin_passcode', value: hashed });
+      }
+      PasscodeHash.recordAttempt(false);
+      this.unlock();
+      const onSuccess = this._onSuccess;
+      this.close();
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      if (errMsg) {
+        errMsg.textContent = 'パスコードを保存できません。親機で設定してから再度お試しください。';
+        errMsg.style.display = 'block';
+      }
+      console.warn('[Passcode] Failed to save initial passcode:', err);
     }
   },
 
@@ -393,17 +476,26 @@ const App = {
  
     // タブ切り替え
     document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const targetPage = btn.dataset.page;
         
         if (targetPage === 'settings' && !PasscodeModal.isSessionValid()) {
           // パスコードによる設定画面全体の保護 (カスタムHTMLモーダルを使用)
-          const passcodeSetting = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
-          let requiredPasscode = '0000'; // デフォルトフォールバック
-          if (passcodeSetting && passcodeSetting.value !== undefined && passcodeSetting.value !== null) {
-            requiredPasscode = passcodeSetting.value;
-          }
+          const requiredPasscode = await PasscodeModal.getRequiredPasscode();
  
+          if (await PasscodeHash.requiresInitialSetup(requiredPasscode)) {
+            const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+            if (shareMode === 'client' || shareMode === 'child') {
+              UI.toast('初回パスコード設定は親機で行ってください。設定後に子機から開けます。', 'warning', 7000);
+              return;
+            }
+            PasscodeModal.open(() => {
+              UI.switchPage(targetPage);
+              PasscodeModal.markActivity();
+            }, { setup: true });
+            return;
+          }
+
           if (requiredPasscode) {
             PasscodeModal.open(() => {
               UI.switchPage(targetPage);
@@ -881,9 +973,11 @@ const App = {
         window.electronAPI.onScheduleImported(async ({ feedId, feedName, fileName, count }) => {
           console.log(`[ScheduleFeed] "${feedName}" 取り込み完了 (${fileName}): ${count}件`);
           UI.toast(`📅 ${feedName}: ${count}件のスケジュールを取り込みました`, 'info');
-          // タイムライン表示中なら再描画
+          await App.refreshData({ force: true });
           const activePage = document.querySelector('.page.active');
-          if (activePage && activePage.id === 'page-timeline') {
+          if (activePage && activePage.id === 'page-ward-dashboard') {
+            WardDashboard.render();
+          } else if (activePage && activePage.id === 'page-timeline') {
             Timeline._renderFullTimeline().catch(console.error);
           }
         });
@@ -1087,8 +1181,25 @@ const App = {
       }
       // 401（トークン不一致）はネットワーク断ではないため、原因が分かる文言に切り替える
       banner.innerHTML = reason === 'unauthorized'
-        ? '<i class="fas fa-key"></i> APIトークンが親機と一致しません。設定 → 共有・ネットワーク設定 でトークンを確認してください。'
-        : '<i class="fas fa-exclamation-triangle"></i> 親機との接続が切断されました。ネットワークを確認してください。';
+        ? '<span><i class="fas fa-key"></i> APIトークンが親機と一致しません。</span>'
+        : '<span><i class="fas fa-exclamation-triangle"></i> 親機との接続が切断されました。</span>';
+      banner.insertAdjacentHTML('beforeend', `
+        <button type="button" class="btn btn-sm btn-outline" id="btn-open-connection-settings" style="margin-left:10px; padding:3px 8px; font-size:11px;">
+          <i class="fas fa-cog"></i> 接続設定
+        </button>
+        <button type="button" class="btn btn-sm btn-outline" id="btn-open-connection-test" style="margin-left:6px; padding:3px 8px; font-size:11px;">
+          <i class="fas fa-link"></i> 接続テストへ
+        </button>
+      `);
+      const openConnectionSettings = () => {
+        document.querySelector('.tab-btn[data-page="settings"]')?.click();
+        setTimeout(() => document.getElementById('client-config-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+      };
+      document.getElementById('btn-open-connection-settings')?.addEventListener('click', openConnectionSettings);
+      document.getElementById('btn-open-connection-test')?.addEventListener('click', () => {
+        openConnectionSettings();
+        setTimeout(() => document.getElementById('btn-test-connection')?.focus(), 350);
+      });
     } else {
       if (banner) banner.remove();
     }
@@ -1190,14 +1301,28 @@ const App = {
     if (wardEl) {
       wardEl.className = `device-presence-chip ${summary.stateClass}`;
       wardEl.title = summary.title;
-      wardEl.innerHTML = `<i class="fas fa-network-wired"></i> 接続端末: ${summary.total}台 / この病棟 ${summary.currentWardCount} / 検査室 ${summary.examCount} / 不明 ${summary.unknownCount}${summary.warningNote}${summary.childNote}`;
+      if (isChild) {
+        const parentState = this._connectionLost
+          ? (this._connectionLostReason === 'unauthorized' ? '親機: トークン不一致' : '親機: 再接続中')
+          : '親機: 接続中';
+        wardEl.innerHTML = `<i class="fas fa-network-wired"></i> ${parentState} / 同じ病棟 ${summary.currentWardCount}台 / 検査室 ${summary.examCount}台${summary.warningNote}`;
+      } else {
+        wardEl.innerHTML = `<i class="fas fa-network-wired"></i> 接続端末: ${summary.total}台 / この病棟 ${summary.currentWardCount} / 検査室 ${summary.examCount} / 不明 ${summary.unknownCount}${summary.warningNote}${summary.childNote}`;
+      }
     }
 
     const examEl = document.getElementById('exam-device-presence');
     if (examEl) {
       examEl.className = `device-presence-chip ${summary.stateClass}`;
       examEl.title = summary.title;
-      examEl.innerHTML = `<i class="fas fa-network-wired"></i> 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`;
+      if (isChild) {
+        const parentState = this._connectionLost
+          ? (this._connectionLostReason === 'unauthorized' ? '親機トークン不一致' : '親機再接続中')
+          : '親機接続中';
+        examEl.innerHTML = `<i class="fas fa-network-wired"></i> ${parentState} / 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`;
+      } else {
+        examEl.innerHTML = `<i class="fas fa-network-wired"></i> 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`;
+      }
     }
   },
 
@@ -1261,15 +1386,15 @@ const App = {
     }
   },
 
-  async refreshData() {
+  async refreshData({ force = false } = {}) {
     const wardId = AppState.currentWardId;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayMs = today.getTime();
     const refreshKey = `${wardId || ''}:${todayMs}`;
     if (this._refreshPromise) {
-      if (this._refreshKey === refreshKey) return this._refreshPromise;
-      return this._refreshPromise.then(() => this.refreshData());
+      if (!force && this._refreshKey === refreshKey) return this._refreshPromise;
+      return this._refreshPromise.then(() => this.refreshData({ force }));
     }
     this._refreshKey = refreshKey;
     this._refreshPromise = this._refreshDataOnce(wardId, todayMs).finally(() => {
@@ -1279,16 +1404,40 @@ const App = {
     return this._refreshPromise;
   },
 
+  renderCurrentPageData() {
+    const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
+    if (currentPage === 'ward-dashboard') {
+      WardDashboard.render();
+    } else if (currentPage === 'exam-room') {
+      ExamRoom._renderQueue();
+    } else if (currentPage === 'timeline') {
+      Timeline.render();
+    }
+  },
+
+  async handleDataConflict(error, message = null) {
+    if (!error?.conflict) return false;
+    UI.toast(message || error.message || '他端末で更新済みです。最新状態に更新します。', 'warning', 6000);
+    await this.refreshData({ force: true });
+    this.renderCurrentPageData();
+    return true;
+  },
+
   async _refreshDataOnce(wardId, todayMs) {
     try {
-      const [eventStatus, systemSettings] = await Promise.all([
+      const dayEndMs = todayMs + 24 * 60 * 60 * 1000;
+      const [eventStatus, systemSettings, scheduleFeeds, scheduleItems] = await Promise.all([
         API.getWardStatusEvents(wardId, todayMs),
-        API.getAll('system_settings').then(res => res.data).catch(() => [])
+        API.getAll('system_settings').then(res => res.data).catch(() => []),
+        API.getScheduleFeeds().catch(() => AppState.scheduleFeeds || []),
+        API.getScheduleItemsForRange(todayMs, dayEndMs).catch(() => AppState.scheduleItems || [])
       ]);
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
       AppState.systemSettings = systemSettings;
+      AppState.scheduleFeeds = scheduleFeeds || [];
+      AppState.scheduleItems = scheduleItems || [];
       AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
 

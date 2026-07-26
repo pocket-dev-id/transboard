@@ -688,12 +688,12 @@ Object.assign(Settings, {
         const opts = ['<option value="">— DSNを選択 —</option>'];
         if (data.system.length) {
           opts.push('<optgroup label="システムDSN">');
-          data.system.forEach(d => opts.push(`<option value="${d.name}" data-driver="${d.driver}">[SYS] ${d.name}（${d.driver}）</option>`));
+          data.system.forEach(d => opts.push(`<option value="${UI.escapeHTML(d.name)}" data-driver="${UI.escapeHTML(d.driver)}">[SYS] ${UI.escapeHTML(d.name)}（${UI.escapeHTML(d.driver)}）</option>`));
           opts.push('</optgroup>');
         }
         if (data.user.length) {
           opts.push('<optgroup label="ユーザーDSN">');
-          data.user.forEach(d => opts.push(`<option value="${d.name}" data-driver="${d.driver}">[USER] ${d.name}（${d.driver}）</option>`));
+          data.user.forEach(d => opts.push(`<option value="${UI.escapeHTML(d.name)}" data-driver="${UI.escapeHTML(d.driver)}">[USER] ${UI.escapeHTML(d.name)}（${UI.escapeHTML(d.driver)}）</option>`));
           opts.push('</optgroup>');
         }
         if (!data.system.length && !data.user.length) {
@@ -1017,11 +1017,11 @@ Object.assign(Settings, {
             
             let optHtml = `<option value="">-- マッピングしない --</option>`;
             headers.forEach(h => {
-              optHtml += `<option value="${h}" ${h === curVal ? 'selected' : ''}>${h}</option>`;
+              optHtml += `<option value="${UI.escapeHTML(h)}" ${h === curVal ? 'selected' : ''}>${UI.escapeHTML(h)}</option>`;
             });
             optHtml += `<option value="__custom__">その他 (直接入力)</option>`;
             if (curVal && !headers.includes(curVal)) {
-              optHtml += `<option value="${curVal}" selected>${curVal} (保存された値)</option>`;
+              optHtml += `<option value="${UI.escapeHTML(curVal)}" selected>${UI.escapeHTML(curVal)} (保存された値)</option>`;
             }
             select.innerHTML = optHtml;
             
@@ -1720,42 +1720,53 @@ Object.assign(Settings, {
       ? '<p style="color:#718096;font-size:13px;">スケジュール取り込み設定がありません。「追加」から作成してください。</p>'
       : feeds.map(f => {
           const mode = schedModeLabel[f.schedule?.mode] || 'リアルタイム監視';
+          const intervalText = UI.escapeHTML(String(f.schedule?.intervalMin || ''));
+          const timesText = UI.escapeHTML(String((f.schedule?.times || []).join(', ')));
           const modeDetail = f.schedule?.mode === 'interval'
-            ? `（${f.schedule.intervalMin}分ごと）`
+            ? `（${intervalText}分ごと）`
             : f.schedule?.mode === 'time'
-            ? `（${(f.schedule.times||[]).join(', ')}）`
+            ? `（${timesText}）`
             : '';
           const titleCol = f.mapping?.col_title || '';
           const dateCol = f.mapping?.col_date || f.mapping?.col_datetime || '';
           const wardNames = (f.ward_ids?.length > 0)
-            ? f.ward_ids.map(id => AppState.wards?.find(w => w.id === id)?.name || id).join(', ')
+            ? f.ward_ids.map(id => UI.escapeHTML(String(AppState.wards?.find(w => w.id === id)?.name || id))).join(', ')
             : '全病棟';
+          const bedMapLabel = f.show_on_bed_map === false ? '病床マップ非表示' : '病床マップ表示';
+          const bedMapColor = f.show_on_bed_map === false ? '#94a3b8' : '#7c3aed';
+          const feedIdAttr = UI.escapeHTML(String(f.id || ''));
+          const feedNameHtml = UI.escapeHTML(String(f.name || '（名称なし）'));
+          const watchDirHtml = UI.escapeHTML(String(f.watch_dir || ''));
+          const feedColor = /^#[0-9a-f]{6}$/i.test(String(f.color || '')) ? f.color : '#7c3aed';
+          const titleColHtml = UI.escapeHTML(String(titleCol));
+          const dateColHtml = UI.escapeHTML(String(dateCol));
           return `
           <div class="settings-row" style="border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;overflow:hidden;">
             <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;">
-              <span style="width:14px;height:14px;border-radius:50%;background:${f.color||'#7c3aed'};flex-shrink:0;"></span>
+              <span style="width:14px;height:14px;border-radius:50%;background:${feedColor};flex-shrink:0;"></span>
               <div style="flex:1;min-width:0;">
-                <div style="font-weight:700;font-size:13px;">${f.name || '（名称なし）'}</div>
-                <div style="font-size:11px;color:#718096;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${f.watch_dir||''}">
-                  <i class="fas fa-folder" style="margin-right:3px;"></i>${f.watch_dir || '（フォルダ未設定）'}
+                <div style="font-weight:700;font-size:13px;">${feedNameHtml}</div>
+                <div style="font-size:11px;color:#718096;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${watchDirHtml}">
+                  <i class="fas fa-folder" style="margin-right:3px;"></i>${watchDirHtml || '（フォルダ未設定）'}
                 </div>
               </div>
               <span style="font-size:11px;padding:2px 6px;border-radius:10px;background:${f.is_active?'#dcfce7':'#f1f5f9'};color:${f.is_active?'#16a34a':'#64748b'};flex-shrink:0;">${f.is_active?'有効':'無効'}</span>
-              <button class="btn btn-outline btn-sm sched-feed-import-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;flex-shrink:0;" title="手動取り込み実行">
+              <button class="btn btn-outline btn-sm sched-feed-import-btn" data-feed-id="${feedIdAttr}" style="font-size:11px;padding:4px 8px;flex-shrink:0;" title="手動取り込み実行">
                 <i class="fas fa-download"></i>
               </button>
-              <button class="btn btn-outline btn-sm sched-feed-edit-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;flex-shrink:0;">
+              <button class="btn btn-outline btn-sm sched-feed-edit-btn" data-feed-id="${feedIdAttr}" style="font-size:11px;padding:4px 8px;flex-shrink:0;">
                 <i class="fas fa-edit"></i> 編集
               </button>
-              <button class="btn btn-danger btn-sm sched-feed-del-btn" data-feed-id="${f.id}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;flex-shrink:0;">
+              <button class="btn btn-danger btn-sm sched-feed-del-btn" data-feed-id="${feedIdAttr}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#dc2626;border-color:#fca5a5;flex-shrink:0;">
                 <i class="fas fa-trash"></i>
               </button>
             </div>
             <div style="display:flex;gap:16px;padding:6px 12px 8px 36px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:11px;color:#64748b;flex-wrap:wrap;">
               <span><i class="fas fa-clock" style="margin-right:3px;color:#94a3b8;"></i>${mode}${modeDetail}</span>
-              ${dateCol ? `<span><i class="fas fa-calendar-alt" style="margin-right:3px;color:#94a3b8;"></i>日付列: <code>${dateCol}</code></span>` : ''}
-              ${titleCol ? `<span><i class="fas fa-tag" style="margin-right:3px;color:#94a3b8;"></i>タイトル列: <code>${titleCol}</code></span>` : ''}
+              ${dateCol ? `<span><i class="fas fa-calendar-alt" style="margin-right:3px;color:#94a3b8;"></i>日付列: <code>${dateColHtml}</code></span>` : ''}
+              ${titleCol ? `<span><i class="fas fa-tag" style="margin-right:3px;color:#94a3b8;"></i>タイトル列: <code>${titleColHtml}</code></span>` : ''}
               <span><i class="fas fa-hospital" style="margin-right:3px;color:#94a3b8;"></i>${wardNames}</span>
+              <span><i class="fas fa-bed" style="margin-right:3px;color:${bedMapColor};"></i>${bedMapLabel}</span>
             </div>
           </div>`;
         }).join('');
@@ -1900,11 +1911,16 @@ Object.assign(Settings, {
               <div id="sched-ward-checks" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
                 ${(AppState.wards || []).map(w => `
                   <label style="display:flex;align-items:center;gap:4px;font-size:12px;background:#f8fafc;padding:4px 8px;border-radius:4px;border:1px solid #e2e8f0;cursor:pointer;">
-                    <input type="checkbox" class="sched-ward-chk" value="${w.id}"> ${w.name}
+                    <input type="checkbox" class="sched-ward-chk" value="${UI.escapeHTML(String(w.id))}"> ${UI.escapeHTML(String(w.name || w.id))}
                   </label>
                 `).join('')}
                 ${!(AppState.wards?.length) ? '<span style="font-size:11px;color:#94a3b8;">病棟マスタを先に登録してください</span>' : ''}
               </div>
+
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin-bottom:8px;">
+                <input type="checkbox" id="sched-form-bed-map" checked style="width:16px;height:16px;">
+                病床マップに当日予定アイコンを表示
+              </label>
 
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
                 <input type="checkbox" id="sched-form-active" checked style="width:16px;height:16px;">
@@ -1981,7 +1997,7 @@ Object.assign(Settings, {
         datalist.innerHTML = result.headers.map(h => `<option value="${UI.escapeHTML(h)}">`).join('');
         const hint = body.querySelector('#sched-headers-hint');
         hint.style.display = 'block';
-        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${result.filename}</strong> のヘッダを読み込みました: ${result.headers.map(h => `<code>${UI.escapeHTML(h)}</code>`).join(' / ')}`;
+        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${UI.escapeHTML(result.filename)}</strong> のヘッダを読み込みました: ${result.headers.map(h => `<code>${UI.escapeHTML(h)}</code>`).join(' / ')}`;
       } catch (e) {
         UI.toast('CSVの読み込みに失敗しました: ' + e.message, 'danger');
       } finally {
@@ -2001,6 +2017,7 @@ Object.assign(Settings, {
       body.querySelector('#sched-form-id').value = feed?.id || '';
       body.querySelector('#sched-form-name').value = feed?.name || '';
       body.querySelector('#sched-form-dir').value = feed?.watch_dir || '';
+      body.querySelector('#sched-form-bed-map').checked = feed ? (feed.show_on_bed_map !== false) : true;
       body.querySelector('#sched-form-active').checked = feed ? (feed.is_active !== false) : true;
 
       const color = feed?.color || '#7c3aed';
@@ -2081,6 +2098,7 @@ Object.assign(Settings, {
         schedule,
         mapping,
         retention_policy: { action: body.querySelector('input[name="sched-form-policy"]:checked').value },
+        show_on_bed_map: body.querySelector('#sched-form-bed-map').checked,
         is_active: body.querySelector('#sched-form-active').checked,
         ward_ids: wardIds, // 空配列 = 全病棟
       };
@@ -2092,6 +2110,7 @@ Object.assign(Settings, {
           await API.create('schedule_feeds', data);
         }
         await this._reloadParentScheduleFeedTriggers();
+        await App.refreshData({ force: true });
         closeForm();
         UI.toast('スケジュール取り込み設定を保存しました', 'success');
         this._renderScheduleFeeds(body);
@@ -2120,6 +2139,7 @@ Object.assign(Settings, {
             await API.remove('schedule_items', item.id);
           }
           await this._reloadParentScheduleFeedTriggers();
+          await App.refreshData({ force: true });
           UI.toast('削除しました', 'success');
           this._renderScheduleFeeds(body);
         } catch (err) {
@@ -2132,8 +2152,12 @@ Object.assign(Settings, {
         importBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
         try {
           const res = await this._triggerParentScheduleFeedImport(importBtn.dataset.feedId);
-          if (res?.success) UI.toast('手動取り込みを実行しました', 'success');
-          else UI.toast(res?.message || '取り込み失敗', 'warning');
+          if (res?.success) {
+            await App.refreshData({ force: true });
+            UI.toast('手動取り込みを実行しました', 'success');
+          } else {
+            UI.toast(res?.message || '取り込み失敗', 'warning');
+          }
         } catch (err) {
           UI.toast('手動取り込みに失敗しました', 'danger');
         } finally {
@@ -2179,7 +2203,7 @@ Object.assign(Settings, {
       listEl.innerHTML = templates.map((t, idx) => `
         <div class="template-item-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px; background:rgba(0,0,0,0.02); padding:8px; border-radius:6px; border:1px solid #e2e8f0;">
           <span style="font-size:12px; font-weight:bold; color:#718096; width:24px; text-align:center;">${idx + 1}</span>
-          <input type="text" class="template-input-text" data-index="${idx}" value="${t}" style="flex:1; padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px;" placeholder="アナウンスで読み上げる定型文を入力してください">
+          <input type="text" class="template-input-text" data-index="${idx}" value="${UI.escapeHTML(t)}" style="flex:1; padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px;" placeholder="アナウンスで読み上げる定型文を入力してください">
           <button class="btn btn-secondary btn-sm btn-delete-template" data-index="${idx}" style="padding:6px 10px; background:#ef4444; border-color:#ef4444; color:#fff;" title="削除">
             <i class="fas fa-trash-alt"></i>
           </button>

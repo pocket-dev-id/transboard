@@ -61,6 +61,9 @@ Object.assign(Settings, {
     const actionLabels   = AppState.getSettingJSON('action_button_labels', {});
     const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
     const skipArrivedStep = hiddenStatuses.includes('ARRIVED');
+    const safeHex = (value, fallback) => (
+      /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : fallback
+    );
 
     const statusLabelRows = STATUS_ORDER.map(sid => `
       <tr>
@@ -78,19 +81,21 @@ Object.assign(Settings, {
 
     const colorRows = STATUS_ORDER.map(sid => {
       const c = statusColors[sid] || {};
-      const defBg = STATUS_COLOR_DEFAULTS[sid] || '#ffffff';
-      const badgeBg = c.badge_bg || defBg;
-      const badgeText = c.badge_text || '#1a202c';
+      const defBg = safeHex(STATUS_COLOR_DEFAULTS[sid], '#ffffff');
+      const cardBg = safeHex(c.card_bg, defBg);
+      const cardBorder = safeHex(c.card_border, '#94a3b8');
+      const badgeBg = safeHex(c.badge_bg, defBg);
+      const badgeText = safeHex(c.badge_text, '#1a202c');
       const ratio = this._contrastRatio(badgeBg, badgeText);
       const lowContrast = ratio !== null && ratio < 4.5;
       return `
         <tr>
           <td style="font-weight:600;">${DEFAULT_LABELS[sid]}</td>
           <td style="text-align:center;">
-            <input type="color" class="sc-card-bg settings-color-swatch" data-status="${sid}" value="${c.card_bg || defBg}">
+            <input type="color" class="sc-card-bg settings-color-swatch" data-status="${sid}" value="${cardBg}">
           </td>
           <td style="text-align:center;">
-            <input type="color" class="sc-card-border settings-color-swatch" data-status="${sid}" value="${c.card_border || '#94a3b8'}">
+            <input type="color" class="sc-card-border settings-color-swatch" data-status="${sid}" value="${cardBorder}">
           </td>
           <td style="text-align:center;">
             <input type="color" class="sc-badge-bg settings-color-swatch" data-status="${sid}" value="${badgeBg}">

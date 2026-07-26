@@ -316,6 +316,9 @@ const SEEDS = {
 
 // センシティブな設定情報の暗号化リストと暗号・復号ヘルパー
 const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_token'];
+const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
+const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
+const AUDIT_LOG_MAX_ENTRIES = 5000;
 
 function encryptSensitiveValue(value) {
   if (!value) return value;
@@ -559,6 +562,149 @@ function getSettingRecord(db, id) {
 
 function normalizeShareMode(value) {
   return value === 'client' || value === 'child' ? 'client' : 'parent';
+}
+
+function maskAuditValue(table, id, value) {
+  if (table === 'system_settings' && AUDIT_SECRET_SETTING_IDS.has(String(id || ''))) {
+    return value === undefined ? undefined : '[changed]';
+  }
+  if (AUDIT_PATIENT_FIELD_IDS.has(String(id || ''))) {
+    return value === undefined ? undefined : '[redacted]';
+  }
+  if (value && typeof value === 'object') {
+    if (Array.isArray(value)) return value.map(item => maskAuditValue(table, id, item));
+    const masked = {};
+    Object.entries(value).forEach(([key, val]) => {
+      masked[key] = maskAuditValue(table, key, val);
+    });
+    return masked;
+  }
+  return value;
+}
+
+function summarizeAuditRecord(table, record) {
+  if (!record || typeof record !== 'object') return record ?? null;
+  const summary = {};
+  Object.entries(record).forEach(([key, value]) => {
+    summary[key] = maskAuditValue(table, table === 'system_settings' ? record.id : key, value);
+  });
+  return summary;
+}
+
+function appendAuditLog(db, action, {
+  targetType = '',
+  targetId = null,
+  staffId = null,
+  actorType = 'system',
+  terminalRole = '',
+  deviceId = '',
+  remoteIp = '',
+  result = 'success',
+  before = null,
+  after = null,
+  reason = '',
+  details = {},
+} = {}) {
+  try {
+    db.audit_logs = Array.isArray(db.audit_logs) ? db.audit_logs : [];
+    const now = Date.now();
+    db.audit_logs.push({
+      id: `audit-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      action,
+      target_type: targetType,
+      target_id: targetId,
+      staff_id: staffId,
+      actor_type: actorType,
+      terminal_role: terminalRole || normalizeShareMode(getSettingRecord(db, 'share_mode')?.value),
+      device_id: deviceId || '',
+      remote_ip: remoteIp || '',
+      result,
+      before: before == null ? '' : JSON.stringify(before),
+      after: after == null ? '' : JSON.stringify(after),
+      reason,
+      details: JSON.stringify(details || {}),
+      created_at: now,
+    });
+    if (db.audit_logs.length > AUDIT_LOG_MAX_ENTRIES) {
+      db.audit_logs.splice(0, db.audit_logs.length - AUDIT_LOG_MAX_ENTRIES);
+    }
+  } catch (err) {
+    console.warn('[AuditLog] 追記に失敗:', err.message);
+  }
+}
+
+function appendParentActionAudit(action, result, requestMeta = {}) {
+  const db = readDB();
+  appendAuditLog(db, 'PARENT_ACTION', {
+    targetType: 'parent-actions',
+    targetId: action,
+    actorType: 'child_api',
+    remoteIp: requestMeta.remoteIp || '',
+    result: result && result.success === false ? 'failure' : 'success',
+    details: { action, message: result?.message || '' },
+  });
+  writeDB(db);
+  return result;
+}
+
+function sanitizeAuditWritePayload(payload) {
+  const clean = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const limit = (value, max = 120) => String(value || '').slice(0, max);
+  return {
+    action: limit(clean.action || 'USER_ACTION', 80),
+    targetType: limit(clean.targetType || clean.target_type || '', 80),
+    targetId: clean.targetId ?? clean.target_id ?? null,
+    staffId: clean.staffId ?? clean.staff_id ?? null,
+    details: clean.details && typeof clean.details === 'object' && !Array.isArray(clean.details)
+      ? maskAuditValue('', '', clean.details)
+      : {},
+  };
+}
+
+function processAuditWriteRequest(method, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
+  if (method !== 'POST') {
+    return { success: false, message: 'Method Not Allowed' };
+  }
+  if (isExternal && !isValidApiToken(apiToken)) {
+    console.warn('[Security] 監査ログAPIトークン認証失敗');
+    return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+
+  let payload;
+  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+    return { success: false, message: 'リクエストボディのJSONが不正です' };
+  }
+
+  const audit = sanitizeAuditWritePayload(payload);
+  const db = readDB();
+  appendAuditLog(db, audit.action, {
+    targetType: audit.targetType,
+    targetId: audit.targetId,
+    staffId: audit.staffId,
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    remoteIp: requestMeta.remoteIp || '',
+    details: audit.details,
+  });
+  if (!writeDB(db)) {
+    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+  return { success: true };
+}
+
+function resetAdminPasscodeForLocalRecovery(reason = 'local_recovery') {
+  const db = readDB();
+  db.system_settings = db.system_settings || [];
+  const rec = db.system_settings.find(s => s.id === 'admin_passcode');
+  if (rec) rec.value = '0000';
+  else db.system_settings.push({ id: 'admin_passcode', value: '0000' });
+  appendAuditLog(db, 'PASSCODE_RESET_FOR_RECOVERY', {
+    targetType: 'system_settings',
+    targetId: 'admin_passcode',
+    actorType: 'local_recovery',
+    after: { id: 'admin_passcode', value: '[changed]' },
+    reason,
+  });
+  return writeDB(db);
 }
 
 function readTerminalRole() {
@@ -1861,6 +2007,49 @@ function isScopedTransferStatusTransitionAllowed(fromStatus, toStatus, db, scope
   return getAllowedTransferTargets(fromStatus, db, actionMap).includes(toStatus);
 }
 
+function findActiveBedEventConflict(events, candidate, excludeId = null) {
+  const bedId = candidate?.bed_id == null ? '' : String(candidate.bed_id);
+  const status = candidate?.current_status || '';
+  if (!bedId || !ACTIVE_TRANSFER_STATUSES.has(status)) return null;
+
+  const excluded = excludeId == null ? '' : String(excludeId);
+  return (events || []).find(event =>
+    String(event.id) !== excluded &&
+    String(event.bed_id) === bedId &&
+    ACTIVE_TRANSFER_STATUSES.has(event.current_status)
+  ) || null;
+}
+
+function shouldCheckActiveBedConflict(beforeItem, afterItem, isCreate = false) {
+  if (!afterItem || !ACTIVE_TRANSFER_STATUSES.has(afterItem.current_status)) return false;
+  if (isCreate || !beforeItem) return true;
+  return String(beforeItem.bed_id || '') !== String(afterItem.bed_id || '') ||
+    String(beforeItem.current_status || '') !== String(afterItem.current_status || '');
+}
+
+function activeBedConflictResponse(conflict) {
+  return {
+    success: false,
+    conflict: true,
+    conflictType: 'active_event_for_bed',
+    message: 'この病床には既に進行中の出棟イベントがあります。最新状態に更新してください。',
+    existingEventId: conflict?.id || null,
+    currentStatus: conflict?.current_status || null,
+  };
+}
+
+function statusMismatchConflictResponse(expectedStatus, current) {
+  return {
+    success: false,
+    conflict: true,
+    conflictType: 'status_mismatch',
+    message: '他端末で状態が更新されています。最新状態に更新してください。',
+    expectedStatus,
+    currentStatus: current?.current_status || null,
+    event: current || null,
+  };
+}
+
 function getSystemSettingInt(db, id, fallback) {
   const setting = (db.system_settings || []).find(s => s.id === id);
   const value = parseInt(setting?.value, 10);
@@ -1928,6 +2117,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
 
   const eventId = payload.eventId;
   const newStatus = payload.newStatus;
+  const expectedStatus = payload.expectedStatus || null;
   const extraFields = sanitizeStatusExtraFields(payload.extraFields);
   const scope = payload.scope === 'exam' ? 'exam' : 'ward';
 
@@ -1944,6 +2134,12 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
 
   const current = list[index];
   const fromStatus = current.current_status || null;
+  if (expectedStatus && fromStatus !== expectedStatus) {
+    return statusMismatchConflictResponse(expectedStatus, current);
+  }
+  if (fromStatus === newStatus) {
+    return { success: true, idempotent: true, event: current };
+  }
   if (!isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
     return {
       success: false,
@@ -1996,6 +2192,15 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   if (db.transfer_status_logs.length > 1000) {
     db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
   }
+  appendAuditLog(db, 'STATUS_CHANGE', {
+    targetType: 'transfer_events',
+    targetId: eventId,
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    result: 'success',
+    before: summarizeAuditRecord('transfer_events', current),
+    after: summarizeAuditRecord('transfer_events', list[index]),
+    details: { fromStatus, toStatus: newStatus, scope },
+  });
 
   if (!writeDB(db)) {
     throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
@@ -2011,7 +2216,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
 }
 
 // 共通のデータベース操作処理関数
-async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null) {
+async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
   const db = readDB();
 
   // URL解析 (例: "tables/transfer_events?limit=200" や "tables/beds/bed-701")
@@ -2028,6 +2233,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
   if (!ALLOWED_TABLES.has(table)) {
     console.warn(`[DB] 未許可のテーブル名へのアクセス: ${table}`);
     return { success: false, message: 'Not Found' };
+  }
+
+  if (table === 'audit_logs' && method !== 'GET') {
+    return { success: false, message: 'Audit logs are append-only' };
   }
 
   // 患者情報を含むテーブルへの外部アクセスはAPIトークンで保護する
@@ -2129,6 +2338,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       data.id = `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     }
     const index = list.findIndex(x => String(x.id) === String(data.id));
+    const beforeItem = index !== -1 ? JSON.parse(JSON.stringify(list[index])) : null;
     if (index !== -1) {
       if (
         isExternal &&
@@ -2147,9 +2357,20 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
         };
       }
+      if (table === 'transfer_events') {
+        const merged = { ...list[index], ...data };
+        if (shouldCheckActiveBedConflict(list[index], merged, false)) {
+          const conflict = findActiveBedEventConflict(list, merged, merged.id);
+          if (conflict) return activeBedConflictResponse(conflict);
+        }
+      }
       list[index] = { ...list[index], ...data };
       console.log(`[DB] POST (Update instead of duplicate): table=${table}, id=${data.id}`);
     } else {
+      if (table === 'transfer_events' && shouldCheckActiveBedConflict(null, data, true)) {
+        const conflict = findActiveBedEventConflict(list, data, data.id);
+        if (conflict) return activeBedConflictResponse(conflict);
+      }
       list.push(data);
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
     }
@@ -2167,6 +2388,16 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       list.splice(0, list.length - 500);
       console.log(`[DB Cleaner] Trimmed calls to 500 entries.`);
     }
+
+    appendAuditLog(db, index !== -1 ? 'DB_UPDATE' : 'DB_CREATE', {
+      targetType: table,
+      targetId: data.id,
+      actorType: isExternal ? 'child_api' : 'local_ui',
+      remoteIp: requestMeta.remoteIp || '',
+      before: summarizeAuditRecord(table, beforeItem),
+      after: summarizeAuditRecord(table, list.find(x => String(x.id) === String(data.id))),
+      details: { method: 'POST' },
+    });
 
     if (!writeDB(db)) {
       throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
@@ -2187,27 +2418,48 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         if (isExternal && bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))) {
           return { success: false, message: 'Use status/update for status changes' };
         }
+        const simulated = list.map(item => ({ ...item }));
         for (const patchItem of bulkData) {
-          if (!Object.prototype.hasOwnProperty.call(patchItem, 'current_status')) continue;
           const targetId = patchItem.id;
-          const index = list.findIndex(x => String(x.id) === String(targetId));
+          const index = simulated.findIndex(x => String(x.id) === String(targetId));
           if (index === -1) continue;
-          if (!isTransferStatusTransitionAllowed(list[index].current_status, patchItem.current_status, db)) {
+          const before = simulated[index];
+          if (
+            Object.prototype.hasOwnProperty.call(patchItem, 'current_status') &&
+            !isTransferStatusTransitionAllowed(before.current_status, patchItem.current_status, db)
+          ) {
             return {
               success: false,
-              message: `Invalid status transition: ${list[index].current_status} -> ${patchItem.current_status}`,
+              message: `Invalid status transition: ${before.current_status} -> ${patchItem.current_status}`,
             };
           }
+          const merged = { ...before, ...patchItem };
+          if (shouldCheckActiveBedConflict(before, merged, false)) {
+            const conflict = findActiveBedEventConflict(simulated, merged, merged.id);
+            if (conflict) return activeBedConflictResponse(conflict);
+          }
+          simulated[index] = merged;
         }
       }
       const updatedItems = [];
+      const beforeItems = [];
       bulkData.forEach(patchItem => {
         const targetId = patchItem.id;
         const index = list.findIndex(x => String(x.id) === String(targetId));
         if (index !== -1) {
+          beforeItems.push(JSON.parse(JSON.stringify(list[index])));
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
         }
+      });
+      appendAuditLog(db, 'DB_BULK_UPDATE', {
+        targetType: table,
+        targetId: 'bulk',
+        actorType: isExternal ? 'child_api' : 'local_ui',
+        remoteIp: requestMeta.remoteIp || '',
+        before: beforeItems.map(item => summarizeAuditRecord(table, item)),
+        after: updatedItems.map(item => summarizeAuditRecord(table, item)),
+        details: { method, count: updatedItems.length },
       });
       if (!writeDB(db)) {
         throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
@@ -2232,6 +2484,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     ) {
       return { success: false, message: 'Use status/update for status changes' };
     }
+    let expectedStatus = null;
+    if (table === 'transfer_events' && Object.prototype.hasOwnProperty.call(data, 'expectedStatus')) {
+      expectedStatus = data.expectedStatus || null;
+      delete data.expectedStatus;
+    }
+    if (expectedStatus && list[index].current_status !== expectedStatus) {
+      return statusMismatchConflictResponse(expectedStatus, list[index]);
+    }
     if (
       table === 'transfer_events' &&
       Object.prototype.hasOwnProperty.call(data, 'current_status') &&
@@ -2242,7 +2502,24 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
       };
     }
+    if (table === 'transfer_events') {
+      const merged = { ...list[index], ...data };
+      if (shouldCheckActiveBedConflict(list[index], merged, false)) {
+        const conflict = findActiveBedEventConflict(list, merged, merged.id);
+        if (conflict) return activeBedConflictResponse(conflict);
+      }
+    }
+    const beforeItem = JSON.parse(JSON.stringify(list[index]));
     list[index] = { ...list[index], ...data };
+    appendAuditLog(db, 'DB_UPDATE', {
+      targetType: table,
+      targetId: id,
+      actorType: isExternal ? 'child_api' : 'local_ui',
+      remoteIp: requestMeta.remoteIp || '',
+      before: summarizeAuditRecord(table, beforeItem),
+      after: summarizeAuditRecord(table, list[index]),
+      details: { method, fields: Object.keys(data) },
+    });
     if (!writeDB(db)) {
       throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
     }
@@ -2257,6 +2534,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       return { success: false, message: 'Not Found' };
     }
     const removed = list.splice(index, 1)[0];
+    appendAuditLog(db, 'DB_DELETE', {
+      targetType: table,
+      targetId: id,
+      actorType: isExternal ? 'child_api' : 'local_ui',
+      remoteIp: requestMeta.remoteIp || '',
+      before: summarizeAuditRecord(table, removed),
+      details: { method: 'DELETE' },
+    });
     if (!writeDB(db)) {
       throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
     }
@@ -2278,6 +2563,9 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
     return { success: true };
   }
   const method = (options.method || 'GET').toUpperCase();
+  if (url === 'audit/write') {
+    return processAuditWriteRequest(method, options.body || '', false);
+  }
   if (url === 'status/update') {
     return processStatusUpdateRequest(method, options.body || '', false);
   }
@@ -2652,6 +2940,16 @@ ipcMain.handle('import-update-files', async () => {
     fs.copyFileSync(exeSrc, path.join(updatesDir, path.basename(info.path)));
     fs.copyFileSync(ymlSrc, path.join(updatesDir, 'latest.yml'));
 
+    {
+      const db = readDB();
+      appendAuditLog(db, 'UPDATE_DIST_IMPORT', {
+        targetType: 'updates',
+        targetId: info.version,
+        actorType: 'local_ui',
+        details: { version: info.version, fileName: path.basename(info.path) },
+      });
+      writeDB(db);
+    }
     console.log(`[Updater] 配信ファイルを取込: v${info.version}`);
     return { success: true, version: info.version };
   } catch (e) {
@@ -2676,6 +2974,16 @@ ipcMain.handle('rollback-update-dist', () => {
       fs.renameSync(path.join(archiveDir, f), path.join(updatesDir, f));
     }
     const info = parseLatestYml(fs.readFileSync(path.join(updatesDir, 'latest.yml'), 'utf8'));
+    {
+      const db = readDB();
+      appendAuditLog(db, 'UPDATE_DIST_ROLLBACK', {
+        targetType: 'updates',
+        targetId: info.version,
+        actorType: 'local_ui',
+        details: { version: info.version },
+      });
+      writeDB(db);
+    }
     console.log(`[Updater] 配信をロールバック: v${info.version}`);
     return { success: true, version: info.version };
   } catch (e) {
@@ -2788,6 +3096,14 @@ function decryptBackupContent(fileContent, password) {
   return decrypted.toString('utf8');
 }
 
+function redactAuditLogJsonField(record, field) {
+  if (!record || !record[field]) return;
+  try {
+    const parsed = JSON.parse(record[field]);
+    record[field] = JSON.stringify(maskAuditValue('', '', parsed));
+  } catch {}
+}
+
 // エクスポート用に患者情報（氏名・ID等）を除去した複製を作る（セキュリティ B-2: 匿名化エクスポート）
 function redactPatientData(dbObj) {
   const clone = JSON.parse(JSON.stringify(dbObj));
@@ -2800,11 +3116,9 @@ function redactPatientData(dbObj) {
   }
   if (Array.isArray(clone.audit_logs)) {
     clone.audit_logs.forEach(a => {
-      try {
-        const details = JSON.parse(a.details || '{}');
-        if ('patient_id' in details) details.patient_id = null;
-        a.details = JSON.stringify(details);
-      } catch {}
+      redactAuditLogJsonField(a, 'before');
+      redactAuditLogJsonField(a, 'after');
+      redactAuditLogJsonField(a, 'details');
     });
   }
   return clone;
@@ -2837,6 +3151,16 @@ ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } 
       outputContent = encryptBackupContent(plaintextJson, password);
     }
     fs.writeFileSync(filePath, outputContent, 'utf8');
+    {
+      const db = readDB();
+      appendAuditLog(db, 'BACKUP_EXPORT', {
+        targetType: 'database',
+        targetId: mode,
+        actorType: 'local_ui',
+        details: { mode, fileName: path.basename(filePath) },
+      });
+      writeDB(db);
+    }
     return { success: true, filePath };
   } catch (err) {
     console.error('[DB Backup Error]', err);
@@ -2892,6 +3216,16 @@ ipcMain.handle('restore-db', async (event, { password = '' } = {}) => {
     safeWriteFile(DB_FILE, encryptDbFileContent(plaintextJson));
     // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
     dbCache = null;
+    {
+      const db = readDB();
+      appendAuditLog(db, 'BACKUP_RESTORE', {
+        targetType: 'database',
+        targetId: path.basename(filePath),
+        actorType: 'local_ui',
+        details: { encrypted: fileContent.startsWith(BACKUP_ENCRYPTION_MAGIC), fileName: path.basename(filePath) },
+      });
+      writeDB(db);
+    }
     return { success: true };
   } catch (err) {
     console.error('[DB Restore Error]', err);
@@ -3097,7 +3431,7 @@ function isValidApiToken(apiToken) {
   return Boolean(expectedToken && apiToken === expectedToken);
 }
 
-async function processParentActionRequest(method, action, bodyStr, apiToken) {
+async function processParentActionRequest(method, action, bodyStr, apiToken, requestMeta = {}) {
   if (!isValidApiToken(apiToken)) {
     console.warn(`[Security] 親機操作APIトークン認証失敗: action=${action}`);
     return { success: false, message: 'Unauthorized', unauthorized: true };
@@ -3136,26 +3470,34 @@ async function processParentActionRequest(method, action, bodyStr, apiToken) {
         if (rec) rec.value = String(value ?? '');
         else db.system_settings.push({ id, value: String(value ?? '') });
       }
+      appendAuditLog(db, 'PARENT_ACTION', {
+        targetType: 'parent-actions',
+        targetId: action,
+        actorType: 'child_api',
+        remoteIp: requestMeta.remoteIp || '',
+        after: { settingIds: Object.keys(settings).filter(id => allowed.has(id)) },
+        details: { action },
+      });
       writeDB(db);
       updateWatchDirectoryOnParent(settings.import_directory || '');
       return { success: true };
     }
     case 'manual-import':
-      return triggerManualImportOnParent();
+      return appendParentActionAudit(action, await triggerManualImportOnParent(), requestMeta);
     case 'update-watch-directory':
-      return updateWatchDirectoryOnParent(payload.path || payload.newPath || '');
+      return appendParentActionAudit(action, updateWatchDirectoryOnParent(payload.path || payload.newPath || ''), requestMeta);
     case 'odbc-dsns':
-      return { success: true, ...getOdbcDsnsOnParent() };
+      return appendParentActionAudit(action, { success: true, ...getOdbcDsnsOnParent() }, requestMeta);
     case 'odbc-tables':
-      return getOdbcTablesOnParent(payload);
+      return appendParentActionAudit(action, await getOdbcTablesOnParent(payload), requestMeta);
     case 'odbc-test':
-      return testOdbcConnectionOnParent(payload);
+      return appendParentActionAudit(action, await testOdbcConnectionOnParent(payload), requestMeta);
     case 'odbc-sync':
-      return runOdbcSyncOnParent(payload);
+      return appendParentActionAudit(action, await runOdbcSyncOnParent(payload), requestMeta);
     case 'schedule-feed-import':
-      return triggerScheduleFeedImportOnParent(payload.feedId);
+      return appendParentActionAudit(action, await triggerScheduleFeedImportOnParent(payload.feedId), requestMeta);
     case 'reload-schedule-feed-triggers':
-      return reloadScheduleFeedTriggersOnParent();
+      return appendParentActionAudit(action, reloadScheduleFeedTriggersOnParent(), requestMeta);
     default:
       return { success: false, message: 'Unknown parent action' };
   }
@@ -3258,11 +3600,17 @@ function startParentServer() {
         let result;
         if (cleanUrl.startsWith('webrtc/')) {
           result = processWebrtcRequest(req.method, cleanUrl, body);
+        } else if (cleanUrl === 'audit/write') {
+          result = processAuditWriteRequest(req.method, body, true, req.headers['x-api-token'], {
+            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+          });
         } else if (cleanUrl === 'status/update') {
           result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token']);
         } else if (cleanUrl.startsWith('parent-actions/')) {
           const action = cleanUrl.replace(/^parent-actions\//, '').split('?')[0];
-          result = await processParentActionRequest(req.method, action, body, req.headers['x-api-token']);
+          result = await processParentActionRequest(req.method, action, body, req.headers['x-api-token'], {
+            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+          });
         } else if (cleanUrl.startsWith('device/')) {
           const action = cleanUrl.replace(/^device\//, '').split('?')[0];
           if (action === 'heartbeat' && req.method === 'POST') {
@@ -3290,7 +3638,9 @@ function startParentServer() {
           }
         } else {
           // 外部からのHTTP APIリクエストのため isExternal = true
-          result = await processDbRequest(req.method, cleanUrl, body, true, req.headers['x-api-token']);
+          result = await processDbRequest(req.method, cleanUrl, body, true, req.headers['x-api-token'], {
+            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+          });
         }
         res.writeHead(result && result.unauthorized ? 401 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(result));

@@ -39,13 +39,13 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(type => `
         <tr class="${type.is_active === false ? 'row--inactive' : ''}">
-          <td class="font-bold">${type.name}</td>
-          <td><code>${type.code}</code></td>
-          <td>${type.sort_order ?? '-'}</td>
+          <td class="font-bold">${UI.escapeHTML(type.name)}</td>
+          <td><code>${UI.escapeHTML(type.code)}</code></td>
+          <td>${UI.escapeHTML(type.sort_order ?? '-')}</td>
           <td>${type.is_active === false ? '<span style="color:#64748b; font-weight:700;">無効</span>' : '<span style="color:#16a34a; font-weight:700;">有効</span>'}</td>
           <td>
-            <button class="btn btn-outline btn-sm btn-edit-bed-type" data-type-id="${type.id}"><i class="fas fa-edit"></i></button>
-            <button class="btn btn-outline btn-sm btn-toggle-bed-type" data-type-id="${type.id}" style="margin-left:4px;">${type.is_active === false ? '有効化' : '無効化'}</button>
+            <button class="btn btn-outline btn-sm btn-edit-bed-type" data-type-id="${UI.escapeHTML(type.id)}"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline btn-sm btn-toggle-bed-type" data-type-id="${UI.escapeHTML(type.id)}" style="margin-left:4px;">${type.is_active === false ? '有効化' : '無効化'}</button>
           </td>
         </tr>
       `).join('') || '<tr><td colspan="5" class="text-muted">病床タイプが登録されていません</td></tr>';
@@ -82,9 +82,9 @@ Object.assign(Settings, {
           <button class="modal-close-btn" id="bt-close"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
-          <div class="form-row"><label>表示名 <span style="color:#dc2626">*</span></label><input type="text" id="bt-name" value="${type?.name || ''}" placeholder="例: 一般"></div>
-          <div class="form-row"><label>コード <span style="color:#dc2626">*</span></label><input type="text" id="bt-code" value="${type?.code || ''}" placeholder="例: normal" ${isNew ? '' : 'disabled'}></div>
-          <div class="form-row"><label>並び順</label><input type="number" id="bt-sort" value="${type?.sort_order ?? 99}" placeholder="例: 1"></div>
+          <div class="form-row"><label>表示名 <span style="color:#dc2626">*</span></label><input type="text" id="bt-name" value="${UI.escapeHTML(type?.name || '')}" placeholder="例: 一般"></div>
+          <div class="form-row"><label>コード <span style="color:#dc2626">*</span></label><input type="text" id="bt-code" value="${UI.escapeHTML(type?.code || '')}" placeholder="例: normal" ${isNew ? '' : 'disabled'}></div>
+          <div class="form-row"><label>並び順</label><input type="number" id="bt-sort" value="${UI.escapeHTML(type?.sort_order ?? 99)}" placeholder="例: 1"></div>
           <div class="form-row">
             <label>状態</label>
             <select id="bt-active">
@@ -154,7 +154,7 @@ Object.assign(Settings, {
     body.innerHTML = `
       <div class="settings-panel">
         <div class="settings-panel-header">
-          <h3><i class="fas fa-bed"></i> 病床マスタ — ${wardName}</h3>
+          <h3><i class="fas fa-bed"></i> 病床マスタ — ${UI.escapeHTML(wardName)}</h3>
           <div style="display:flex; gap:8px;">
             <button class="btn btn-danger btn-sm" id="btn-delete-all-beds" title="この病棟の病床をすべて削除します">
               <i class="fas fa-trash-alt"></i> 全削除
@@ -261,16 +261,16 @@ Object.assign(Settings, {
 
     return `
       <tr>
-        <td class="font-bold">${rCode || '-'}</td>
-        <td class="font-bold">${bCode || '-'}</td>
-        <td style="color:#718096; font-size:11px;">${b.bed_number}</td>
-        <td><span class="bed-type-tag type-${typeClass}">${label}</span></td>
-        <td>${b.note || '-'}</td>
+        <td class="font-bold">${UI.escapeHTML(rCode || '-')}</td>
+        <td class="font-bold">${UI.escapeHTML(bCode || '-')}</td>
+        <td style="color:#718096; font-size:11px;">${UI.escapeHTML(b.bed_number)}</td>
+        <td><span class="bed-type-tag type-${UI.escapeHTML(typeClass)}">${UI.escapeHTML(label)}</span></td>
+        <td>${UI.escapeHTML(b.note || '-')}</td>
         <td>
-          <button class="btn btn-outline btn-sm btn-edit-bed" data-bed-id="${b.id}">
+          <button class="btn btn-outline btn-sm btn-edit-bed" data-bed-id="${UI.escapeHTML(b.id)}">
             <i class="fas fa-edit"></i>
           </button>
-          <button class="btn btn-danger btn-sm btn-delete-bed" data-bed-id="${b.id}" style="margin-left:4px;">
+          <button class="btn btn-danger btn-sm btn-delete-bed" data-bed-id="${UI.escapeHTML(b.id)}" style="margin-left:4px;">
             <i class="fas fa-trash"></i>
           </button>
         </td>
@@ -307,7 +307,7 @@ Object.assign(Settings, {
 
     const currentType = AppState.normalizeBedTypeCode(bed?.bed_type);
     const bedTypeOptions = (AppState.bedTypes || []).map(type => `
-              <option value="${type.code}" ${currentType === type.code ? 'selected' : ''}>${type.name}</option>
+              <option value="${UI.escapeHTML(type.code)}" ${currentType === type.code ? 'selected' : ''}>${UI.escapeHTML(type.name)}</option>
     `).join('');
 
     const overlay = document.createElement('div');
@@ -321,11 +321,11 @@ Object.assign(Settings, {
         <div class="modal-body">
           <div class="form-row">
             <label>病室コード <span style="color:#dc2626">*</span></label>
-            <input type="text" id="bf-room-code" value="${roomCode}" placeholder="例: 701">
+            <input type="text" id="bf-room-code" value="${UI.escapeHTML(roomCode)}" placeholder="例: 701">
           </div>
           <div class="form-row">
             <label>病床コード</label>
-            <input type="text" id="bf-bed-code" value="${bedCode}" placeholder="例: 1 (空欄可)">
+            <input type="text" id="bf-bed-code" value="${UI.escapeHTML(bedCode)}" placeholder="例: 1 (空欄可)">
           </div>
           <div class="form-row">
             <label>病床タイプ</label>
@@ -335,7 +335,7 @@ Object.assign(Settings, {
           </div>
           <div class="form-row">
             <label>備考</label>
-            <input type="text" id="bf-note" value="${bed?.note||''}" placeholder="メモ">
+            <input type="text" id="bf-note" value="${UI.escapeHTML(bed?.note || '')}" placeholder="メモ">
           </div>
         </div>
         <div class="modal-footer">
@@ -547,9 +547,9 @@ Object.assign(Settings, {
       el.innerHTML = '<div class="text-muted text-sm" style="padding:8px;">全病床が配置済みです</div>';
     } else {
       el.innerHTML = unplaced.map(b => `
-        <div class="palette-bed-item" draggable="true" data-bed-id="${b.id}">
-          <i class="fas fa-bed"></i> ${b.bed_number}
-          <span class="text-xs text-muted">${b.room_number || ''}</span>
+        <div class="palette-bed-item" draggable="true" data-bed-id="${UI.escapeHTML(b.id)}">
+          <i class="fas fa-bed"></i> ${UI.escapeHTML(b.bed_number)}
+          <span class="text-xs text-muted">${UI.escapeHTML(b.room_number || '')}</span>
         </div>
       `).join('');
     }
@@ -654,8 +654,8 @@ Object.assign(Settings, {
         <div class="map-cell-bed" draggable="true" data-col="${c}" data-row="${r}"
              title="右クリックで削除">
           <i class="fas fa-bed"></i>
-          <span>${bed ? bed.bed_number : '?'}</span>
-          ${bed?.room_number ? `<span class="map-cell-room">${bed.room_number}</span>` : ''}
+          <span>${bed ? UI.escapeHTML(bed.bed_number) : '?'}</span>
+          ${bed?.room_number ? `<span class="map-cell-room">${UI.escapeHTML(bed.room_number)}</span>` : ''}
         </div>`;
       extraCls = 'has-bed';
     } else if (cell?.special === 'corridor') {
@@ -904,18 +904,18 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(r => `
         <tr class="${r.is_active === false ? 'row--inactive' : ''}">
-          <td class="font-bold">${r.name}</td>
-          <td>${r.code}</td>
-          <td>${r.floor}</td>
+          <td class="font-bold">${UI.escapeHTML(r.name)}</td>
+          <td>${UI.escapeHTML(r.code)}</td>
+          <td>${UI.escapeHTML(r.floor || '')}</td>
           <td>
             ${r.phone
-              ? `<span class="phone-chip"><i class="fas fa-phone"></i> ${r.phone}</span>`
+              ? `<span class="phone-chip"><i class="fas fa-phone"></i> ${UI.escapeHTML(r.phone)}</span>`
               : '<span class="text-muted">未設定</span>'}
           </td>
-          <td class="text-sm text-muted">${r.note||'—'}</td>
+          <td class="text-sm text-muted">${UI.escapeHTML(r.note || '—')}</td>
           <td>${r.is_active !== false ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
           <td>
-            <button class="btn btn-outline btn-sm btn-edit-room" data-room-id="${r.id}">
+            <button class="btn btn-outline btn-sm btn-edit-room" data-room-id="${UI.escapeHTML(r.id)}">
               <i class="fas fa-edit"></i>
             </button>
           </td>
@@ -961,23 +961,23 @@ Object.assign(Settings, {
         <div class="modal-body">
           <div class="form-row">
             <label>検査室名 <span style="color:#dc2626">*</span></label>
-            <input type="text" id="rf-name" value="${room?.name||''}" placeholder="例: CT室">
+            <input type="text" id="rf-name" value="${UI.escapeHTML(room?.name || '')}" placeholder="例: CT室">
           </div>
           <div class="form-row">
             <label>コード <span style="color:#dc2626">*</span></label>
-            <input type="text" id="rf-code" value="${room?.code||''}" placeholder="例: CT">
+            <input type="text" id="rf-code" value="${UI.escapeHTML(room?.code || '')}" placeholder="例: CT">
           </div>
           <div class="form-row">
             <label>階</label>
-            <input type="text" id="rf-floor" value="${room?.floor||''}" placeholder="例: 2F">
+            <input type="text" id="rf-floor" value="${UI.escapeHTML(room?.floor || '')}" placeholder="例: 2F">
           </div>
           <div class="form-row">
             <label><i class="fas fa-phone"></i> 内線番号</label>
-            <input type="text" id="rf-phone" value="${room?.phone||''}" placeholder="例: 2001">
+            <input type="text" id="rf-phone" value="${UI.escapeHTML(room?.phone || '')}" placeholder="例: 2001">
           </div>
           <div class="form-row">
             <label>備考</label>
-            <input type="text" id="rf-note" value="${room?.note||''}" placeholder="メモ">
+            <input type="text" id="rf-note" value="${UI.escapeHTML(room?.note || '')}" placeholder="メモ">
           </div>
           <div class="form-row">
             <label>有効</label>
@@ -1068,14 +1068,14 @@ Object.assign(Settings, {
           <tbody>
             ${staffs.map(s => `
               <tr class="${s.is_active === false ? 'row--inactive' : ''}">
-                <td class="font-bold">${s.name}</td>
-                <td>${roleLabel[s.role]||s.role}</td>
+                <td class="font-bold">${UI.escapeHTML(s.name)}</td>
+                <td>${UI.escapeHTML(roleLabel[s.role] || s.role)}</td>
                 <td>${s.is_active !== false ? '<span style="color:#16a34a; font-weight:700;">有効</span>' : '<span style="color:#64748b; font-weight:700;">無効</span>'}</td>
                 <td>
-                  <button class="btn btn-outline btn-sm btn-edit-staff" data-staff-id="${s.id}">
+                  <button class="btn btn-outline btn-sm btn-edit-staff" data-staff-id="${UI.escapeHTML(s.id)}">
                     <i class="fas fa-edit"></i>
                   </button>
-                  <button class="btn btn-outline btn-sm btn-toggle-staff" data-staff-id="${s.id}" style="margin-left:4px;">
+                  <button class="btn btn-outline btn-sm btn-toggle-staff" data-staff-id="${UI.escapeHTML(s.id)}" style="margin-left:4px;">
                     ${s.is_active === false ? '有効化' : '無効化'}
                   </button>
                 </td>
@@ -1114,7 +1114,7 @@ Object.assign(Settings, {
         <div class="modal-body">
           <div class="form-row">
             <label>名前 <span style="color:#dc2626">*</span></label>
-            <input type="text" id="sf-name" value="${staff?.name||''}" placeholder="例: 田中 花子">
+            <input type="text" id="sf-name" value="${UI.escapeHTML(staff?.name || '')}" placeholder="例: 田中 花子">
           </div>
           <div class="form-row">
             <label>役職</label>
@@ -1576,15 +1576,15 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(t => `
         <tr class="${t.is_active === false ? 'row--inactive' : ''}">
-          <td class="font-bold">${t.name}</td>
-          <td>${t.code}</td>
-          <td>${t.standard_duration_min}分</td>
+          <td class="font-bold">${UI.escapeHTML(t.name)}</td>
+          <td>${UI.escapeHTML(t.code)}</td>
+          <td>${UI.escapeHTML(t.standard_duration_min)}分</td>
           <td>${t.is_active !== false ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
           <td>
-            <button class="btn btn-outline btn-sm btn-edit-exam-type" data-type-id="${t.id}">
+            <button class="btn btn-outline btn-sm btn-edit-exam-type" data-type-id="${UI.escapeHTML(t.id)}">
               <i class="fas fa-edit"></i>
             </button>
-            <button class="btn btn-outline btn-sm btn-toggle-exam-type" data-type-id="${t.id}" style="margin-left:4px;">
+            <button class="btn btn-outline btn-sm btn-toggle-exam-type" data-type-id="${UI.escapeHTML(t.id)}" style="margin-left:4px;">
               ${t.is_active === false ? '有効化' : '無効化'}
             </button>
           </td>
@@ -1637,15 +1637,15 @@ Object.assign(Settings, {
         <div class="modal-body">
           <div class="form-row">
             <label>検査種別名 <span style="color:#dc2626">*</span></label>
-            <input type="text" id="et-name" value="${type?.name||''}" placeholder="例: CT">
+            <input type="text" id="et-name" value="${UI.escapeHTML(type?.name || '')}" placeholder="例: CT">
           </div>
           <div class="form-row">
             <label>コード <span style="color:#dc2626">*</span></label>
-            <input type="text" id="et-code" value="${type?.code||''}" placeholder="例: CT">
+            <input type="text" id="et-code" value="${UI.escapeHTML(type?.code || '')}" placeholder="例: CT">
           </div>
           <div class="form-row">
             <label>標準所要時間 (分) <span style="color:#dc2626">*</span></label>
-            <input type="number" id="et-duration" value="${type?.standard_duration_min||''}" placeholder="例: 30">
+            <input type="number" id="et-duration" value="${UI.escapeHTML(type?.standard_duration_min || '')}" placeholder="例: 30">
           </div>
         </div>
         <div class="modal-footer">

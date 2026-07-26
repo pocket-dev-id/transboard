@@ -5,6 +5,7 @@
 const BedModal = {
   currentBedId: null,
   currentEventId: null,
+  currentEventStatus: null,
   _pendingFlash: false,
 
   open(bedId) {
@@ -14,13 +15,14 @@ const BedModal = {
 
     const event = AppState.getActiveEventForBed(bedId);
     this.currentEventId = event ? event.id : null;
+    this.currentEventStatus = event ? event.current_status : null;
 
     const overlay = document.getElementById('bed-modal-overlay');
     const title = document.getElementById('modal-title');
     const body = document.getElementById('modal-body');
     const footer = document.getElementById('modal-footer');
 
-    title.innerHTML = `${UI.formatBedName(bed)}号床`;
+    title.innerHTML = `${UI.escapeHTML(UI.formatBedName(bed))}号床`;
     overlay.classList.remove('hidden');
 
     // 在室管理モード判定
@@ -132,6 +134,19 @@ const BedModal = {
     document.getElementById('bed-modal-overlay').classList.add('hidden');
     this.currentBedId = null;
     this.currentEventId = null;
+    this.currentEventStatus = null;
+  },
+
+  _getModalEventExpectedStatus(event) {
+    return this.currentEventStatus || event?.current_status || null;
+  },
+
+  async _handleEventPatchConflict(err) {
+    if (await App.handleDataConflict(err)) {
+      this.close();
+      return true;
+    }
+    return false;
   },
 
   // 手動モード用: 患者情報バナー（在室登録/編集導線）
@@ -166,16 +181,16 @@ const BedModal = {
 
   _renderDepartForm(bed) {
     const examTypeOptions = AppState.examTypes.map(t =>
-      `<option value="${t.id}">${t.name}（標準${t.standard_duration_min}分）</option>`
+      `<option value="${UI.escapeHTML(t.id)}">${UI.escapeHTML(t.name)}（標準${UI.escapeHTML(t.standard_duration_min)}分）</option>`
     ).join('');
 
     const examRoomOptions = AppState.examRooms.map(r =>
-      `<option value="${r.id}">${r.name}（${r.floor}）</option>`
+      `<option value="${UI.escapeHTML(r.id)}">${UI.escapeHTML(r.name)}（${UI.escapeHTML(r.floor || '')}）</option>`
     ).join('');
 
     const staffOptions = `<option value="">（なし）</option>` +
       AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s =>
-        `<option value="${s.id}">${s.name}</option>`
+        `<option value="${UI.escapeHTML(s.id)}">${UI.escapeHTML(s.name)}</option>`
       ).join('');
 
     // 患者IC登録設定が有効かどうか
@@ -290,12 +305,13 @@ const BedModal = {
     
     if (isIcEnabled && event.current_status !== 'RETURNED' && event.current_status !== 'CANCELLED') {
       const currentIcTag = event.patient_ic_tag_id || '';
+      const currentIcTagHtml = UI.escapeHTML(currentIcTag);
       icRegistrationHtml = `
         <div class="divider"></div>
         <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:#718096;"><i class="fas fa-id-card"></i> 患者ICカード（スキャン）登録</div>
         <div style="background:#f7fafc; border:1px solid #cbd5e0; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;">
           <div style="display:flex; gap:8px; align-items:center;">
-            <input type="text" id="m-ic-tag-id" value="${currentIcTag}" placeholder="スキャン口（カードをかざしてください）" style="flex:1; padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px;">
+            <input type="text" id="m-ic-tag-id" value="${currentIcTagHtml}" placeholder="スキャン口（カードをかざしてください）" style="flex:1; padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px;">
             <button class="btn btn-primary" id="btn-update-ic-tag" style="padding: 6px 12px; font-size: 13px; font-weight: bold; width: auto; height: auto;">登録</button>
             ${currentIcTag ? `<button class="btn btn-danger" id="btn-clear-ic-tag" style="padding: 6px 12px; font-size: 13px; font-weight: bold; width: auto; height: auto; background:#ef4444; border-color:#ef4444; color:#fff;">解除</button>` : ''}
           </div>
@@ -324,17 +340,17 @@ const BedModal = {
         <div class="modal-info-grid">
           <div class="modal-info-item">
             <div class="label">検査種別</div>
-            <div class="value">${examType ? examType.name : '--'}</div>
+            <div class="value">${examType ? UI.escapeHTML(examType.name) : '--'}</div>
           </div>
           <div class="modal-info-item">
             <div class="label">行き先検査室</div>
-            <div class="value">${examRoom ? examRoom.name : '--'}</div>
+            <div class="value">${examRoom ? UI.escapeHTML(examRoom.name) : '--'}</div>
           </div>
           <div class="modal-info-item">
             <div class="label">付き添い看護師</div>
             <div class="value" style="display:flex; align-items:center; gap:4px;">
               <select id="m-escort-staff" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px; font-weight: bold; width: 120px;">
-                ${`<option value="">（なし）</option>` + AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s => `<option value="${s.id}" ${event.escort_staff_id === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+                ${`<option value="">（なし）</option>` + AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s => `<option value="${UI.escapeHTML(s.id)}" ${event.escort_staff_id === s.id ? 'selected' : ''}>${UI.escapeHTML(s.name)}</option>`).join('')}
               </select>
               <button class="btn btn-primary" id="btn-update-escort-staff" style="padding: 3px 6px; font-size: 11px; width: auto; height: auto; min-width: 0; line-height: 1;">変更</button>
             </div>
@@ -353,7 +369,7 @@ const BedModal = {
           <div class="modal-info-item" style="grid-column: span 2; border-top: 1px dashed rgba(0,0,0,0.06); padding-top: 8px; margin-top: 4px;">
             <div class="label" style="margin-bottom:4px;">備考（車椅子・ストレッチャー等）</div>
             <div class="value" style="display:flex; align-items:center; gap:8px; width: 100%;">
-              <input type="text" id="m-event-note" value="${event.note || ''}" placeholder="備考を入力" style="flex: 1; padding: 4px 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 12.5px; font-weight: bold;">
+              <input type="text" id="m-event-note" value="${UI.escapeHTML(event.note || '')}" placeholder="備考を入力" style="flex: 1; padding: 4px 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 12.5px; font-weight: bold;">
               <button class="btn btn-primary" id="btn-update-event-note" style="padding: 6px 12px; font-size: 12px; font-weight: bold; width: auto; height: auto; min-width: 0; line-height: 1.2;">変更</button>
             </div>
           </div>
@@ -482,7 +498,11 @@ const BedModal = {
           date.setHours(hh, mm, 0, 0);
           const newEstimated = date.getTime();
 
-          await API.patch('transfer_events', event.id, { estimated_pickup_at: newEstimated });
+          await API.patchEventFields(
+            event.id,
+            { estimated_pickup_at: newEstimated },
+            this._getModalEventExpectedStatus(event)
+          );
           UI.toast('迎え目安を変更しました', 'success');
           
           await App.refreshData();
@@ -504,6 +524,7 @@ const BedModal = {
           }
         } catch (err) {
           console.error(err);
+          if (await this._handleEventPatchConflict(err)) return;
           UI.toast('時間の変更に失敗しました', 'danger');
           updateTimeBtn.disabled = false;
           updateTimeBtn.innerHTML = '変更';
@@ -523,7 +544,11 @@ const BedModal = {
         updateStaffBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
         try {
-          await API.patch('transfer_events', event.id, { escort_staff_id: newStaffId });
+          await API.patchEventFields(
+            event.id,
+            { escort_staff_id: newStaffId },
+            this._getModalEventExpectedStatus(event)
+          );
           UI.toast('付き添い看護師を変更しました', 'success');
           
           await App.refreshData();
@@ -543,6 +568,7 @@ const BedModal = {
           }
         } catch (err) {
           console.error(err);
+          if (await this._handleEventPatchConflict(err)) return;
           UI.toast('付き添い看護師の変更に失敗しました', 'danger');
           updateStaffBtn.disabled = false;
           updateStaffBtn.innerHTML = '変更';
@@ -561,7 +587,11 @@ const BedModal = {
         updateNoteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
         try {
-          await API.patch('transfer_events', event.id, { note: newNote });
+          await API.patchEventFields(
+            event.id,
+            { note: newNote },
+            this._getModalEventExpectedStatus(event)
+          );
           UI.toast('備考を更新しました', 'success');
           
           await App.refreshData();
@@ -581,6 +611,7 @@ const BedModal = {
           }
         } catch (err) {
           console.error(err);
+          if (await this._handleEventPatchConflict(err)) return;
           UI.toast('備考の更新に失敗しました', 'danger');
           updateNoteBtn.disabled = false;
           updateNoteBtn.innerHTML = '変更';
@@ -607,7 +638,11 @@ const BedModal = {
         }
 
         try {
-          await API.patch('transfer_events', event.id, { patient_ic_tag_id: icValue });
+          await API.patchEventFields(
+            event.id,
+            { patient_ic_tag_id: icValue },
+            this._getModalEventExpectedStatus(event)
+          );
           UI.toast('患者ICカードを登録しました', 'success');
           UI.playScanSound(true);
           this._pendingFlash = true;
@@ -631,6 +666,7 @@ const BedModal = {
           }
         } catch (err) {
           console.error(err);
+          if (await this._handleEventPatchConflict(err)) return;
           UI.toast('ICカードの登録に失敗しました', 'danger');
           UI.playScanSound(false);
           if (updateIcBtn) {
@@ -663,7 +699,11 @@ const BedModal = {
           clearIcBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
           try {
-            await API.patch('transfer_events', event.id, { patient_ic_tag_id: null });
+            await API.patchEventFields(
+              event.id,
+              { patient_ic_tag_id: null },
+              this._getModalEventExpectedStatus(event)
+            );
             UI.toast('患者ICカードの紐づけを解除しました', 'success');
             UI.playScanSound(true);
             this._pendingFlash = true;
@@ -686,6 +726,7 @@ const BedModal = {
             }
           } catch (err) {
             console.error(err);
+            if (await this._handleEventPatchConflict(err)) return;
             UI.toast('ICカード紐づけの解除に失敗しました', 'danger');
             UI.playScanSound(false);
             clearIcBtn.disabled = false;
@@ -746,7 +787,7 @@ const BedModal = {
       await API.addStatusLog(eventId, null, 'DEPART_REGISTERED', 'nurse');
 
       if (confirm('ステータスを移動中にしますか？')) {
-        await API.updateEventStatus(eventId, 'MOVING');
+        await API.updateEventStatus(eventId, 'MOVING', {}, CONFIG.STATUS_SCOPE.WARD, 'DEPART_REGISTERED');
         UI.toast(`${bed.bed_number}号床を移動中にしました`, 'success');
       } else {
         UI.toast(`${bed.bed_number}号床の出棟を登録しました`, 'success');
@@ -765,6 +806,10 @@ const BedModal = {
       }
     } catch (e) {
       console.error(e);
+      if (await App.handleDataConflict(e, '他端末で出棟登録済みです。最新状態に更新します。')) {
+        this.close();
+        return;
+      }
       UI.toast('登録に失敗しました: ' + e.message, 'danger');
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-paper-plane"></i> 出棟登録';
@@ -774,7 +819,11 @@ const BedModal = {
   async _updateStatus(newStatus) {
     if (!this.currentEventId) return;
     const event = AppState.activeEvents.find(e => e.id === this.currentEventId);
-    if (!event) return;
+    if (!event) {
+      await App.handleDataConflict({ conflict: true, message: '他端末で更新済みです。最新状態に更新します。' });
+      this.close();
+      return;
+    }
     const bed = AppState.getBedById(event.bed_id);
 
     // キャンセルの場合は確認ダイアログを表示する
@@ -793,7 +842,13 @@ const BedModal = {
       if (newStatus === 'RETURNED' || newStatus === 'CANCELLED') {
         extraFields.patient_ic_tag_id = null;
       }
-      await API.updateEventStatus(this.currentEventId, newStatus, extraFields);
+      await API.updateEventStatus(
+        this.currentEventId,
+        newStatus,
+        extraFields,
+        CONFIG.STATUS_SCOPE.WARD,
+        this.currentEventStatus || event.current_status
+      );
       const label = CONFIG.STATUS_LABEL[newStatus];
       UI.toast(`${bed ? bed.bed_number + '号床' : ''} → ${label}`, 'success');
       this.close();
@@ -810,6 +865,10 @@ const BedModal = {
       }
     } catch (e) {
       console.error(e);
+      if (await App.handleDataConflict(e)) {
+        this.close();
+        return;
+      }
       UI.toast('更新に失敗しました', 'danger');
     }
   },

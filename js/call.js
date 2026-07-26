@@ -376,6 +376,7 @@ const CallPanel = {
   // ── コール選択ダイアログ (音声通話 or 定型アナウンス) ──
   showCallSelectionDialog(targetId) {
     const targetName = this.getNameById(targetId);
+    const targetNameHtml = UI.escapeHTML(targetName);
     
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
@@ -383,6 +384,7 @@ const CallPanel = {
     const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
     const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
     const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     // 定型文リストの構築 (データベースから動的に取得)
     const myName = this.getNameById(this.getMyId());
@@ -432,9 +434,9 @@ const CallPanel = {
     `;
 
     const templateBtns = templates.map((t, idx) => `
-      <button class="btn btn-sm btn-outline btn-send-announcement" data-text="${t}" style="font-size:11.5px; padding:8px 10px; text-align:left; white-space:normal; line-height:1.2; width:100%; display:flex; align-items:center; gap:6px;">
+      <button class="btn btn-sm btn-outline btn-send-announcement" data-text="${UI.escapeHTML(t)}" style="font-size:11.5px; padding:8px 10px; text-align:left; white-space:normal; line-height:1.2; width:100%; display:flex; align-items:center; gap:6px;">
         <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
-        <span>${t}</span>
+        <span>${UI.escapeHTML(t)}</span>
       </button>
     `).join('');
 
@@ -445,7 +447,7 @@ const CallPanel = {
       <div class="phone-dialog" role="dialog" style="border-color: #3b82f6; max-width: 360px;">
         <div class="phone-dialog-header" style="background: #3b82f6; color: white;">
           <i class="fas fa-phone-alt"></i>
-          <span>連絡方法の選択: ${targetName}</span>
+          <span>連絡方法の選択: ${targetNameHtml}</span>
           <button class="phone-dialog-close" id="webrtc-btn-close-selection"><i class="fas fa-times"></i></button>
         </div>
         <div class="phone-dialog-body" style="padding: 16px; display:flex; flex-direction:column; gap:16px;">
@@ -508,7 +510,7 @@ const CallPanel = {
           ${phoneNum ? `
           <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center;">
             <div style="font-size: 10px; color: #64748b;">(固定電話からかける場合の内線番号)</div>
-            <div style="font-size: 18px; font-weight: 800; color: #1e293b; margin-top: 2px;">内線 ${phoneNum}</div>
+            <div style="font-size: 18px; font-weight: 800; color: #1e293b; margin-top: 2px;">内線 ${phoneNumHtml}</div>
           </div>
           ` : ''}
 
@@ -656,6 +658,7 @@ const CallPanel = {
 
   showIncomingCallDialog(callerId, offerSdp) {
     const callerName = this.getNameById(callerId);
+    const callerNameHtml = UI.escapeHTML(callerName);
     
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
@@ -674,7 +677,7 @@ const CallPanel = {
           <span>${isVideo ? 'ビデオ通話着信' : '通話着信'}</span>
         </div>
         <div class="phone-dialog-body" style="text-align: center; padding: 24px 16px;">
-          <div style="font-size: 22px; font-weight: bold; margin-bottom: 8px; color: #1e293b;">${callerName}</div>
+          <div style="font-size: 22px; font-weight: bold; margin-bottom: 8px; color: #1e293b;">${callerNameHtml}</div>
           <div style="color: #3b82f6; font-size: 13px; font-weight: bold; animation: pulse 1.5s infinite;">
             ${isVideo ? '内線ビデオ通話を着信中...' : '内線音声通話を着信中...'}
           </div>
@@ -980,12 +983,14 @@ const CallPanel = {
 
   showCallingDialog(targetId) {
     const targetName = this.getNameById(targetId);
+    const targetNameHtml = UI.escapeHTML(targetName);
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
     const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
     const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
     const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     const overlay = document.createElement('div');
     overlay.id = 'webrtc-call-overlay';
@@ -999,8 +1004,8 @@ const CallPanel = {
         <div class="phone-dialog-body" style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
           <!-- 相手情報・ステータス -->
           <div style="text-align: center;">
-            <div style="font-size: 20px; font-weight: bold; color: #1e293b;" id="webrtc-call-target-name">${targetName}</div>
-            ${phoneNum ? `<div style="font-size: 11px; color: #64748b; margin-top: 2px;">(内線番号: ${phoneNum})</div>` : ''}
+            <div style="font-size: 20px; font-weight: bold; color: #1e293b;" id="webrtc-call-target-name">${targetNameHtml}</div>
+            ${phoneNum ? `<div style="font-size: 11px; color: #64748b; margin-top: 2px;">(内線番号: ${phoneNumHtml})</div>` : ''}
             <div id="webrtc-call-status-label" style="color: #3b82f6; font-size: 13px; font-weight: bold; margin-top: 6px; animation: pulse 1.5s infinite;">
               <i class="fas fa-phone-volume"></i> 呼び出し中...
             </div>
@@ -1036,6 +1041,7 @@ const CallPanel = {
 
   showConnectedDialog(targetId) {
     const targetName = this.getNameById(targetId);
+    const targetNameHtml = UI.escapeHTML(targetName);
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
@@ -1073,7 +1079,7 @@ const CallPanel = {
 
           <!-- 相手情報・ステータス -->
           <div style="text-align: center;">
-            <div style="font-size: 18px; font-weight: bold; color: #1e293b;" id="webrtc-call-target-name">${targetName}</div>
+            <div style="font-size: 18px; font-weight: bold; color: #1e293b;" id="webrtc-call-target-name">${targetNameHtml}</div>
             <div id="webrtc-call-status-label" style="font-size: 11px; font-weight: bold; color: #16a34a; margin-top: 2px;">通話中</div>
             <div id="webrtc-call-duration" style="font-size: 20px; color: #16a34a; font-weight: 800; font-family: monospace; margin-top: 2px;">00:00</div>
           </div>

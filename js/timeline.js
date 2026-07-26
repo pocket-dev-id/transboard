@@ -116,11 +116,12 @@ const TimelineContextMenu = {
         TimelinePopup.hide();
         const newStatus = btn.dataset.to;
         try {
-          await API.updateEventStatus(event.id, newStatus);
+          await API.updateEventStatus(event.id, newStatus, {}, CONFIG.STATUS_SCOPE.WARD, event.current_status);
           await App.refreshData();
           Timeline.render();
           UI.toast(`${bedName}: ${CONFIG.STATUS_LABEL?.[newStatus] || newStatus} に更新しました`, 'success');
         } catch (err) {
+          if (await App.handleDataConflict(err)) return;
           UI.toast('ステータスの変更に失敗しました', 'danger');
         }
       });

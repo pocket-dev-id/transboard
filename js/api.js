@@ -215,35 +215,62 @@ const API = {
   },
 
   async createEvent(data) {
-    return this.create('transfer_events', data);
+    const result = await this.create('transfer_events', data);
+    if (result && result.success === false) {
+      const err = new Error(result.message || 'Event creation failed');
+      err.conflict = !!result.conflict;
+      err.conflictType = result.conflictType || '';
+      err.currentStatus = result.currentStatus || null;
+      err.existingEventId = result.existingEventId || null;
+      throw err;
+    }
+    return result;
   },
 
-  async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD) {
+  async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD, expectedStatus = null) {
     const result = await this._fetch('status/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId, newStatus, extraFields, scope }),
+      body: JSON.stringify({ eventId, newStatus, extraFields, scope, expectedStatus }),
     });
     if (result && result.success === false) {
-      throw new Error(result.message || 'Status update failed');
+      const err = new Error(result.message || 'Status update failed');
+      err.conflict = !!result.conflict;
+      err.conflictType = result.conflictType || '';
+      err.expectedStatus = result.expectedStatus || expectedStatus || null;
+      err.currentStatus = result.currentStatus || null;
+      err.event = result.event || null;
+      throw err;
     }
     return result;
   },
 
   /* ---------- 操作監査ログ (データ #2) ---------- */
+  async patchEventFields(eventId, fields = {}, expectedStatus = null) {
+    const payload = expectedStatus ? { ...fields, expectedStatus } : { ...fields };
+    const result = await this.patch('transfer_events', eventId, payload);
+    if (result && result.success === false) {
+      const err = new Error(result.message || 'Event update failed');
+      err.conflict = !!result.conflict;
+      err.conflictType = result.conflictType || '';
+      err.expectedStatus = result.expectedStatus || expectedStatus || null;
+      err.currentStatus = result.currentStatus || null;
+      err.event = result.event || null;
+      throw err;
+    }
+    return result;
+  },
+
   async writeAuditLog(action, { targetType = '', targetId = null, staffId = null, details = {} } = {}) {
     try {
-      await this.create('audit_logs', {
-        id: `al-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        action,
-        target_type: targetType,
-        target_id: targetId,
-        staff_id: staffId,
-        details: JSON.stringify(details),
-        created_at: Date.now(),
+      return await this._fetch('audit/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, targetType, targetId, staffId, details }),
       });
     } catch (e) {
       console.warn('[AuditLog] 書き込み失敗:', e);
+      return { success: false, skipped: true, message: e.message };
     }
   },
 

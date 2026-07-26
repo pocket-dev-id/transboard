@@ -144,6 +144,30 @@ const BedMap = {
     this.applyFilter();
   },
 
+  _hasTodayScheduleForBed(bed) {
+    const patientId = String(bed?.patient_id || '').trim();
+    if (!patientId) return false;
+
+    const wardId = AppState.currentWardId;
+    const feedsById = new Map(
+      (AppState.scheduleFeeds || []).map(feed => [String(feed.id), feed])
+    );
+
+    return (AppState.scheduleItems || []).some(item => {
+      if (String(item?.identifier || '').trim() !== patientId) return false;
+
+      const feedId = item?.feed_id == null ? '' : String(item.feed_id);
+      const feed = feedId ? feedsById.get(feedId) : null;
+      if (feedId && !feed) return false;
+      if (feed?.show_on_bed_map === false) return false;
+
+      const wardIds = Array.isArray(feed?.ward_ids)
+        ? feed.ward_ids
+        : (Array.isArray(item?.ward_ids) ? item.ward_ids : []);
+      return wardIds.length === 0 || !wardId || wardIds.includes(wardId);
+    });
+  },
+
   _renderBedCard(bed) {
     const event = AppState.getActiveEventForBed(bed.id);
     
@@ -223,6 +247,10 @@ const BedMap = {
       }
     }
 
+    const scheduleBadgeHtml = this._hasTodayScheduleForBed(bed)
+      ? '<div class="bed-schedule-badge" style="background:#f5f3ff; color:#6d28d9; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border:1px solid #ddd6fe; margin-bottom:2px;" title="本日スケジュールあり"><i class="fas fa-calendar-check"></i></div>'
+      : '';
+
     // 患者情報の表示部分の作成 (マスク適用時は直接 "＊＊＊＊" に置き換え)
     const nameChk = document.getElementById('chk-show-patient-names');
     const showNames = nameChk ? nameChk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');
@@ -274,6 +302,7 @@ const BedMap = {
           ${staffHtml}
           ${icBadgeHtml}
           ${remarksHtml}
+          ${scheduleBadgeHtml}
         </div>
         ${patientHtml}
       </div>

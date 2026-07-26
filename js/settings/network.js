@@ -60,8 +60,8 @@ Object.assign(Settings, {
         if (ips && ips.length > 0) {
           ipListHtml = ips.map(ip => `
             <li>
-              <strong>${ip.name}:</strong> 
-              <code style="background:#edf2f7; padding:2px 6px; border-radius:4px; font-weight:800; font-family:monospace; font-size:12px;">${ip.address}</code>
+              <strong>${UI.escapeHTML(ip.name)}:</strong>
+              <code style="background:#edf2f7; padding:2px 6px; border-radius:4px; font-weight:800; font-family:monospace; font-size:12px;">${UI.escapeHTML(ip.address)}</code>
             </li>
           `).join('');
         } else {
@@ -199,11 +199,11 @@ Object.assign(Settings, {
             </h4>
             <div class="form-row" style="margin-bottom:12px;">
               <label>親機PCのIPアドレス / ホスト名</label>
-              <input type="text" id="cfg-parent-ip" placeholder="例: 192.168.1.15" style="width:100%; max-width:300px; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${currentParentIp}">
+              <input type="text" id="cfg-parent-ip" placeholder="例: 192.168.1.15" style="width:100%; max-width:300px; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${UI.escapeHTML(currentParentIp)}">
             </div>
             <div class="form-row" style="margin-bottom:12px;">
               <label>APIトークン <span style="color:#dc2626">*</span></label>
-              <input type="text" id="cfg-api-token" placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力" style="width:100%; max-width:420px; padding:8px; border:1px solid #cbd5e0; border-radius:6px; font-family:monospace; font-size:12px;" value="${localStorage.getItem('cfg_api_token') || ''}">
+              <input type="text" id="cfg-api-token" placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力" style="width:100%; max-width:420px; padding:8px; border:1px solid #cbd5e0; border-radius:6px; font-family:monospace; font-size:12px;" value="${UI.escapeHTML(localStorage.getItem('cfg_api_token') || '')}">
               <p style="font-size:11px; color:#718096; margin:4px 0 0 0;">患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</p>
             </div>
             <div style="display:flex; gap:8px;">
@@ -233,7 +233,7 @@ Object.assign(Settings, {
             <div style="margin-top:14px; padding-top:14px; border-top:1px dashed #fca5a5;">
               <label style="font-size:12px; font-weight:700; color:#991b1b;">APIトークン（患者情報保護用・子機に設定する値）</label>
               <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
-                <input type="text" id="cfg-api-token-display" readonly style="flex:1; max-width:420px; padding:8px; border:1px solid #fca5a5; border-radius:6px; font-family:monospace; font-size:12px; background:#fef2f2;" value="${AppState.systemSettings?.find(s => s.id === 'api_token')?.value || '(初回起動時に自動生成されます)'}">
+                <input type="text" id="cfg-api-token-display" readonly style="flex:1; max-width:420px; padding:8px; border:1px solid #fca5a5; border-radius:6px; font-family:monospace; font-size:12px; background:#fef2f2;" value="${UI.escapeHTML(AppState.systemSettings?.find(s => s.id === 'api_token')?.value || '(初回起動時に自動生成されます)')}">
                 <button class="btn btn-outline btn-sm" id="btn-copy-api-token" title="コピー"><i class="fas fa-copy"></i></button>
                 <button class="btn btn-outline btn-sm" id="btn-regen-api-token" title="再生成（全子機で再設定が必要になります）"><i class="fas fa-sync-alt"></i></button>
               </div>
@@ -248,7 +248,7 @@ Object.assign(Settings, {
               <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; font-weight:800;">個別設定（PCごと）</span>
             </h4>
             <div style="font-size:12px; color:#4a5568; margin-bottom:8px;">
-              現在のバージョン: <b>v${AppState.appVersion || '-'}</b>
+              現在のバージョン: <b>v${UI.escapeHTML(AppState.appVersion || '-')}</b>
             </div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-auto-update-check" ${localStorage.getItem('cfg_auto_update_check') !== 'false' ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
@@ -442,7 +442,7 @@ Object.assign(Settings, {
                 <div>
                   <strong>ユーザー専用フォルダ（デフォルト）</strong>
                   <div style="font-size:11px; color:#718096; margin-top:2px;">現在のWindowsログインユーザーのみに適用されます。</div>
-                  <div style="font-size:10px; color:#a0aec0; font-family:monospace; margin-top:2px; word-break:break-all;">パス: ${storageInfo.userPath}</div>
+                  <div style="font-size:10px; color:#a0aec0; font-family:monospace; margin-top:2px; word-break:break-all;">パス: ${UI.escapeHTML(storageInfo.userPath)}</div>
                 </div>
               </label>
               <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px; margin-top:8px;">
@@ -450,7 +450,7 @@ Object.assign(Settings, {
                 <div>
                   <strong>全ユーザー共有フォルダ（ProgramData）</strong>
                   <div style="font-size:11px; color:#718096; margin-top:2px;">このPCを使用するすべてのWindowsログインユーザーで設定・データを共有します。</div>
-                  <div style="font-size:10px; color:#a0aec0; font-family:monospace; margin-top:2px; word-break:break-all;">パス: ${storageInfo.commonPath}</div>
+                  <div style="font-size:10px; color:#a0aec0; font-family:monospace; margin-top:2px; word-break:break-all;">パス: ${UI.escapeHTML(storageInfo.commonPath)}</div>
                 </div>
               </label>
             </div>
@@ -520,6 +520,26 @@ Object.assign(Settings, {
         </div>
       </div>
     `;
+
+    if (isClientMode) {
+      const passcodeInput = body.querySelector('#cfg-admin-passcode');
+      if (passcodeInput) {
+        passcodeInput.value = '';
+        passcodeInput.disabled = true;
+        passcodeInput.placeholder = '親機で変更してください';
+        passcodeInput.style.background = '#f8fafc';
+        passcodeInput.style.color = '#64748b';
+      }
+      const passcodeSection = body.querySelector('#admin-passcode-section .form-row');
+      if (passcodeSection && !body.querySelector('#client-passcode-note')) {
+        passcodeSection.insertAdjacentHTML('afterbegin', `
+          <div id="client-passcode-note" style="margin-bottom:10px; padding:10px 12px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; color:#1e40af; font-size:12px; line-height:1.5;">
+            <i class="fas fa-info-circle"></i>
+            パスコードは親機・子機で共通です。変更は親機の設定画面で行ってください。
+          </div>
+        `);
+      }
+    }
 
     body.querySelectorAll('.settings-guide-card').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -831,7 +851,8 @@ Object.assign(Settings, {
       const fontStyle = document.getElementById('cfg-font-style').value;
       const bedCardSize = document.getElementById('cfg-bed-card-size').value;
       const themeStyle = document.getElementById('cfg-theme').value;
-      const adminPasscodeRaw = document.getElementById('cfg-admin-passcode').value.trim();
+      const isClientSave = mode === 'client' || mode === 'child';
+      const adminPasscodeRaw = isClientSave ? '' : (document.getElementById('cfg-admin-passcode')?.value || '').trim();
       const eventRetentionDaysVal = document.getElementById('cfg-event-retention-days')?.value || '0';
 
       if (mode === 'client' && !parentIp) {
@@ -842,6 +863,10 @@ Object.assign(Settings, {
       // パスコードをSHA-256でハッシュ化して保存 (セキュリティ #3)
       let adminPasscode = '';
       if (adminPasscodeRaw) {
+        if (typeof PasscodeHash !== 'undefined' && PasscodeHash.isWeakRaw(adminPasscodeRaw)) {
+          UI.toast('パスコードは6桁以上で、連番・同一数字のみ・推測されやすい値は避けてください', 'warning');
+          return;
+        }
         adminPasscode = typeof PasscodeHash !== 'undefined'
           ? await PasscodeHash.hash(adminPasscodeRaw)
           : adminPasscodeRaw;
@@ -869,16 +894,22 @@ Object.assign(Settings, {
             window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: parentIp }) } }),
           ]);
         }
-        await Promise.all([
+        const sharedUpdates = [
           API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
           API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
           API.patch('system_settings', 'default_zoom', { value: defaultZoom }),
           API.patch('system_settings', 'font_style', { value: fontStyle }),
           API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
           API.patch('system_settings', 'theme_style', { value: themeStyle }),
-          ...(adminPasscode ? [API.patch('system_settings', 'admin_passcode', { value: adminPasscode })] : []),
           API.patch('system_settings', 'event_retention_days', { value: eventRetentionDaysVal }),
-        ]);
+        ];
+        if (!isClientSave && adminPasscode) {
+          sharedUpdates.push(API.patch('system_settings', 'admin_passcode', { value: adminPasscode }));
+        }
+        const sharedResults = isClientSave
+          ? await Promise.allSettled(sharedUpdates)
+          : await Promise.all(sharedUpdates).then(() => []);
+        const sharedFailed = sharedResults.some(result => result.status === 'rejected');
 
         // AppStateのシステム設定も更新
         const updateSetting = (id, val) => {
@@ -886,21 +917,27 @@ Object.assign(Settings, {
           if (obj) obj.value = val;
           else AppState.systemSettings.push({ id, value: val });
         };
-        updateSetting('enable_webrtc_call', enableWebRtcCall);
-        updateSetting('enable_patient_ic_association', enablePatientIc);
-        updateSetting('default_zoom', defaultZoom);
-        updateSetting('font_style', fontStyle);
-        updateSetting('bed_card_size', bedCardSize);
-        updateSetting('theme_style', themeStyle);
-        if (adminPasscode) updateSetting('admin_passcode', adminPasscode);
-        updateSetting('event_retention_days', eventRetentionDaysVal);
+        if (!sharedFailed) {
+          updateSetting('enable_webrtc_call', enableWebRtcCall);
+          updateSetting('enable_patient_ic_association', enablePatientIc);
+          updateSetting('default_zoom', defaultZoom);
+          updateSetting('font_style', fontStyle);
+          updateSetting('bed_card_size', bedCardSize);
+          updateSetting('theme_style', themeStyle);
+          if (adminPasscode) updateSetting('admin_passcode', adminPasscode);
+          updateSetting('event_retention_days', eventRetentionDaysVal);
+        }
 
         // 即座に変更を適用する
         if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
           App.applySystemVisualSettings();
         }
 
-        UI.toast('設定を保存しました。画面表示設定は即時適用され、ネットワーク共有設定は再起動後に有効になります。', 'success');
+        if (isClientSave && sharedFailed) {
+          UI.toast('この端末の接続・表示設定は保存しました。親機共通設定は接続または権限の問題で反映できませんでした。', 'warning', 8000);
+        } else {
+          UI.toast('設定を保存しました。画面表示設定は即時適用され、ネットワーク共有設定は再起動後に有効になります。', 'success');
+        }
         
         // 再起動アラートの提示
         if (await UI.confirmModal('設定を完全に反映するためには、アプリケーションの再起動が必要です。今すぐ再起動しますか？', { confirmLabel: '再起動' })) {
