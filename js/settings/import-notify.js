@@ -108,6 +108,12 @@ Object.assign(Settings, {
       : window.electronAPI?.runOdbcSync?.(config);
   },
 
+  _previewParentOdbcQuery(config) {
+    return this._isChildTerminal()
+      ? this._parentAction('odbc-preview', config, { timeoutMs: 30000 })
+      : window.electronAPI?.previewOdbcQuery?.(config);
+  },
+
   _reloadParentScheduleFeedTriggers() {
     return this._isChildTerminal()
       ? this._parentAction('reload-schedule-feed-triggers')
@@ -399,12 +405,18 @@ Object.assign(Settings, {
                 <!-- ⑤ テスト・同期 -->
                 <div class="odbc-section" style="border:none; padding-bottom:0;">
                   <div style="display:flex; gap:8px;">
+                    <button class="btn btn-outline btn-sm" id="btn-odbc-preview" style="flex:1;">
+                      <i class="fas fa-eye"></i> プレビュー
+                    </button>
                     <button class="btn btn-outline btn-sm" id="btn-odbc-test" style="flex:1;">
                       <i class="fas fa-vial"></i> 接続テスト
                     </button>
                     <button class="btn btn-primary btn-sm" id="btn-odbc-sync" style="flex:1;">
                       <i class="fas fa-sync"></i> 今すぐ同期
                     </button>
+                  </div>
+                  <div id="odbc-query-preview" class="odbc-preview-empty">
+                    <i class="fas fa-eye"></i> プレビューで先頭15件を確認できます。
                   </div>
                   <div id="odbc-test-result" style="margin-top:8px; font-size:12px; min-height:18px;"></div>
                 </div>
@@ -839,6 +851,48 @@ Object.assign(Settings, {
     };
 
     // DSN一覧を初回ロード
+    document.getElementById('btn-odbc-preview')?.addEventListener('click', async () => {
+      const btn = document.getElementById('btn-odbc-preview');
+      const previewEl = document.getElementById('odbc-query-preview');
+      const conn = document.getElementById('cfg-odbc-conn')?.value?.trim();
+      const query = document.getElementById('cfg-odbc-query')?.value?.trim();
+      if (!conn || !query) {
+        UI.toast('接続文字列とSQLクエリを入力してください', 'warning');
+        return;
+      }
+
+      btn.disabled = true;
+      const oldHtml = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 確認中...';
+      if (previewEl) previewEl.innerHTML = '<div class="odbc-preview-loading"><i class="fas fa-spinner fa-spin"></i> 取得中...</div>';
+
+      try {
+        const res = await this._previewParentOdbcQuery({ connectionString: conn, sqlQuery: query });
+        if (!previewEl) return;
+        if (!res?.success) {
+          previewEl.innerHTML = `<div class="odbc-preview-error"><i class="fas fa-times-circle"></i> ${UI.escapeHTML(res?.message || 'プレビューを取得できませんでした').replace(/\n/g, '<br>')}</div>`;
+          return;
+        }
+        if (!res.rows?.length) {
+          previewEl.innerHTML = '<div class="odbc-preview-empty"><i class="fas fa-inbox"></i> 取得結果は0件でした。</div>';
+          return;
+        }
+        const columns = Array.isArray(res.columns) && res.columns.length ? res.columns : Object.keys(res.rows[0] || {});
+        const theadHtml = `<tr>${columns.map(c => `<th>${UI.escapeHTML(c)}</th>`).join('')}</tr>`;
+        const tbodyHtml = res.rows.map(row => `<tr>${columns.map(c => `<td>${UI.escapeHTML(row[c] ?? '')}</td>`).join('')}</tr>`).join('');
+        previewEl.innerHTML = `
+          <div class="odbc-preview-grid-wrap">
+            <table class="odbc-preview-grid"><thead>${theadHtml}</thead><tbody>${tbodyHtml}</tbody></table>
+          </div>
+          <div class="odbc-preview-count">${res.rows.length}件を表示${res.truncated ? '（先頭15件のみ）' : ''}</div>`;
+      } catch (e) {
+        if (previewEl) previewEl.innerHTML = `<div class="odbc-preview-error">${UI.escapeHTML(e.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = oldHtml;
+      }
+    });
+
     _loadDsnList();
 
     // ODBC接続テストボタンイベント

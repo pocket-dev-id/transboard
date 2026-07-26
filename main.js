@@ -1639,32 +1639,57 @@ function enforceReadOnlyConnectionString(connStr) {
   return { valid: true, connectionString: finalConnStr };
 }
 
-async function getOdbcTablesOnParent({ connectionString }) {
-  if (!connectionString) return { success: false, error: '接続文字列が指定されていません', tables: [] };
-  const safe = String(connectionString).replace(/'/g, '').slice(0, 500);
+function execOdbcPowerShell(connectionString, scriptBody, timeoutMs = 15000) {
+  const safe = String(connectionString).slice(0, 500).replace(/'/g, "''");
   const ps = `
 $ErrorActionPreference = 'Stop'
 try {
   Add-Type -AssemblyName System.Data
   $conn = New-Object System.Data.Odbc.OdbcConnection('${safe}')
   $conn.Open()
-  $schema = $conn.GetSchema('Tables')
+${scriptBody}
   $conn.Close()
-  $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
-    Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
-    Sort-Object type, name)
-  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }
 } catch {
   Write-Output "ERROR:$($_.Exception.Message)"
 }`.trim();
 
   try {
     const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', timeout: 15000 }).trim();
+      { encoding: 'utf8', timeout: timeoutMs }).trim();
     if (!out || out.startsWith('ERROR:')) {
-      return { success: false, error: out ? out.slice(6) : 'テーブル情報を取得できませんでした', tables: [] };
+      return { success: false, error: out ? out.slice(6) : '接続に失敗しました' };
     }
-    const raw = JSON.parse(out);
+    return { success: true, output: out };
+  } catch (e) {
+    if (e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {
+      return {
+        success: false,
+        error: `処理がタイムアウトしました（${Math.round(timeoutMs / 1000)}秒）。データベースの応答が遅いか、ネットワーク/権限の問題が考えられます。`
+      };
+    }
+    return { success: false, error: e.message };
+  }
+}
+
+async function getOdbcTablesOnParent({ connectionString }) {
+  if (!connectionString) return { success: false, error: '接続文字列が指定されていません', tables: [] };
+  const connResult = enforceReadOnlyConnectionString(connectionString);
+  if (!connResult.valid) {
+    return { success: false, error: connResult.message, tables: [] };
+  }
+
+  const result = execOdbcPowerShell(connResult.connectionString, `
+  $schema = $conn.GetSchema('Tables')
+  $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
+    Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
+    Sort-Object type, name)
+  if ($items.Count -eq 0) { Write-Output '[]' } else { $items | ConvertTo-Json -Compress }`, 25000);
+  if (!result.success) {
+    const hint = 'テーブル一覧の取得に失敗しました。ODBCドライバがテーブル一覧の取得に対応していないか、データベースアカウントにメタデータ参照権限がない可能性があります。手動入力も利用できます。';
+    return { success: false, error: `${hint}\n詳細: ${result.error}`, tables: [] };
+  }
+  try {
+    const raw = JSON.parse(result.output);
     const tables = (Array.isArray(raw) ? raw : [raw]).map(r => ({ name: r.name, type: r.type }));
     return { success: true, tables };
   } catch (e) {
@@ -1708,8 +1733,6 @@ function getOdbcDsnsOnParent() {
 ipcMain.handle('get-odbc-dsns', () => getOdbcDsnsOnParent());
 
 async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
   // 接続文字列の検証 & 読み取り専用属性の付与
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
@@ -1726,15 +1749,55 @@ async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
   if (!finalConnStr || !finalConnStr.includes('DSN=')) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。例: DSN=EMR_DB;UID=admin;PWD=pass;' };
   }
-  return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済])' };
+
+  const result = execOdbcPowerShell(finalConnStr, "  Write-Output 'OK'", 15000);
+  if (!result.success) {
+    return { success: false, message: 'ODBCデータベース接続テストに失敗しました: ' + result.error };
+  }
+  return { success: true, message: 'ODBCデータベース接続テストに成功しました。(接続先: ' + finalConnStr.split(';')[0] + ' [読み取り専用: 強制適用済、実接続確認済])' };
 }
 
-// IPC通信でODBCデータベース接続テストを行う（シミュレーション）
+// IPC通信でODBCデータベース接続テストを行う
 ipcMain.handle('test-odbc-connection', (event, config) => testOdbcConnectionOnParent(config || {}));
 
+function buildOdbcRowFetchScript(sqlQuery, maxRows = null) {
+  const safeQuery = String(sqlQuery).replace(/'/g, "''");
+  const breakCheck = maxRows ? `if ($rows.Count -ge ${maxRows}) { $hasMore = $true; break }` : '';
+  return `
+  $cmd = $conn.CreateCommand()
+  $cmd.CommandText = '${safeQuery}'
+  $cmd.CommandTimeout = 25
+  $reader = $cmd.ExecuteReader()
+  $cols = @()
+  for ($i = 0; $i -lt $reader.FieldCount; $i++) { $cols += $reader.GetName($i) }
+  $rows = New-Object System.Collections.ArrayList
+  $hasMore = $false
+  while ($reader.Read()) {
+    ${breakCheck}
+    $obj = [ordered]@{}
+    foreach ($c in $cols) {
+      $v = $reader[$c]
+      if ($v -is [DBNull]) { $obj[$c] = '' } else { $obj[$c] = "$v" }
+    }
+    [void]$rows.Add((New-Object PSObject -Property $obj))
+  }
+  $reader.Close()
+  $result = [ordered]@{ columns = @($cols); rows = @($rows); truncated = $hasMore }
+  $result | ConvertTo-Json -Compress -Depth 6`;
+}
+
+function parseOdbcRows(output) {
+  const parsed = JSON.parse(output);
+  const rows = Array.isArray(parsed.rows) ? parsed.rows : (parsed.rows ? [parsed.rows] : []);
+  const columns = Array.isArray(parsed.columns) ? parsed.columns : (parsed.columns ? [parsed.columns] : []);
+  return {
+    columns,
+    rows,
+    truncated: !!parsed.truncated,
+  };
+}
+
 async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
-  await new Promise(resolve => setTimeout(resolve, 1200));
-  
   // 接続文字列の検証 & 読み取り専用属性の付与
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
@@ -1752,61 +1815,61 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
   }
 
-  const db = readDB();
-  const mappingSetting = db.system_settings?.find(s => s.id === 'import_mapping');
-  let mapping = { bed_number: '', room_code: '', bed_code: '', join_char: '-', patient_id: '', patient_name: '', is_present: '' };
-  if (mappingSetting && mappingSetting.value) {
-    try { mapping = JSON.parse(mappingSetting.value); } catch(e) {}
+  const result = execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, null), 30000);
+  if (!result.success) {
+    return { success: false, message: 'ODBC同期に失敗しました: ' + result.error };
   }
-  
-  const mapBed = mapping.bed_number || 'bed_number';
-  const mapRoomCode = mapping.room_code || '';
-  const mapBedCode = mapping.bed_code || '';
-  const mapPatId = mapping.patient_id || 'patient_id';
-  const mapPatName = mapping.patient_name || 'patient_name';
-  const mapPresent = mapping.is_present || 'is_present';
 
-  const mockRows = [];
-  const japaneseNames = ['佐藤 健一', '鈴木 美紀', '高橋 浩', '田中 明美', '渡辺 恵子', '伊藤 淳', '山本 正史', '中村 幸子', '小林 茂', '加藤 陽子'];
-  
-  const beds = db.beds || [];
-  beds.forEach((bed, index) => {
-    const row = {};
-    
-    // Determine bed identification columns
-    if (mapRoomCode && mapBedCode) {
-      row[mapRoomCode] = bed.room_code || bed.room_number || '';
-      row[mapBedCode] = bed.bed_code || '';
-    } else {
-      row[mapBed] = bed.bed_number || '';
-    }
-    
-    // Generate occupied or empty status (70% occupied)
-    const isOccupied = (index % 3 !== 0); 
-    if (isOccupied) {
-      row[mapPatId] = `P${100000 + index}`;
-      row[mapPatName] = japaneseNames[index % japaneseNames.length];
-      row[mapPresent] = '在床';
-    } else {
-      row[mapPatId] = '';
-      row[mapPatName] = '空床';
-      row[mapPresent] = '不在';
-    }
-    mockRows.push(row);
-  });
+  let rows;
+  try {
+    rows = parseOdbcRows(result.output).rows;
+  } catch (e) {
+    return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
+  }
 
   if (mainWindow) {
     mainWindow.webContents.send('data-imported', {
-      fileName: 'ODBC DB Sync (Simulated - ReadOnly)',
-      rows: mockRows
+      fileName: `ODBC同期 (${new Date().toLocaleString('ja-JP')})`,
+      rows
     });
   }
   
-  return { success: true, count: mockRows.length };
+  return { success: true, count: rows.length };
 }
 
-// IPC通信でODBC直接同期を実行する（シミュレーション）
+// IPC通信でODBC直接同期を実行する
 ipcMain.handle('run-odbc-sync', (event, config) => runOdbcSyncOnParent(config || {}));
+
+async function previewOdbcQueryOnParent({ connectionString, sqlQuery } = {}) {
+  const connResult = enforceReadOnlyConnectionString(connectionString);
+  if (!connResult.valid) {
+    return { success: false, message: connResult.message };
+  }
+  const finalConnStr = connResult.connectionString;
+
+  const queryResult = validateReadOnlyQuery(sqlQuery);
+  if (!queryResult.valid) {
+    return { success: false, message: queryResult.message };
+  }
+
+  if (!finalConnStr || !finalConnStr.includes('DSN=')) {
+    return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
+  }
+
+  const result = execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, 15), 20000);
+  if (!result.success) {
+    return { success: false, message: 'プレビューの取得に失敗しました: ' + result.error };
+  }
+
+  try {
+    return { success: true, ...parseOdbcRows(result.output) };
+  } catch (e) {
+    return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
+  }
+}
+
+// IPC通信でODBCクエリのプレビューを取得する。本番データには書き込まない。
+ipcMain.handle('preview-odbc-query', (event, config) => previewOdbcQueryOnParent(config || {}));
 
 // IPC通信で出棟中（進行中）の移送情報をリセットする
 ipcMain.handle('reset-database', () => {
@@ -3138,8 +3201,20 @@ function redactPatientData(dbObj) {
   return clone;
 }
 
+const EXPORT_REDACTED_SETTING_IDS = [...SENSITIVE_SETTING_IDS, 'admin_passcode'];
+function redactCredentials(dbObj) {
+  if (Array.isArray(dbObj.system_settings)) {
+    dbObj.system_settings.forEach(s => {
+      if (EXPORT_REDACTED_SETTING_IDS.includes(s.id) && s.value) {
+        s.value = '[REDACTED]';
+      }
+    });
+  }
+  return dbObj;
+}
+
 // IPC通信でデータベースをバックアップファイルとして保存する
-// mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報を除去）
+// mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報・認証情報を除去）
 ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } = {}) => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
   if (mode === 'encrypted' && !password) {
@@ -3153,28 +3228,30 @@ ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } 
   });
   if (!filePath) return { success: false, message: 'Cancelled' };
   try {
-    // 現在のDBファイル（暗号化済みの可能性あり）を復号して平文JSONを取得
-    const rawFileContent = fs.readFileSync(DB_FILE, 'utf8');
-    const plaintextJson = decryptDbFileContent(rawFileContent);
+    const dbObj = readDB();
 
     let outputContent;
     if (mode === 'redacted') {
-      const dbObj = JSON.parse(plaintextJson);
-      outputContent = JSON.stringify(redactPatientData(dbObj), null, 2);
+      outputContent = JSON.stringify(redactCredentials(redactPatientData(dbObj)), null, 2);
     } else {
-      outputContent = encryptBackupContent(plaintextJson, password);
+      outputContent = encryptBackupContent(JSON.stringify(dbObj), password);
     }
     fs.writeFileSync(filePath, outputContent, 'utf8');
-    {
-      const db = readDB();
-      appendAuditLog(db, 'BACKUP_EXPORT', {
-        targetType: 'database',
-        targetId: mode,
-        actorType: 'local_ui',
-        details: { mode, fileName: path.basename(filePath) },
-      });
-      writeDB(db);
+
+    dbObj.system_settings = dbObj.system_settings || [];
+    const backupTsSetting = dbObj.system_settings.find(s => s.id === 'last_backup_at');
+    if (backupTsSetting) {
+      backupTsSetting.value = String(Date.now());
+    } else {
+      dbObj.system_settings.push({ id: 'last_backup_at', value: String(Date.now()) });
     }
+    appendAuditLog(dbObj, 'BACKUP_EXPORT', {
+      targetType: 'database',
+      targetId: mode,
+      actorType: 'local_ui',
+      details: { mode, fileName: path.basename(filePath) },
+    });
+    writeDB(dbObj);
     return { success: true, filePath };
   } catch (err) {
     console.error('[DB Backup Error]', err);
@@ -3286,6 +3363,84 @@ ipcMain.handle('get-archive-info', () => {
     return { exists: true, count: files.length, path: archiveDir };
   } catch (err) {
     return { exists: false, count: 0, error: err.message };
+  }
+});
+
+// IPC通信で保守画面向けの概況情報を返す
+ipcMain.handle('get-db-info', () => {
+  const db = readDB();
+  let fileSizeBytes = 0;
+  try { fileSizeBytes = fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0; } catch {}
+  const lastBackupSetting = db.system_settings?.find(s => s.id === 'last_backup_at');
+  return {
+    appVersion: app.getVersion(),
+    dbPath: DB_FILE,
+    fileSizeBytes,
+    counts: {
+      transfer_events: (db.transfer_events || []).length,
+      transfer_status_logs: (db.transfer_status_logs || []).length,
+      audit_logs: (db.audit_logs || []).length,
+      import_logs: (db.import_logs || []).length,
+      calls: (db.calls || []).length,
+      beds: (db.beds || []).length,
+      wards: (db.wards || []).length,
+    },
+    lastBackupAt: lastBackupSetting?.value ? Number(lastBackupSetting.value) : null,
+  };
+});
+
+// IPC通信でトラブルシューティング用の診断情報を1ファイルに出力する
+ipcMain.handle('export-diagnostics-bundle', async () => {
+  if (!mainWindow) return { success: false, message: 'Window not found' };
+  const { filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: '診断情報の保存',
+    defaultPath: `transboard_diagnostics_${new Date().toISOString().slice(0, 10)}.txt`,
+    filters: [{ name: 'Text Files', extensions: ['txt'] }]
+  });
+  if (!filePath) return { success: false, message: 'Cancelled' };
+
+  try {
+    const db = readDB();
+    let fileSizeBytes = 0;
+    try { fileSizeBytes = fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0; } catch {}
+
+    const importLogsTail = (db.import_logs || []).slice(-30);
+    const redactedForDiag = redactCredentials(redactPatientData({ import_logs: importLogsTail }));
+
+    let debugLogTail = '(debug.logはまだありません)';
+    try {
+      const logPath = getDebugLogPath();
+      if (fs.existsSync(logPath)) {
+        const lines = fs.readFileSync(logPath, 'utf-8').split('\n');
+        debugLogTail = lines.slice(-200).join('\n');
+      }
+    } catch (e) {
+      debugLogTail = `(debug.logの読み込みに失敗: ${e.message})`;
+    }
+
+    const shareMode = db.system_settings?.find(s => s.id === 'share_mode')?.value || 'parent';
+    const lines = [
+      '=== TransBoard 診断情報バンドル ===',
+      `出力日時: ${new Date().toISOString()}`,
+      `アプリバージョン: ${app.getVersion()}`,
+      `OS: ${os.platform()} ${os.release()} (${os.arch()})`,
+      `ホスト名: ${os.hostname()}`,
+      `稼働モード: ${shareMode}`,
+      `DBパス: ${DB_FILE}`,
+      `DBファイルサイズ: ${fileSizeBytes} bytes`,
+      `テーブル件数: transfer_events=${(db.transfer_events || []).length}, transfer_status_logs=${(db.transfer_status_logs || []).length}, audit_logs=${(db.audit_logs || []).length}, import_logs=${(db.import_logs || []).length}, calls=${(db.calls || []).length}, beds=${(db.beds || []).length}, wards=${(db.wards || []).length}`,
+      '',
+      '=== 直近の取り込みログ（最大30件、患者情報は除去済み） ===',
+      JSON.stringify(redactedForDiag.import_logs || [], null, 2),
+      '',
+      '=== debug.log（直近200行） ===',
+      debugLogTail,
+    ];
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+    return { success: true, filePath };
+  } catch (err) {
+    console.error('[Diagnostics Export Error]', err);
+    return { success: false, message: err.message };
   }
 });
 
@@ -3506,6 +3661,8 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
       return appendParentActionAudit(action, await getOdbcTablesOnParent(payload), requestMeta);
     case 'odbc-test':
       return appendParentActionAudit(action, await testOdbcConnectionOnParent(payload), requestMeta);
+    case 'odbc-preview':
+      return appendParentActionAudit(action, await previewOdbcQueryOnParent(payload), requestMeta);
     case 'odbc-sync':
       return appendParentActionAudit(action, await runOdbcSyncOnParent(payload), requestMeta);
     case 'schedule-feed-import':
@@ -3613,7 +3770,14 @@ function startParentServer() {
       try {
         let result;
         if (cleanUrl.startsWith('webrtc/')) {
-          result = processWebrtcRequest(req.method, cleanUrl, body);
+          const wdb = readDB();
+          const expectedToken = (wdb.system_settings || []).find(s => s.id === 'api_token')?.value || '';
+          if (expectedToken && req.headers['x-api-token'] !== expectedToken) {
+            console.warn('[Security] WebRTCシグナリングのAPIトークン認証失敗');
+            result = { success: false, message: 'Unauthorized', unauthorized: true };
+          } else {
+            result = processWebrtcRequest(req.method, cleanUrl, body);
+          }
         } else if (cleanUrl === 'audit/write') {
           result = processAuditWriteRequest(req.method, body, true, req.headers['x-api-token'], {
             remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),

@@ -19,6 +19,7 @@ const SETTINGS_TAB_DEFS = {
   schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
   notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
   network: ['fa-network-wired', '共有・ネットワーク設定', 'terminal', '端末'],
+  maintenance: ['fa-toolbox', 'システム保守', 'terminal', '端末'],
 };
 
 const SETTINGS_TAB_GROUPS = {
@@ -26,11 +27,12 @@ const SETTINGS_TAB_GROUPS = {
     ['端末・接続', ['network', 'notifications']],
     ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
+    ['保守', ['maintenance']],
   ],
   parent: [
     ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
-    ['端末・接続/保守', ['network', 'notifications']],
+    ['端末・接続/保守', ['network', 'notifications', 'maintenance']],
   ],
 };
 
@@ -40,7 +42,7 @@ const SETTINGS_TAB_CATEGORIES = {
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
-  notifications: 'terminal', network: 'terminal',
+  notifications: 'terminal', network: 'terminal', maintenance: 'mixed',
 };
 
 const SETTINGS_CATEGORY_META = {
@@ -62,6 +64,12 @@ const SETTINGS_CATEGORY_META = {
     title: '親機専用機能',
     parentDesc: 'この機能は親機でのみ実行されます。',
     childDesc: '実際の処理（ファイル監視・取り込み）は親機で実行されます。設定自体は子機からも変更できます。',
+  },
+  mixed: {
+    icon: 'fa-layer-group',
+    cls: 'settings-category-banner--mixed',
+    title: '適用範囲が項目ごとに異なります',
+    desc: 'このタブには「この端末のみ」「親機専用」「全端末に同期」の設定が混在します。各項目の見出しにあるバッジで適用範囲を確認してください。',
   },
 };
 
@@ -233,6 +241,7 @@ const Settings = {
       speech_templates: '_renderSpeechTemplates',
       schedule_feeds: '_renderScheduleFeeds',
       network: '_renderNetworkSettings',
+      maintenance: '_renderMaintenanceSettings',
       status_customize: '_renderStatusCustomize',
     };
     const renderer = renderers[this._activeTab];

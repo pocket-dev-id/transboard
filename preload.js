@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
    // ODBC同期の実行
   runOdbcSync: (config) => ipcRenderer.invoke('run-odbc-sync', config),
+  previewOdbcQuery: (config) => ipcRenderer.invoke('preview-odbc-query', config),
   
   // 親機PC自身のローカルIPアドレス一覧を取得する
   getLocalIPs: () => ipcRenderer.invoke('get-local-ips'),
@@ -64,6 +65,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   changeDatabaseStorageMode: (mode) => ipcRenderer.invoke('change-database-storage-mode', mode),
   getEncryptionStatus: () => ipcRenderer.invoke('get-encryption-status'),
   getArchiveInfo: () => ipcRenderer.invoke('get-archive-info'),
+  getDbInfo: () => ipcRenderer.invoke('get-db-info'),
+  exportDiagnosticsBundle: () => ipcRenderer.invoke('export-diagnostics-bundle'),
 
   // NFC カードスキャン
   onCardScanned: (callback) => {
