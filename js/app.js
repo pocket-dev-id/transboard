@@ -1590,7 +1590,7 @@ const App = {
       const events = await API.getActiveEvents(AppState.currentWardId);
       for (const e of events) {
         if (CONFIG.ACTIVE_STATUSES.includes(e.current_status)) {
-          await API.patch('transfer_events', e.id, { current_status: 'RETURNED', returned_at: Date.now() });
+          await API.completeEventForMaintenance(e.id, e.current_status);
         }
       }
     } catch (err) {

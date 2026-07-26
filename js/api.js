@@ -132,6 +132,9 @@ const API = {
   },
 
   async patch(table, id, data) {
+    if (table === 'transfer_events' && data?.current_status === 'RETURNED') {
+      return this.completeEventForMaintenance(id, data.expectedStatus || null);
+    }
     return this._fetch(`tables/${table}/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -235,6 +238,30 @@ const API = {
     });
     if (result && result.success === false) {
       const err = new Error(result.message || 'Status update failed');
+      err.conflict = !!result.conflict;
+      err.conflictType = result.conflictType || '';
+      err.expectedStatus = result.expectedStatus || expectedStatus || null;
+      err.currentStatus = result.currentStatus || null;
+      err.event = result.event || null;
+      throw err;
+    }
+    return result;
+  },
+
+  async completeEventForMaintenance(eventId, expectedStatus = null) {
+    const result = await this._fetch('status/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventId,
+        newStatus: 'RETURNED',
+        scope: CONFIG.STATUS_SCOPE.WARD,
+        expectedStatus,
+        maintenance: true,
+      }),
+    });
+    if (result && result.success === false) {
+      const err = new Error(result.message || 'Maintenance completion failed');
       err.conflict = !!result.conflict;
       err.conflictType = result.conflictType || '';
       err.expectedStatus = result.expectedStatus || expectedStatus || null;

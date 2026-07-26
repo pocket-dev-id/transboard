@@ -2134,13 +2134,18 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
 
   const current = list[index];
   const fromStatus = current.current_status || null;
+  const maintenanceComplete = (
+    payload.maintenance === true &&
+    newStatus === 'RETURNED' &&
+    ACTIVE_TRANSFER_STATUSES.has(fromStatus)
+  );
   if (expectedStatus && fromStatus !== expectedStatus) {
     return statusMismatchConflictResponse(expectedStatus, current);
   }
   if (fromStatus === newStatus) {
     return { success: true, idempotent: true, event: current };
   }
-  if (!isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
+  if (!maintenanceComplete && !isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
     return {
       success: false,
       message: `Invalid status transition: ${fromStatus} -> ${newStatus}`,
@@ -2157,6 +2162,9 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     RETURNED: 'returned_at',
   };
   const patch = { current_status: newStatus, ...extraFields };
+  if (maintenanceComplete) {
+    patch.patient_ic_tag_id = null;
+  }
   if (statusTimeMap[newStatus]) {
     patch[statusTimeMap[newStatus]] = now;
   }
@@ -2199,7 +2207,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     result: 'success',
     before: summarizeAuditRecord('transfer_events', current),
     after: summarizeAuditRecord('transfer_events', list[index]),
-    details: { fromStatus, toStatus: newStatus, scope },
+    details: { fromStatus, toStatus: newStatus, scope, maintenance: maintenanceComplete },
   });
 
   if (!writeDB(db)) {
@@ -2211,7 +2219,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     processWebrtcRequest('POST', 'webrtc/send', JSON.stringify(speechMsg));
   }
 
-  console.log(`[Status] Updated: id=${eventId}, ${fromStatus} -> ${newStatus}, scope=${scope}`);
+  console.log(`[Status] Updated: id=${eventId}, ${fromStatus} -> ${newStatus}, scope=${scope}${maintenanceComplete ? ', maintenance=true' : ''}`);
   return list[index];
 }
 
