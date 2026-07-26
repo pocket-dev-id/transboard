@@ -7,6 +7,7 @@ const WardDashboard = {
     BedMap.render();
     Priority.renderSummary();
     Priority.renderPriorityList();
+    if (typeof StaffStatus !== 'undefined') StaffStatus.render();
     Timeline.render();
     if (typeof Handover !== 'undefined') Handover.render();
   },
@@ -118,7 +119,7 @@ const PasscodeModal = {
     const note = document.querySelector('#passcode-modal-body label');
     if (note) {
       note.textContent = setup
-        ? '初期パスコードのままでは設定画面を開けません。6桁以上の新しいパスコードを設定してください。'
+        ? '初期パスコードのままでは設定画面を開けません。6文字以上の新しいパスコードを設定してください。'
         : '設定画面を開くにはパスコードを入力してください。';
     }
     if (input) {
@@ -254,7 +255,7 @@ const PasscodeModal = {
     const errMsg = document.getElementById('passcode-error-msg');
     if (PasscodeHash.isWeakRaw(inputVal)) {
       if (errMsg) {
-        errMsg.textContent = '6桁以上で、連番・同一数字のみ・推測されやすい値は避けてください';
+        errMsg.textContent = '6文字以上で、連番・同一数字のみ・推測されやすい値は避けてください';
         errMsg.style.display = 'block';
       }
       return;

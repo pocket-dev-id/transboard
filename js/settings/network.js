@@ -81,13 +81,13 @@ Object.assign(Settings, {
     const modeGuideItems = isClientMode
       ? [
           ['fa-plug', '親機への接続', '親機IP・APIトークン・接続テストを確認します。', 'client-config-section'],
-          ['fa-desktop', 'この端末の表示', '画面サイズ、通知音、自動更新など、このPCだけの設定を調整します。', 'terminal-behavior-section'],
-          ['fa-globe', '全体共通設定', '病棟・病床・ステータスなど、親機配下の全端末に反映される設定です。', 'settings-tab-body'],
+          ['fa-phone-alt', '通話・IC連携', 'WebRTC通話と患者ICカード紐づけの共有設定を確認します。', 'shared-communication-section'],
+          ['fa-network-wired', '通信状態', '子機として親機に接続できるか確認します。', 'client-config-section'],
         ]
       : [
           ['fa-server', '子機接続の準備', '子機へ伝えるIP、APIトークン、接続機器一覧を確認します。', 'parent-config-section'],
-          ['fa-file-import', '親機で実行する処理', '取り込み、スケジュール、更新配信、バックアップは親機で管理します。', 'update-section'],
-          ['fa-lock', '共通パスコード', '設定画面を開くための親機・子機共通パスコードを管理します。', 'admin-passcode-section'],
+          ['fa-phone-alt', '通話・IC連携', 'WebRTC通話と患者ICカード紐づけの共有設定を管理します。', 'shared-communication-section'],
+          ['fa-laptop-medical', '接続端末', '現在接続している子機を確認します。', 'parent-config-section'],
         ];
     const modeGuideHtml = `
       <div class="settings-panel settings-role-guide" style="margin-bottom:16px;">
@@ -280,7 +280,7 @@ Object.assign(Settings, {
           </div>
 
           <!-- WebRTC通話機能の有効/無効設定 -->
-          <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
+          <div id="shared-communication-section" style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-phone-alt"></i> WebRTC音声通話機能の設定
               <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
@@ -392,8 +392,8 @@ Object.assign(Settings, {
               <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
             </h4>
             <div class="form-row" style="margin-top:10px;">
-              <label style="font-size:12.5px; font-weight:700; color:#4a5568;">管理者パスコード（数字4桁など）</label>
-              <input type="password" id="cfg-admin-passcode" placeholder="${adminPasscode ? '●●●● (変更する場合のみ入力)' : '例: 0000'}" style="width:100%; max-width:200px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700;">
+              <label style="font-size:12.5px; font-weight:700; color:#4a5568;">管理者パスコード（6文字以上）</label>
+              <input type="password" id="cfg-admin-passcode" placeholder="${adminPasscode ? '変更する場合のみ入力' : '6文字以上で入力'}" style="width:100%; max-width:200px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700;">
               <div style="font-size:11px; color:#718096; margin-top:4px;">
                 ※設定画面を開くための親機・子機共通パスコードです。空欄のまま保存すると現在のパスコードを維持します。パスコードはSHA-256でハッシュ化して保存され、同じ親機配下の端末へ同期されます。
               </div>
@@ -520,6 +520,8 @@ Object.assign(Settings, {
         </div>
       </div>
     `;
+
+    this._removeMovedNetworkSections(body);
 
     if (isClientMode) {
       const passcodeInput = body.querySelector('#cfg-admin-passcode');
@@ -843,43 +845,21 @@ Object.assign(Settings, {
     const saveNetworkBtn = body.querySelector('#btn-save-network');
     if (saveNetworkBtn) saveNetworkBtn.onclick = async () => {
       const mode = body.querySelector('input[name="network-mode"]:checked').value;
-      const parentIp = document.getElementById('cfg-parent-ip').value.trim();
-      const apiToken = document.getElementById('cfg-api-token')?.value.trim() || '';
-      const enableWebRtcCall = document.getElementById('cfg-enable-webrtc-call').checked ? 'true' : 'false';
-      const enablePatientIc = document.getElementById('cfg-enable-patient-ic').checked ? 'true' : 'false';
-      const defaultZoom = document.getElementById('cfg-default-zoom').value;
-      const fontStyle = document.getElementById('cfg-font-style').value;
-      const bedCardSize = document.getElementById('cfg-bed-card-size').value;
-      const themeStyle = document.getElementById('cfg-theme').value;
+      const parentIp = body.querySelector('#cfg-parent-ip')?.value.trim() || '';
+      const apiToken = body.querySelector('#cfg-api-token')?.value.trim() || '';
+      const enableWebRtcCall = body.querySelector('#cfg-enable-webrtc-call')?.checked ? 'true' : 'false';
+      const enablePatientIc = body.querySelector('#cfg-enable-patient-ic')?.checked ? 'true' : 'false';
       const isClientSave = mode === 'client' || mode === 'child';
-      const adminPasscodeRaw = isClientSave ? '' : (document.getElementById('cfg-admin-passcode')?.value || '').trim();
-      const eventRetentionDaysVal = document.getElementById('cfg-event-retention-days')?.value || '0';
 
       if (mode === 'client' && !parentIp) {
         UI.toast('接続先の親機IPアドレスを入力してください', 'warning');
         return;
       }
 
-      // パスコードをSHA-256でハッシュ化して保存 (セキュリティ #3)
-      let adminPasscode = '';
-      if (adminPasscodeRaw) {
-        if (typeof PasscodeHash !== 'undefined' && PasscodeHash.isWeakRaw(adminPasscodeRaw)) {
-          UI.toast('パスコードは6桁以上で、連番・同一数字のみ・推測されやすい値は避けてください', 'warning');
-          return;
-        }
-        adminPasscode = typeof PasscodeHash !== 'undefined'
-          ? await PasscodeHash.hash(adminPasscodeRaw)
-          : adminPasscodeRaw;
-      }
-
-      // localStorageへ保存（起動時の同期ロードおよび端末個別用）
+      // localStorageへ保存（起動時の同期ロード用）
       localStorage.setItem('cfg_share_mode', mode);
       localStorage.setItem('cfg_parent_ip', parentIp);
       localStorage.setItem('cfg_api_token', apiToken);
-      localStorage.setItem('cfg_app_zoom', defaultZoom);
-      localStorage.setItem('cfg_font_style', fontStyle);
-      localStorage.setItem('cfg_bed_card_size', bedCardSize);
-      localStorage.setItem('cfg_theme_style', themeStyle);
 
       // マスタDB側にも設定値（互換性保存）を反映
       try {
@@ -897,15 +877,7 @@ Object.assign(Settings, {
         const sharedUpdates = [
           API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
           API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
-          API.patch('system_settings', 'default_zoom', { value: defaultZoom }),
-          API.patch('system_settings', 'font_style', { value: fontStyle }),
-          API.patch('system_settings', 'bed_card_size', { value: bedCardSize }),
-          API.patch('system_settings', 'theme_style', { value: themeStyle }),
-          API.patch('system_settings', 'event_retention_days', { value: eventRetentionDaysVal }),
         ];
-        if (!isClientSave && adminPasscode) {
-          sharedUpdates.push(API.patch('system_settings', 'admin_passcode', { value: adminPasscode }));
-        }
         const sharedResults = isClientSave
           ? await Promise.allSettled(sharedUpdates)
           : await Promise.all(sharedUpdates).then(() => []);
@@ -920,23 +892,12 @@ Object.assign(Settings, {
         if (!sharedFailed) {
           updateSetting('enable_webrtc_call', enableWebRtcCall);
           updateSetting('enable_patient_ic_association', enablePatientIc);
-          updateSetting('default_zoom', defaultZoom);
-          updateSetting('font_style', fontStyle);
-          updateSetting('bed_card_size', bedCardSize);
-          updateSetting('theme_style', themeStyle);
-          if (adminPasscode) updateSetting('admin_passcode', adminPasscode);
-          updateSetting('event_retention_days', eventRetentionDaysVal);
-        }
-
-        // 即座に変更を適用する
-        if (typeof App !== 'undefined' && App.applySystemVisualSettings) {
-          App.applySystemVisualSettings();
         }
 
         if (isClientSave && sharedFailed) {
-          UI.toast('この端末の接続・表示設定は保存しました。親機共通設定は接続または権限の問題で反映できませんでした。', 'warning', 8000);
+          UI.toast('この端末の接続設定は保存しました。共有設定は接続または権限の問題で反映できませんでした。', 'warning', 8000);
         } else {
-          UI.toast('設定を保存しました。画面表示設定は即時適用され、ネットワーク共有設定は再起動後に有効になります。', 'success');
+          UI.toast('共有・ネットワーク設定を保存しました。稼働モードや接続先は再起動後に確実に反映されます。', 'success');
         }
         
         // 再起動アラートの提示
@@ -1111,6 +1072,24 @@ Object.assign(Settings, {
         }
       });
     }
+  },
+
+  _removeMovedNetworkSections(body) {
+    const removeById = (id) => body.querySelector(`#${id}`)?.remove();
+    const removeClosest = (selector, closestSelector) => {
+      const el = body.querySelector(selector);
+      const host = el?.closest(closestSelector);
+      if (host) host.remove();
+    };
+
+    removeById('terminal-behavior-section');
+    removeById('update-section');
+    removeById('admin-passcode-section');
+    removeClosest('#cfg-default-zoom', 'div[style*="border-top"]');
+    removeClosest('#cfg-event-retention-days', 'div[style*="border-top"]');
+    removeClosest('#btn-change-db-storage', 'div[style*="border-top"]');
+    removeClosest('#btn-backup-db', 'div[style*="border-top"]');
+    removeClosest('#chk-startup', 'div[style*="border-top"]');
   },
 
   _renderDeviceList(body) {

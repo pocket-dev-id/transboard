@@ -687,6 +687,11 @@ h1, h2, h3, h4,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.timeline-bed-patient--changed,
+.tl-row-patient--changed {
+  color: #dc2626;
+  font-weight: 800;
+}
 .timeline-bar-track {
   flex: 1;
   height: 28px;
@@ -776,16 +781,18 @@ h1, h2, h3, h4,
   border: 1px solid var(--clr-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .exam-queue-row {
   display: grid;
-  grid-template-columns: 64px 1fr 110px 100px 60px 70px 90px auto;
+  grid-template-columns: 70px minmax(120px, 1fr) 120px 100px 58px 58px 58px 100px 138px minmax(150px, auto);
   gap: 10px;
   align-items: center;
   padding: 8px 12px;
   border-bottom: 1px solid var(--clr-border);
   font-size: 12.5px;
+  min-width: 980px;
 }
 .exam-queue-row:last-child { border-bottom: none; }
 .exam-queue-row--head {
@@ -992,6 +999,7 @@ h1, h2, h3, h4,
   flex-shrink: 0;
   padding-right: 8px;
 }
+.tl-row-bed,
 .tl-row-bed-num { font-size: 13px; font-weight: 700; }
 .tl-row-patient {
   font-size: 9px;
@@ -3123,6 +3131,14 @@ body.standalone-mode #device-presence-display {
   white-space: nowrap;
 }
 .staff-status-chip-label { font-weight: 800; opacity: .85; }
+.staff-status-detail {
+  font-size: 10.5px;
+  color: var(--clr-text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .staff-status-filter {
   font-size: 11px;
   font-weight: 700;

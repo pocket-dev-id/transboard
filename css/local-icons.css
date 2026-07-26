@@ -25,6 +25,7 @@
 .fa-bullhorn::before { content: "\25B6"; }
 .fa-calendar::before { content: "\25A6"; }
 .fa-calendar-alt::before { content: "\25A6"; }
+.fa-calendar-check::before { content: "\2713"; }
 .fa-camera::before { content: "\25C9"; }
 .fa-check::before { content: "\2713"; }
 .fa-check-circle::before { content: "\2713"; }
@@ -69,9 +70,12 @@
 .fa-globe::before { content: "\25CE"; }
 .fa-hand-paper::before { content: "\270B"; }
 .fa-hand-pointer::before { content: "\261D"; }
+.fa-heartbeat::before { content: "\2665"; }
 .fa-history::before { content: "\21BA"; }
+.fa-home::before { content: "\2302"; }
 .fa-hospital::before { content: "\271A"; }
 .fa-hospital-symbol::before { content: "\271A"; }
+.fa-hourglass-half::before { content: "\25F7"; }
 .fa-id-card::before { content: "ID"; }
 .fa-inbox::before { content: "\25A3"; }
 .fa-info-circle::before { content: "i"; }
@@ -135,6 +139,7 @@
 .fa-th-large::before { content: "\25A6"; }
 .fa-times::before { content: "\00D7"; }
 .fa-times-circle::before { content: "\00D7"; }
+.fa-toggle-on::before { content: "\25C9"; }
 .fa-trash::before { content: "\232B"; }
 .fa-trash-alt::before { content: "\232B"; }
 .fa-toolbox::before { content: "\25A3"; }

@@ -87,7 +87,7 @@ const TimelineContextMenu = {
         };
       });
     const bed = AppState.getBedById(event.bed_id);
-    const bedName = bed ? `${bed.bed_number}号床` : '?';
+    const bedName = bed ? `${UI.formatBedNamePlain(bed)}号床` : '?';
     const statusLabel = CONFIG.STATUS_LABEL?.[event.current_status] || event.current_status;
 
     const statusItems = nexts.map(n => `
@@ -157,6 +157,36 @@ const Timeline = {
     }
   },
 
+  _isPatientNameVisible() {
+    const chk = document.getElementById('chk-show-patient-names');
+    return chk ? chk.checked : localStorage.getItem('cfg_show_patient_names') === 'true';
+  },
+
+  _eventPatientName(event, bed) {
+    return String(event?.patient_name || bed?.patient_name || '').trim();
+  },
+
+  _renderBedPatientLabel(event, bed, { compact = false } = {}) {
+    const bedText = bed ? `${UI.escapeHTML(UI.formatBedNamePlain(bed))}号床` : '?';
+    const showNames = this._isPatientNameVisible();
+    const eventName = String(event?.patient_name || '').trim();
+    const currentName = String(bed?.patient_name || '').trim();
+    const primaryName = eventName || currentName;
+    let patientHtml = '';
+
+    if (primaryName) {
+      const masked = showNames ? UI.escapeHTML(primaryName) : '＊＊＊＊';
+      patientHtml = `<span class="${compact ? 'timeline-bed-patient' : 'tl-row-patient'}">${masked}</span>`;
+      if (showNames && eventName && currentName && eventName !== currentName) {
+        patientHtml += `<span class="${compact ? 'timeline-bed-patient timeline-bed-patient--changed' : 'tl-row-patient tl-row-patient--changed'}">現在: ${UI.escapeHTML(currentName)}</span>`;
+      }
+    } else {
+      patientHtml = `<span class="${compact ? 'timeline-bed-patient' : 'tl-row-patient'}">患者名なし</span>`;
+    }
+
+    return `<span class="${compact ? 'timeline-bed-num' : 'tl-row-bed'}">${bedText}</span>${patientHtml}`;
+  },
+
   // ── ミニタイムライン（ダッシュボード下部） ──────────────────
   _renderMiniTimeline() {
     const container = document.getElementById('mini-timeline');
@@ -186,7 +216,7 @@ const Timeline = {
       const segs = this._buildSegments(e, windowStart, windowEnd, toPercent);
       const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
       html += `<div class="timeline-row">
-        <div class="timeline-bed-label">${bed ? UI.formatBedName(bed) : '?'}</div>
+        <div class="timeline-bed-label">${this._renderBedPatientLabel(e, bed, { compact: true })}</div>
         <div class="timeline-bar-track" data-event-id="${e.id}"
           data-window-start="${windowStart}" data-window-end="${windowEnd}"
           data-editable="${editable}"
@@ -252,7 +282,7 @@ const Timeline = {
     const bed = AppState.getBedById(event.bed_id);
     const examRoom = AppState.getExamRoomById(event.exam_room_id);
     const examType = AppState.getExamTypeById(event.exam_type_id);
-    const bedName = bed ? `${bed.bed_number}号床` : '?';
+    const bedName = bed ? `${UI.formatBedNamePlain(bed)}号床` : '?';
     const pickupVal = event.estimated_pickup_at
       ? new Date(event.estimated_pickup_at).toTimeString().slice(0, 5) : '';
 
@@ -264,7 +294,7 @@ const Timeline = {
         </span>
       </div>
       <div style="color:#4a5568;line-height:2.0;font-size:12px;">
-        <div>👤 ${UI.escapeHTML(event.patient_name || '（患者名なし）')}</div>
+        <div>👤 ${UI.escapeHTML(this._eventPatientName(event, bed) || '（患者名なし）')}</div>
         ${event.patient_id ? `<div style="color:#718096;">ID: ${UI.escapeHTML(event.patient_id)}</div>` : ''}
         ${examRoom ? `<div>🏥 ${UI.escapeHTML(examRoom.name)}${examType ? ' / '+UI.escapeHTML(examType.name) : ''}</div>` : ''}
         <div>🚶 出棟: ${UI.formatTime(event.departed_at)}</div>
@@ -524,7 +554,7 @@ const Timeline = {
         const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
         const linkedItems = bedScheduleMap[e.bed_id] || [];
         html += `<div class="tl-row${linkedItems.length ? ' tl-row--has-sched' : ''}">
-          <div class="tl-row-label">${bed ? UI.formatBedName(bed) : '?'}</div>
+          <div class="tl-row-label">${this._renderBedPatientLabel(e, bed)}</div>
           <div class="tl-row-track" data-event-id="${e.id}"
             data-window-start="${winStart}" data-window-end="${winEnd}"
             data-editable="${editable}"
@@ -556,7 +586,7 @@ const Timeline = {
         const bed = AppState.getBedById(bedId);
         const items = bedScheduleMap[bedId];
         html += `<div class="tl-row">
-          <div class="tl-row-label">${bed ? UI.formatBedName(bed) : '?'}</div>
+          <div class="tl-row-label">${this._renderBedPatientLabel(null, bed)}</div>
           <div class="tl-row-track" style="position:relative;height:26px;">
             ${items.map(item => _schedBarHtml(item, item.color || '#7c3aed')).join('')}
           </div>

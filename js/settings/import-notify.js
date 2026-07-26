@@ -2244,6 +2244,8 @@ Object.assign(Settings, {
         "至急、ご連絡ください。"
       ];
     }
+    const includePatientNameSetting = AppState.systemSettings?.find(s => s.id === 'speech_include_patient_name');
+    let includePatientName = includePatientNameSetting?.value === 'true';
 
     const renderList = () => {
       const listEl = document.getElementById('templates-list-container');
@@ -2295,6 +2297,13 @@ Object.assign(Settings, {
             コールの代わりに音声合成で読み上げて相手に伝える「ワンクリック定型アナウンス」の定型文リストを編集します。<br>
             追加・削除・編集を行った後は、最下部の「定型文設定を保存」ボタンを押してください。
           </p>
+          <label style="display:flex; align-items:flex-start; gap:8px; font-size:12px; color:#475569; margin-bottom:14px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:6px; background:#f8fafc;">
+            <input type="checkbox" id="cfg-speech-include-patient-name" ${includePatientName ? 'checked' : ''} style="margin-top:2px;">
+            <span>
+              <strong>患者名をアナウンス本文の先頭に付ける</strong><br>
+              <span style="font-size:11px; color:#64748b;">ONにすると、出棟・到着・迎え要請など患者が特定できるアナウンスで「患者名さん、...」を先頭に付けます。</span>
+            </span>
+          </label>
           <div id="templates-list-container" style="max-width:600px; margin-bottom:20px;"></div>
           
           <button class="btn btn-primary" id="btn-save-templates" style="padding:10px 24px; font-weight:700;">
@@ -2321,15 +2330,25 @@ Object.assign(Settings, {
       saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中...';
 
       const cleanTemplates = templates.map(t => t.trim()).filter(t => t !== '');
+      includePatientName = document.getElementById('cfg-speech-include-patient-name')?.checked === true;
 
       try {
-        await API.patch('system_settings', 'speech_templates', { value: JSON.stringify(cleanTemplates) });
+        await Promise.all([
+          API.patch('system_settings', 'speech_templates', { value: JSON.stringify(cleanTemplates) }),
+          API.patch('system_settings', 'speech_include_patient_name', { value: includePatientName ? 'true' : 'false' }),
+        ]);
 
         const appSetting = AppState.systemSettings?.find(s => s.id === 'speech_templates');
         if (appSetting) {
           appSetting.value = JSON.stringify(cleanTemplates);
         } else {
           AppState.systemSettings.push({ id: 'speech_templates', value: JSON.stringify(cleanTemplates) });
+        }
+        const includeSetting = AppState.systemSettings?.find(s => s.id === 'speech_include_patient_name');
+        if (includeSetting) {
+          includeSetting.value = includePatientName ? 'true' : 'false';
+        } else {
+          AppState.systemSettings.push({ id: 'speech_include_patient_name', value: includePatientName ? 'true' : 'false' });
         }
 
         UI.toast('アナウンス定型文設定を保存しました', 'success');

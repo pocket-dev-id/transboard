@@ -41,6 +41,7 @@ const CallPanel = {
   _prevStats: null,
   _selectedAudioInput: null,
   _selectedVideoInput: null,
+  _callSourceId: null,
 
   VIDEO_QUALITY_PRESETS: {
     low:    { width: 320,  height: 240, frameRate: 10,  maxBitrateBps: 200_000 },
@@ -133,13 +134,14 @@ const CallPanel = {
     // 各ボタンにイベント設定
     body.querySelectorAll('.call-room-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        const sourceId = this.getMyId();
         if (btn.dataset.wardId) {
-          this.showCallSelectionDialog(btn.dataset.wardId);
+          this.showCallSelectionDialog(btn.dataset.wardId, { fromId: sourceId });
           return;
         }
         const room = AppState.getExamRoomById(btn.dataset.roomId);
         if (room) {
-          this.showCallSelectionDialog(room.id);
+          this.showCallSelectionDialog(room.id, { fromId: sourceId });
         }
       });
     });
@@ -229,7 +231,7 @@ const CallPanel = {
     if (!ev) return;
     const room = AppState.getExamRoomById(ev.exam_room_id);
     if (room) {
-      this.showCallSelectionDialog(room.id);
+      this.showCallSelectionDialog(room.id, { fromId: ev.ward_id || AppState.currentWardId, eventId });
     }
   },
 
@@ -255,12 +257,17 @@ const CallPanel = {
   },
 
   getNameById(id) {
+    if (!id) return '不明';
     if (id.startsWith('ward-')) {
       const w = AppState.wards.find(x => x.id === id);
       return w ? w.name : '病棟';
     }
     const room = AppState.getExamRoomById(id);
     return room ? room.name : '検査室';
+  },
+
+  _getCallFromId() {
+    return this._callSourceId || this.getMyId();
   },
 
   startListening() {
@@ -322,7 +329,7 @@ const CallPanel = {
       if (this.peerConnection || this.isCalling || this.isConnected) {
         // 話し中の場合は拒否シグナル
         await API.webrtcSend({
-          from: this.getMyId(),
+          from: this._getCallFromId(),
           to: msg.from,
           type: 'busy'
         });
@@ -374,9 +381,11 @@ const CallPanel = {
   },
 
   // ── コール選択ダイアログ (音声通話 or 定型アナウンス) ──
-  showCallSelectionDialog(targetId) {
+  showCallSelectionDialog(targetId, { fromId = null, eventId = null } = {}) {
     const targetName = this.getNameById(targetId);
     const targetNameHtml = UI.escapeHTML(targetName);
+    const sourceId = fromId || this.getMyId();
+    const sourceName = this.getNameById(sourceId);
     
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
@@ -387,7 +396,13 @@ const CallPanel = {
     const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     // 定型文リストの構築 (データベースから動的に取得)
-    const myName = this.getNameById(this.getMyId());
+    const myName = this.getNameById(sourceId);
+    const event = eventId
+      ? (AppState.activeEvents.find(e => e.id === eventId) || AppState.todayEvents.find(e => e.id === eventId))
+      : null;
+    const bed = event ? AppState.getBedById(event.bed_id) : null;
+    const patientName = String(event?.patient_name || bed?.patient_name || '').trim();
+    const prefixPatientName = patientName && AppState.getSettingBool('speech_include_patient_name', false);
     const templatesSetting = AppState.systemSettings?.find(s => s.id === 'speech_templates');
     let templates = [];
     if (templatesSetting && templatesSetting.value) {
@@ -453,6 +468,10 @@ const CallPanel = {
         <div class="phone-dialog-body" style="padding: 16px; display:flex; flex-direction:column; gap:16px;">
           
           ${voiceBtnHtml}
+          <div style="font-size:11px;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 9px;">
+            <i class="fas fa-arrow-right"></i> 発信元: <strong>${UI.escapeHTML(sourceName)}</strong>
+            ${patientName ? ` / 対象患者: <strong>${UI.escapeHTML(prefixPatientName ? patientName : '患者名は読み上げません')}</strong>` : ''}
+          </div>
  
           <!-- 簡易定型アナウンスを送信するセクション -->
           <div style="border-top: 1px solid #e2e8f0; padding-top: 12px;">
@@ -559,14 +578,14 @@ const CallPanel = {
       document.getElementById('webrtc-btn-start-voice').onclick = () => {
         this.isVideoCall = false;
         overlay.remove(); // 選択画面を閉じて
-        this.startCall(targetId); // WebRTC通話を開始
+        this.startCall(targetId, sourceId); // WebRTC通話を開始
       };
       const vBtn = document.getElementById('webrtc-btn-start-video');
       if (vBtn) {
         vBtn.onclick = () => {
           this.isVideoCall = true;
           overlay.remove();
-          this.startCall(targetId);
+          this.startCall(targetId, sourceId);
         };
       }
     }
@@ -574,8 +593,10 @@ const CallPanel = {
     // アナウンス送信共通関数
     const sendAnnounce = async (text) => {
       if (!text?.trim()) { UI.toast('テキストを入力してください', 'warning'); return; }
+      if (!sourceId) { UI.toast('発信元を特定できませんでした。病棟または検査室を選択してください。', 'warning'); return; }
+      const speechText = prefixPatientName ? `${patientName}さん、${text.trim()}` : text.trim();
       try {
-        await API.webrtcSend({ from: this.getMyId(), to: targetId, type: 'speech', text: text.trim() });
+        await API.webrtcSend({ from: sourceId, to: targetId, type: 'speech', text: speechText });
         UI.toast('音声アナウンスを送信しました', 'success');
         overlay.remove();
       } catch (e) {
@@ -598,8 +619,8 @@ const CallPanel = {
     });
   },
 
-  async startCall(targetId) {
-    const myId = this.getMyId();
+  async startCall(targetId, fromId = null) {
+    const myId = fromId || this.getMyId();
     if (!myId) {
       UI.toast('自身のIDを特定できませんでした。検査室または病棟を選択してください。', 'danger');
       return;
@@ -610,6 +631,7 @@ const CallPanel = {
     }
 
     this.targetId = targetId;
+    this._callSourceId = myId;
     this.isCalling = true;
     
     this.showCallingDialog(targetId);
@@ -724,6 +746,7 @@ const CallPanel = {
   async acceptCall(callerId, offerSdp) {
     this.isCalling = false;
     this.isConnected = true;
+    this._callSourceId = this.getMyId();
 
     this.showConnectedDialog(callerId);
 
@@ -742,7 +765,7 @@ const CallPanel = {
       await this.peerConnection.setLocalDescription(answer);
 
       await API.webrtcSend({
-        from: this.getMyId(),
+        from: this._getCallFromId(),
         to: callerId,
         type: 'answer',
         sdp: answer
@@ -779,7 +802,7 @@ const CallPanel = {
     this.peerConnection.onicecandidate = async (event) => {
       if (event.candidate && this.targetId) {
         await API.webrtcSend({
-          from: this.getMyId(),
+          from: this._getCallFromId(),
           to: this.targetId,
           type: 'ice',
           candidate: event.candidate
@@ -1161,7 +1184,7 @@ const CallPanel = {
   async hangupCall() {
     if (this.targetId) {
       await API.webrtcSend({
-        from: this.getMyId(),
+        from: this._getCallFromId(),
         to: this.targetId,
         type: 'hangup'
       });
@@ -1227,6 +1250,7 @@ const CallPanel = {
     this.isCalling = false;
     this.isConnected = false;
     this.targetId = null;
+    this._callSourceId = null;
 
     // 通話履歴リロード
     this._loadRecentCalls();
@@ -1589,7 +1613,7 @@ const CallPanel = {
 const PhoneDialog = {
   showWardPhone(ward) {
     if (ward) {
-      CallPanel.showCallSelectionDialog(ward.id);
+      CallPanel.showCallSelectionDialog(ward.id, { fromId: CallPanel.getMyId() });
     } else {
       UI.toast('病棟情報を取得できませんでした', 'warning');
     }

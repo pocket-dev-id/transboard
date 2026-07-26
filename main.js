@@ -292,6 +292,7 @@ const SEEDS = {
     { id: "smb_password", value: "" },
     { id: "admin_passcode", value: "0000" },
     { id: "speech_templates", value: "[\"連絡事項があります。\",\"間もなく、患者が出発します。\",\"患者が到着しました。\",\"検査が終了しました。お迎えをお願いします。\",\"移送をキャンセルします。\",\"至急、ご連絡ください。\"]" },
+    { id: "speech_include_patient_name", value: "false" },
     { id: "admission_mode", value: "csv" },
     { id: "notification_volume", value: "80" },
     { id: "notification_scan_sound", value: "true" },
@@ -2138,6 +2139,9 @@ function sanitizeStatusExtraFields(extraFields) {
 function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirectExamStart) {
   const bed = (db.beds || []).find(b => b.id === event.bed_id);
   const bedName = bed ? `${bed.bed_number}号床` : '患者';
+  const includePatientName = String((db.system_settings || []).find(s => s.id === 'speech_include_patient_name')?.value || 'false') === 'true';
+  const patientName = String(event.patient_name || bed?.patient_name || '').trim();
+  const patientPrefix = includePatientName && patientName ? `${patientName}さん、` : '';
   const room = (db.exam_rooms || []).find(r => r.id === event.exam_room_id);
   const roomName = room ? room.name : '検査室';
   const ward = (db.wards || []).find(w => w.id === event.ward_id);
@@ -2148,7 +2152,7 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
       from: event.ward_id,
       to: event.exam_room_id,
       type: 'speech',
-      text: `${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`,
+      text: `${patientPrefix}${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`,
     };
   }
   if (newStatus === 'ARRIVED' || filledArrivedAtForDirectExamStart) {
@@ -2156,7 +2160,7 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
       from: event.exam_room_id,
       to: event.ward_id,
       type: 'speech',
-      text: `${roomName}に、${bedName}が到着しました。`,
+      text: `${patientPrefix}${roomName}に、${bedName}が到着しました。`,
     };
   }
   if (newStatus === 'PICKUP_REQUIRED') {
@@ -2164,7 +2168,7 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
       from: event.exam_room_id,
       to: event.ward_id,
       type: 'speech',
-      text: `${roomName}から、${bedName}のお迎え要請です。`,
+      text: `${patientPrefix}${roomName}から、${bedName}のお迎え要請です。`,
     };
   }
   return null;

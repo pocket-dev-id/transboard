@@ -22,7 +22,7 @@ const BedModal = {
     const body = document.getElementById('modal-body');
     const footer = document.getElementById('modal-footer');
 
-    title.innerHTML = `${UI.escapeHTML(UI.formatBedName(bed))}号床`;
+    title.innerHTML = `${UI.formatBedName(bed)}号床`;
     overlay.classList.remove('hidden');
 
     // 在室管理モード判定
@@ -180,6 +180,8 @@ const BedModal = {
   },
 
   _renderDepartForm(bed) {
+    const formDisabled = !bed.patient_name;
+    const disabledAttr = formDisabled ? 'disabled' : '';
     const examTypeOptions = AppState.examTypes.map(t =>
       `<option value="${UI.escapeHTML(t.id)}">${UI.escapeHTML(t.name)}（標準${UI.escapeHTML(t.standard_duration_min)}分）</option>`
     ).join('');
@@ -187,6 +189,21 @@ const BedModal = {
     const examRoomOptions = AppState.examRooms.map(r =>
       `<option value="${UI.escapeHTML(r.id)}">${UI.escapeHTML(r.name)}（${UI.escapeHTML(r.floor || '')}）</option>`
     ).join('');
+    const examTypeCards = AppState.examTypes.map((t, idx) => `
+      <button type="button" class="option-card ${idx === 0 ? 'selected' : ''}" data-select-target="f-exam-type" data-value="${UI.escapeHTML(t.id)}" ${disabledAttr}>
+        <span class="option-card-title">${UI.escapeHTML(t.name)}</span>
+        <span class="option-card-sub">標準 ${UI.escapeHTML(t.standard_duration_min)}分</span>
+      </button>
+    `).join('');
+    const examRoomCards = AppState.examRooms.map((r, idx) => {
+      const roomIcon = UI.normalizeExamRoomIcon(r.icon);
+      return `
+        <button type="button" class="option-card ${idx === 0 ? 'selected' : ''}" data-select-target="f-exam-room" data-value="${UI.escapeHTML(r.id)}" ${disabledAttr}>
+          <span class="option-card-title"><i class="fas ${UI.escapeHTML(roomIcon)}"></i> ${UI.escapeHTML(r.name)}</span>
+          <span class="option-card-sub">${UI.escapeHTML(r.floor || 'フロア未設定')}</span>
+        </button>
+      `;
+    }).join('');
 
     const staffOptions = `<option value="">（なし）</option>` +
       AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s =>
@@ -199,7 +216,6 @@ const BedModal = {
 
     // 患者バナーの追加
     let patientBanner = '';
-    let disabledAttr = '';
     if (bed.patient_name) {
       const presenceLabel = bed.is_present ? '在床' : '不在';
       const presenceColor = bed.is_present ? '#10b981' : '#ef4444';
@@ -218,7 +234,6 @@ const BedModal = {
           現在、この病床は空床です。出棟登録は行えません。
         </div>
       `;
-      disabledAttr = 'disabled';
     }
 
     return `
@@ -230,11 +245,13 @@ const BedModal = {
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>検査種別 <span style="color:#dc2626">*</span></label>
-        <select id="f-exam-type" ${disabledAttr}>${examTypeOptions}</select>
+        <select id="f-exam-type" class="visually-hidden-select" ${disabledAttr}>${examTypeOptions}</select>
+        <div class="option-card-grid" role="listbox" aria-label="検査種別">${examTypeCards}</div>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>行き先検査室 <span style="color:#dc2626">*</span></label>
-        <select id="f-exam-room" ${disabledAttr}>${examRoomOptions}</select>
+        <select id="f-exam-room" class="visually-hidden-select" ${disabledAttr}>${examRoomOptions}</select>
+        <div class="option-card-grid" role="listbox" aria-label="行き先検査室">${examRoomCards}</div>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>付き添い看護師</label>
@@ -463,6 +480,7 @@ const BedModal = {
         const t = AppState.getExamTypeById(examTypeSelect.value);
         if (t) durationInput.value = t.standard_duration_min;
       }
+      this._bindOptionCardSelectors();
 
       submitBtn.onclick = () => this._submitDepart();
     }
@@ -774,6 +792,8 @@ const BedModal = {
         expected_duration_min: durationMin,
         estimated_pickup_at: now + durationMin * 60 * 1000,
         note: note || '',
+        patient_name: bed.patient_name || null,
+        patient_id: bed.patient_id || null,
         patient_ic_tag_id: icTagId || null,
         departed_at: null,
         arrived_at: null,
@@ -871,6 +891,23 @@ const BedModal = {
       }
       UI.toast('更新に失敗しました', 'danger');
     }
+  },
+
+  _bindOptionCardSelectors() {
+    document.querySelectorAll('.option-card[data-select-target]').forEach(card => {
+      card.addEventListener('click', () => {
+        if (card.disabled) return;
+        const select = document.getElementById(card.dataset.selectTarget);
+        if (!select) return;
+        select.value = card.dataset.value || '';
+        select.dispatchEvent(new Event('change'));
+        document.querySelectorAll(`.option-card[data-select-target="${card.dataset.selectTarget}"]`).forEach(peer => {
+          const selected = peer === card;
+          peer.classList.toggle('selected', selected);
+          peer.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+      });
+    });
   },
 };
 

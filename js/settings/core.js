@@ -20,8 +20,8 @@ const SETTINGS_TAB_DEFS = {
   notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
   network: ['fa-network-wired', '共有・ネットワーク設定', 'mixed', '混在'],
   terminal_behavior: ['fa-desktop', '端末表示・動作', 'terminal', '端末'],
-  access_protection: ['fa-lock', 'アクセス保護', 'mixed', '共通'],
-  maintenance: ['fa-toolbox', 'システム保守', 'terminal', '端末'],
+  access_protection: ['fa-lock', 'アクセス保護', 'global', '共通'],
+  maintenance: ['fa-toolbox', 'システム保守', 'mixed', '混在'],
 };
 
 const SETTINGS_TAB_GROUPS = {
@@ -46,7 +46,7 @@ const SETTINGS_TAB_CATEGORIES = {
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
   notifications: 'terminal', network: 'mixed',
-  terminal_behavior: 'terminal', access_protection: 'mixed',
+  terminal_behavior: 'terminal', access_protection: 'global',
   maintenance: 'mixed',
 };
 

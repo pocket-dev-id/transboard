@@ -163,7 +163,8 @@ const ExamRoom = {
         ev.current_status !== 'PICKUP_REQUIRED'
       );
 
-      const matchEvent = relevant.find(ev => ev.patient_ic_tag_id === icValue);
+      const scannedId = String(icValue || '').trim();
+      const matchEvent = relevant.find(ev => String(ev.patient_ic_tag_id || '').trim() === scannedId);
       if (!matchEvent) {
         UI.toast('該当する患者の移送イベントが見つかりません', 'warning');
         UI.playScanSound(false);
@@ -171,15 +172,15 @@ const ExamRoom = {
       }
 
       const actions = CONFIG.getAllowedActions(matchEvent.current_status, CONFIG.STATUS_SCOPE.EXAM);
+      const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
       if (!actions.length) {
-        UI.toast('このステータスではICカードによる自動更新はできません', 'info');
+        UI.toast(`現在の状態（${currentLabel}）ではICカードによる自動更新はできません`, 'info');
         UI.playScanSound(false);
         return;
       }
 
       const bed = AppState.getBedById(matchEvent.bed_id);
-      const bedName = bed ? UI.formatBedName(bed) : '患者';
-      const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
+      const bedName = bed ? `${UI.formatBedNamePlain(bed)}号床` : '患者';
       const action = actions.length === 1
         ? actions[0]
         : await this._selectScanAction(matchEvent, bedName, currentLabel, actions);
@@ -206,8 +207,8 @@ const ExamRoom = {
       UI.playScanSound(true);
       this._pendingFlashEventId = matchEvent.id;
 
-      await this._renderQueue();
       await App.refreshData();
+      await this._renderQueue();
     } catch (err) {
       console.error(err);
       if (await App.handleDataConflict(err)) {
@@ -307,6 +308,7 @@ const ExamRoom = {
     this._updateBackButton(!!roomId);
 
     if (!roomId) {
+      container.classList.remove('exam-queue-list-mode');
       if (summaryContainer) summaryContainer.innerHTML = '';
       container.innerHTML = this._renderRoomGrid();
       // グリッドカードのクリックイベント
@@ -371,7 +373,9 @@ const ExamRoom = {
               </div>
             </div>
           `;
+          this._renderViewToggle(summaryContainer);
         }
+        container.classList.remove('exam-queue-list-mode');
         container.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle" style="color:#16a34a"></i><p>現在待機中の患者はいません</p></div>';
         return;
       }
@@ -427,6 +431,7 @@ const ExamRoom = {
             </div>
           </div>
         `;
+        this._renderViewToggle(summaryContainer);
       }
 
       // 優先度・待機時間での並べ替え
@@ -462,28 +467,18 @@ const ExamRoom = {
         return timeA - timeB;
       });
 
-      container.innerHTML = relevant.map(e => this._renderQueueCard(e)).join('');
+      const viewMode = this._getViewMode();
+      container.classList.toggle('exam-queue-list-mode', viewMode === 'list');
+      container.innerHTML = viewMode === 'list'
+        ? this._renderQueueList(relevant)
+        : relevant.map(e => this._renderQueueCard(e)).join('');
 
-      container.querySelectorAll('[data-exam-action]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const eventId = btn.dataset.eventId;
-          const newStatus = btn.dataset.examAction;
-          this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null);
-        });
-      });
-
-      container.querySelectorAll('.btn-call-ward').forEach(btn => {
-        btn.addEventListener('click', () => {
-          // 病棟側の電話番号表示（wardマスタから取得）
-          const ward = AppState.wards.find(w => w.id === AppState.currentWardId);
-          PhoneDialog.showWardPhone(ward);
-        });
-      });
+      this._bindQueueEvents(container);
 
       container.querySelectorAll('.btn-update-exam-pickup').forEach(btn => {
         btn.addEventListener('click', async () => {
           const eventId = btn.dataset.eventId;
-          const card = btn.closest('.exam-queue-card');
+          const card = btn.closest('.exam-queue-card, .exam-queue-row');
           const timeInput = card.querySelector(`.exam-pickup-time-input[data-event-id="${eventId}"]`);
           if (!timeInput) return;
           const timeStr = timeInput.value;
@@ -530,7 +525,7 @@ const ExamRoom = {
         const eventId = this._pendingFlashEventId;
         this._pendingFlashEventId = null;
         setTimeout(() => {
-          const card = container.querySelector(`.exam-queue-card[data-event-id="${eventId}"]`);
+          const card = container.querySelector(`.exam-queue-card[data-event-id="${eventId}"], .exam-queue-row[data-event-id="${eventId}"]`);
           if (card) {
             card.style.backgroundColor = '#dcfce7'; // 薄い緑色
             setTimeout(() => {
@@ -558,20 +553,16 @@ const ExamRoom = {
     const showNames = nameChk ? nameChk.checked : false;
 
     // 描画段階で直接値を「＊＊＊＊」にする（ブラウザの描画ラグによる一瞬の露出を根本防止）
-    const patientNameText = bed && bed.patient_name
-      ? (showNames ? UI.escapeHTML(bed.patient_name) : '＊＊＊＊')
+    const sourcePatientName = String(event.patient_name || bed?.patient_name || '').trim();
+    const sourcePatientId = String(event.patient_id || bed?.patient_id || '').trim();
+    const patientNameText = sourcePatientName
+      ? (showNames ? UI.escapeHTML(sourcePatientName) : '＊＊＊＊')
       : null;
-    const patientIdText = bed && bed.patient_name
-      ? (showNames ? UI.escapeHTML(bed.patient_id || '') : '＊＊＊＊')
+    const patientIdText = sourcePatientName
+      ? (showNames ? UI.escapeHTML(sourcePatientId) : '＊＊＊＊')
       : '';
 
-    const actions = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.EXAM);
-    const actionBtns = actions.map(a => {
-      const label = this._getExamActionLabel(event, a);
-      return `<button class="btn ${UI.escapeHTML(a.cls)} btn-sm" data-exam-action="${UI.escapeHTML(a.toStatus)}" data-event-id="${UI.escapeHTML(event.id)}" data-current-status="${UI.escapeHTML(event.current_status)}">
-        ${UI.escapeHTML(label)}
-      </button>`
-    }).join('');
+    const actionBtns = this._renderActionButtons(event);
 
     // 経過時間タイマーと標準時間超過の判定
     let elapsedHtml = '';
@@ -601,7 +592,7 @@ const ExamRoom = {
       <div class="exam-queue-card status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
         <div class="exam-card-header" style="display:flex; justify-content:space-between; align-items:center;">
           <div style="display:flex; flex-direction:column; gap:2px;">
-            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatBedName(bed)) : '?'} ${icHtml}</span>
+            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatBedNamePlain(bed)) + '号床' : '?'} ${icHtml}</span>
             ${patientNameText ? `
               <div class="exam-patient-name" style="font-weight:700; font-size:12px; color:#1e293b; display:block; position:relative; min-height:16px;">${patientNameText}</div>
               <div class="exam-patient-name" style="font-size:10px; color:#64748b; display:block; position:relative; min-height:12px; margin-top:2px;">${patientIdText}</div>
@@ -656,6 +647,99 @@ const ExamRoom = {
     `;
   },
 
+  _renderActionButtons(event) {
+    const actions = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.EXAM);
+    return actions.map(a => {
+      const label = this._getExamActionLabel(event, a);
+      return `<button class="btn ${UI.escapeHTML(a.cls)} btn-sm" data-exam-action="${UI.escapeHTML(a.toStatus)}" data-event-id="${UI.escapeHTML(event.id)}" data-current-status="${UI.escapeHTML(event.current_status)}">
+        ${UI.escapeHTML(label)}
+      </button>`;
+    }).join('');
+  },
+
+  _getViewMode() {
+    return localStorage.getItem('tbs_exam_queue_view') === 'list' ? 'list' : 'card';
+  },
+
+  _renderViewToggle(host) {
+    if (!host) return;
+    const mode = this._getViewMode();
+    host.insertAdjacentHTML('beforeend', `
+      <div class="exam-view-toggle" style="justify-content:flex-end; margin:-8px 0 12px 0;">
+        <button class="btn btn-outline btn-sm exam-view-btn ${mode === 'card' ? 'active' : ''}" data-exam-view="card" type="button"><i class="fas fa-th-large"></i> カード</button>
+        <button class="btn btn-outline btn-sm exam-view-btn ${mode === 'list' ? 'active' : ''}" data-exam-view="list" type="button"><i class="fas fa-list"></i> 一覧</button>
+      </div>
+    `);
+    host.querySelectorAll('[data-exam-view]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        localStorage.setItem('tbs_exam_queue_view', btn.dataset.examView);
+        this._renderQueue();
+      });
+    });
+  },
+
+  _renderQueueList(events) {
+    const rows = events.map(event => {
+      const bed = AppState.getBedById(event.bed_id);
+      const examType = AppState.getExamTypeById(event.exam_type_id);
+      const staff = AppState.getStaffById(event.escort_staff_id);
+      const now = Date.now();
+      const nameChk = document.getElementById('chk-exam-show-patient-names');
+      const showNames = nameChk ? nameChk.checked : false;
+      const patientName = String(event.patient_name || bed?.patient_name || '').trim();
+      const patientText = patientName ? (showNames ? UI.escapeHTML(patientName) : '＊＊＊＊') : '患者情報なし';
+      const elapsedMin = event.exam_started_at ? Math.floor((now - event.exam_started_at) / 60000) : null;
+      const standardMin = examType ? examType.standard_duration_min : null;
+      const elapsedOver = elapsedMin !== null && standardMin !== null && elapsedMin > standardMin;
+      const pickupHtml = event.estimated_pickup_at
+        ? `<span style="display:inline-flex; align-items:center; gap:4px;">
+            <input type="time" class="exam-pickup-time-input" data-event-id="${UI.escapeHTML(event.id)}" value="${UI.formatTime(event.estimated_pickup_at)}" style="padding:2px 4px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px; width:78px;">
+            <button class="btn btn-primary btn-sm btn-update-exam-pickup" data-event-id="${UI.escapeHTML(event.id)}" style="padding:2px 6px;">変更</button>
+          </span>`
+        : '--';
+      return `
+        <div class="exam-queue-row status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
+          <div class="eqr-cell eqr-bed">${bed ? UI.escapeHTML(UI.formatBedNamePlain(bed)) + '号床' : '?'}</div>
+          <div class="eqr-cell" title="${UI.escapeHTML(patientName)}">${patientText}${event.patient_ic_tag_id ? ' <i class="fas fa-id-card" title="ICカード登録済"></i>' : ''}</div>
+          <div class="eqr-cell">${UI.statusBadge(event.current_status)}</div>
+          <div class="eqr-cell">${examType ? UI.escapeHTML(examType.name) : '--'}</div>
+          <div class="eqr-cell">${UI.formatTime(event.departed_at)}</div>
+          <div class="eqr-cell">${UI.formatTime(event.exam_started_at)}</div>
+          <div class="eqr-cell eqr-elapsed ${elapsedOver ? 'text-danger' : ''}">${elapsedMin === null ? '--' : `${elapsedMin}分`}</div>
+          <div class="eqr-cell">${staff ? `<i class="fas fa-user-nurse"></i> ${UI.escapeHTML(staff.name)}` : '--'}</div>
+          <div class="eqr-cell">${pickupHtml}</div>
+          <div class="eqr-actions">
+            ${this._renderActionButtons(event)}
+            <button class="btn btn-success btn-sm btn-call-ward" data-event-id="${UI.escapeHTML(event.id)}" title="病棟へ連絡"><i class="fas fa-phone"></i></button>
+          </div>
+        </div>`;
+    }).join('');
+    return `
+      <div class="exam-queue-list">
+        <div class="exam-queue-row exam-queue-row--head">
+          <div>病床</div><div>患者名</div><div>状態</div><div>検査</div><div>出棟</div><div>開始</div><div>経過</div><div>付き添い</div><div>迎え目安</div><div>操作</div>
+        </div>
+        ${rows}
+      </div>`;
+  },
+
+  _bindQueueEvents(container) {
+    container.querySelectorAll('[data-exam-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const eventId = btn.dataset.eventId;
+        const newStatus = btn.dataset.examAction;
+        this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null);
+      });
+    });
+
+    container.querySelectorAll('.btn-call-ward').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ward = AppState.wards.find(w => w.id === AppState.currentWardId);
+        PhoneDialog.showWardPhone(ward);
+      });
+    });
+  },
+
   async _updateStatus(eventId, newStatus, expectedStatus = null) {
     const event = AppState.activeEvents.find(e => e.id === eventId) ||
                   AppState.todayEvents.find(e => e.id === eventId);
@@ -674,8 +758,8 @@ const ExamRoom = {
       UI.playScanSound(true);
       this._pendingFlashEventId = eventId;
       
-      await this._renderQueue();
       await App.refreshData();
+      await this._renderQueue();
     } catch (e) {
       console.error(e);
       if (await App.handleDataConflict(e)) {

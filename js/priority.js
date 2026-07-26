@@ -67,7 +67,7 @@ const Priority = {
 
     let icHtml = '';
     if (event.patient_ic_tag_id) {
-      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; margin-right:4px;" title="ICカードID: ${event.patient_ic_tag_id}"><i class="fas fa-id-card"></i> IC</span>`;
+      icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; margin-right:4px;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
 
     return `
@@ -87,5 +87,75 @@ const Priority = {
         ${event.escort_staff_id ? `<div class="text-xs text-muted"><i class="fas fa-user-nurse"></i> ${AppState.getStaffById(event.escort_staff_id)?.name || '--'}</div>` : ''}
       </div>
     `;
+  },
+};
+
+const StaffStatus = {
+  render() {
+    const panel = document.getElementById('staff-status-panel');
+    if (!panel) return;
+
+    const wardStaffs = (AppState.staffs || []).filter(staff =>
+      !staff.ward_id || staff.ward_id === AppState.currentWardId
+    );
+    if (wardStaffs.length === 0) {
+      panel.innerHTML = '<div class="empty-state"><i class="fas fa-user-nurse"></i><p>スタッフが登録されていません</p></div>';
+      return;
+    }
+
+    const assignedByStaff = new Map();
+    (AppState.activeEvents || []).forEach(event => {
+      if (!event.escort_staff_id || !CONFIG.DEPART_STATUSES.includes(event.current_status)) return;
+      const existing = assignedByStaff.get(event.escort_staff_id);
+      if (!existing || this._statusWeight(event.current_status) < this._statusWeight(existing.current_status)) {
+        assignedByStaff.set(event.escort_staff_id, event);
+      }
+    });
+
+    const showNames = localStorage.getItem('cfg_show_patient_names') === 'true' ||
+      document.getElementById('chk-show-patient-names')?.checked === true;
+
+    panel.innerHTML = wardStaffs.map(staff => {
+      const event = assignedByStaff.get(staff.id);
+      const bed = event ? AppState.getBedById(event.bed_id) : null;
+      const state = this._classify(event);
+      const patientName = event?.patient_name || bed?.patient_name || '';
+      const patientText = patientName ? (showNames ? UI.escapeHTML(patientName) : '＊＊＊＊') : '患者名なし';
+      const bedText = bed ? `${UI.escapeHTML(UI.formatBedNamePlain(bed))}号床` : '';
+      const statusText = event ? (CONFIG.STATUS_LABEL[event.current_status] || event.current_status) : '空き';
+      const detail = event
+        ? `<span class="staff-status-detail">${bedText} / ${patientText} / ${UI.escapeHTML(statusText)}</span>`
+        : '<span class="staff-status-detail">担当中の出棟なし</span>';
+      const titleText = event
+        ? `${staff.name} ${bed ? UI.formatBedNamePlain(bed) + '号床' : ''} ${statusText}`
+        : `${staff.name} 空き`;
+      return `
+        <div class="staff-status-chip ${state.cls}" title="${UI.escapeHTML(titleText)}">
+          <span class="staff-status-chip-label"><i class="fas ${state.icon}"></i> ${UI.escapeHTML(staff.name)}</span>
+          <span class="staff-status-filter">${state.label}</span>
+          ${detail}
+        </div>
+      `;
+    }).join('');
+  },
+
+  _statusWeight(status) {
+    const order = {
+      PICKUP_REQUIRED: 1,
+      MOVING: 2,
+      DEPART_REGISTERED: 3,
+      ARRIVED: 4,
+      IN_EXAM: 5,
+      NEARLY_DONE: 6,
+    };
+    return order[status] || 99;
+  },
+
+  _classify(event) {
+    if (!event) return { cls: 'free', label: '空き', icon: 'fa-check-circle' };
+    if (['DEPART_REGISTERED', 'MOVING', 'PICKUP_REQUIRED'].includes(event.current_status)) {
+      return { cls: 'active', label: '付き添い中', icon: 'fa-walking' };
+    }
+    return { cls: 'standby', label: '病棟待機', icon: 'fa-hourglass-half' };
   },
 };
