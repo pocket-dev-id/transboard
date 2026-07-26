@@ -356,11 +356,15 @@ const API = {
   async webrtcSend(msg) {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+    const apiToken = localStorage.getItem('cfg_api_token') || '';
 
     if (shareMode === 'client' || shareMode === 'child') {
       return parentFetch(`http://${parentIp}:3005/api/webrtc/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiToken ? { 'X-API-Token': apiToken } : {}),
+        },
         body: JSON.stringify(msg)
       }, API_SIGNALING_TIMEOUT_MS).then(r => r.json());
     }
@@ -386,10 +390,13 @@ const API = {
   async webrtcPoll(myId, clientId = '') {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+    const apiToken = localStorage.getItem('cfg_api_token') || '';
     const qs = new URLSearchParams({ id: myId, client: clientId || myId }).toString();
 
     if (shareMode === 'client' || shareMode === 'child') {
-      return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {}, API_SIGNALING_TIMEOUT_MS)
+      return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {
+        headers: apiToken ? { 'X-API-Token': apiToken } : {},
+      }, API_SIGNALING_TIMEOUT_MS)
         .then(r => r.json());
     }
 

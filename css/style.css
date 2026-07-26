@@ -1991,6 +1991,7 @@ body.theme-dark .odbc-preview-empty { background: rgba(30,41,59,.5); }
 .stab-badge--global  { background: #dbeafe; color: #1d4ed8; }
 .stab-badge--terminal { background: #d1fae5; color: #065f46; }
 .stab-badge--parent  { background: #fef3c7; color: #92400e; }
+.stab-badge--mixed  { background: #ede9fe; color: #5b21b6; }
 
 /* 設定タブ内バナー */
 .settings-category-banner {

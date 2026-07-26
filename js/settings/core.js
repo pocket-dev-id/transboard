@@ -18,7 +18,7 @@ const SETTINGS_TAB_DEFS = {
   import: ['fa-file-import', '取り込み設定', 'parent', '親機'],
   schedule_feeds: ['fa-calendar-alt', 'スケジュール取り込み', 'parent', '親機'],
   notifications: ['fa-bell', '通知音設定', 'terminal', '端末'],
-  network: ['fa-network-wired', '共有・ネットワーク設定', 'terminal', '端末'],
+  network: ['fa-network-wired', '共有・ネットワーク設定', 'mixed', '混在'],
   maintenance: ['fa-toolbox', 'システム保守', 'terminal', '端末'],
 };
 
@@ -42,7 +42,7 @@ const SETTINGS_TAB_CATEGORIES = {
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
-  notifications: 'terminal', network: 'terminal', maintenance: 'mixed',
+  notifications: 'terminal', network: 'mixed', maintenance: 'mixed',
 };
 
 const SETTINGS_CATEGORY_META = {
