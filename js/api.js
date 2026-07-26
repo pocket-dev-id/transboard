@@ -237,6 +237,76 @@ const API = {
     return result;
   },
 
+  async startTransfer(data) {
+    const result = await this._fetch('transfer/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (result && result.success !== false) return result;
+
+    // 親機を先に更新できない一時的な構成では、旧テーブルAPIへ限定的にフォールバックする。
+    if (result?.message === 'Not Found') {
+      const now = Date.now();
+      const requestedDuration = Number(data.expectedDurationMin);
+      const durationMin = Math.min(
+        300,
+        Math.max(5, Math.round(Number.isFinite(requestedDuration) ? requestedDuration : 30))
+      );
+      const event = {
+        id: data.eventId,
+        bed_id: data.bedId,
+        ward_id: data.wardId,
+        exam_type_id: data.examTypeId,
+        exam_room_id: data.examRoomId,
+        escort_staff_id: data.escortStaffId || null,
+        current_status: 'MOVING',
+        expected_duration_min: durationMin,
+        estimated_pickup_at: now + durationMin * 60 * 1000,
+        note: data.note || '',
+        patient_name: data.patientName || null,
+        patient_id: data.patientId || null,
+        patient_ic_tag_id: data.patientIcTagId || null,
+        registered_at: now,
+        created_at: now,
+        departed_at: now,
+        arrived_at: null,
+        exam_started_at: null,
+        nearly_done_at: null,
+        pickup_ready_at: null,
+        returned_at: null,
+      };
+      let storedEvent = event;
+      try {
+        await this.createEvent(event);
+      } catch (createError) {
+        const existing = await this.getOne('transfer_events', event.id).catch(() => null);
+        if (
+          !existing ||
+          String(existing.bed_id) !== String(event.bed_id) ||
+          !CONFIG.ACTIVE_STATUSES.includes(existing.current_status)
+        ) {
+          throw createError;
+        }
+        storedEvent = existing;
+      }
+
+      const logs = await this.getStatusLogs(event.id).catch(() => []);
+      if (!logs.some(log => !log.from_status && ['MOVING', 'DEPART_REGISTERED'].includes(log.to_status))) {
+        await this.addStatusLog(event.id, null, 'MOVING', 'UI操作');
+      }
+      return { success: true, fallback: true, event: storedEvent };
+    }
+
+    const err = new Error(result?.message || 'Transfer start failed');
+    err.conflict = !!result?.conflict;
+    err.conflictType = result?.conflictType || '';
+    err.currentStatus = result?.currentStatus || null;
+    err.existingEventId = result?.existingEventId || null;
+    throw err;
+  },
+
   async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD, expectedStatus = null) {
     const result = await this._fetch('status/update', {
       method: 'POST',

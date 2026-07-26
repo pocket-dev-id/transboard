@@ -132,7 +132,7 @@ const ExamRoom = {
       return;
     }
 
-    // 新規出棟登録フォームのIC入力欄が開いている場合はそちらに流す（フィールド入力のみ）
+    // 新規移送開始フォームのIC入力欄が開いている場合はそちらに流す（フィールド入力のみ）
     const newIcInput = document.getElementById('f-ic-tag-id');
     if (newIcInput && !newIcInput.disabled) {
       newIcInput.value = icValue;

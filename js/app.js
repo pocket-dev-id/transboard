@@ -572,6 +572,7 @@ const App = {
       AppState.currentWardId = e.target.value;
       localStorage.setItem('current_ward_id', AppState.currentWardId);
       await this.refreshData();
+      this._primeNotificationBaseline();
       WardDashboard.render();
       this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
       if (Settings && ['beds', 'map', 'staffs'].includes(Settings._activeTab)) {
@@ -653,7 +654,7 @@ const App = {
             document.getElementById('btn-update-ic-tag')?.click();
             return;
           }
-          // 新規出棟登録フォームのIC入力欄（フィールド入力）
+          // 新規移送開始フォームのIC入力欄（フィールド入力）
           const newInput = document.getElementById('f-ic-tag-id');
           if (newInput && !newInput.disabled) {
             newInput.value = uid;
@@ -688,6 +689,7 @@ const App = {
 
     // イベントデータ読み込み
     await this.refreshData();
+    this._primeNotificationBaseline();
 
     // 初期表示・フォント設定の適用
     await this.applySystemVisualSettings();
@@ -1617,6 +1619,13 @@ const App = {
   _prevNotified: new Set(),
   _lastEventStatuses: new Map(),
 
+  _primeNotificationBaseline() {
+    this._lastEventStatuses.clear();
+    (AppState.todayEvents || []).forEach(event => {
+      this._lastEventStatuses.set(event.id, event.current_status);
+    });
+  },
+
   _updateNavBadge() {
     const badge = document.getElementById('nav-pickup-badge');
     if (!badge) return;
@@ -1656,7 +1665,6 @@ const App = {
       PICKUP_REQUIRED: { enabled: true, sound: 'alarm' },
       NEARLY_DONE: { enabled: true, sound: 'chime' },
       SOON: { enabled: true, sound: 'chime' },
-      DEPART_REGISTERED: { enabled: false, sound: 'ding' },
       MOVING: { enabled: false, sound: 'ding' },
       ARRIVED: { enabled: false, sound: 'ding' },
       IN_EXAM: { enabled: false, sound: 'ding' },
@@ -1666,7 +1674,16 @@ const App = {
     const _localSounds = localStorage.getItem('cfg_share_mode') === 'client'
       ? localStorage.getItem('tbs_notification_sounds') : null;
     if (_localSounds) {
-      try { soundSettings = JSON.parse(_localSounds); } catch(e) {}
+      try {
+        const localSettings = JSON.parse(_localSounds);
+        if (
+          localSettings?.DEPART_REGISTERED &&
+          !Object.prototype.hasOwnProperty.call(localSettings, 'MOVING')
+        ) {
+          localSettings.MOVING = { ...localSettings.DEPART_REGISTERED };
+        }
+        soundSettings = { ...soundSettings, ...localSettings };
+      } catch(e) {}
     } else {
       const soundSettingRec = AppState.systemSettings?.find(s => s.id === 'notification_sounds');
       if (soundSettingRec?.value) {
@@ -1676,9 +1693,11 @@ const App = {
 
     // 今日の全イベントについてステータス変化をチェック
     (AppState.todayEvents || []).forEach(e => {
+      const hadStatus = this._lastEventStatuses.has(e.id);
       const lastStatus = this._lastEventStatuses.get(e.id);
+      const statusChanged = !hadStatus || lastStatus !== e.current_status;
       
-      if (lastStatus !== undefined && lastStatus !== e.current_status) {
+      if (statusChanged) {
         // ステータスが変化した場合
         const cfg = soundSettings[e.current_status];
         if (cfg && cfg.enabled) {
@@ -1690,7 +1709,7 @@ const App = {
 
       // ステータス変化時の汎用トースト（専用ハンドラーがあるステータスは除外）
       const DEDICATED_TOAST_STATUSES = new Set(['PICKUP_REQUIRED', 'NEARLY_DONE', 'SOON']);
-      if (lastStatus !== undefined && lastStatus !== e.current_status &&
+      if (statusChanged &&
           !DEDICATED_TOAST_STATUSES.has(e.current_status)) {
         const cfg = soundSettings[e.current_status];
         if (cfg?.toast !== false) {

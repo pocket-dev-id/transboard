@@ -70,7 +70,12 @@ const HistoryView = {
       const staff = AppState.getStaffById(e.escort_staff_id);
 
       // ステータス絞り込み
-      if (statusFilter && e.current_status !== statusFilter) return false;
+      if (
+        statusFilter &&
+        !(statusFilter === 'MOVING'
+          ? ['MOVING', 'DEPART_REGISTERED'].includes(e.current_status)
+          : e.current_status === statusFilter)
+      ) return false;
 
       // キーワード検索
       if (query) {
@@ -141,7 +146,12 @@ const HistoryView = {
       const examRoom = event ? AppState.getExamRoomById(event.exam_room_id) : null;
 
       // ステータス絞り込み
-      if (statusFilter && log.to_status !== statusFilter) return false;
+      if (
+        statusFilter &&
+        !(statusFilter === 'MOVING'
+          ? ['MOVING', 'DEPART_REGISTERED'].includes(log.to_status)
+          : log.to_status === statusFilter)
+      ) return false;
 
       // キーワード検索
       if (query) {
@@ -230,7 +240,7 @@ const HistoryView = {
 
   exportLogsToCSV() {
     try {
-      const headers = ['日時', '病床', '患者名', '患者ID', '検査種別', '検査室', '付き添いスタッフ', '現在のステータス', '登録時間', '出発時間', '到着時間', '帰棟時間', '備考'];
+      const headers = ['日時', '病床', '患者名', '患者ID', '検査種別', '検査室', '付き添いスタッフ', '現在のステータス', '記録作成時間', '移送開始時間', '到着時間', '帰棟時間', '備考'];
       
       const nameChk = document.getElementById('chk-show-patient-names');
       const showNames = nameChk ? nameChk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');

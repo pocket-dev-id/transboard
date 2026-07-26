@@ -1,14 +1,16 @@
 /**
- * TransBoard - 病床詳細・出棟登録モーダル
+ * TransBoard - 病床詳細・移送開始モーダル
  */
 
 const BedModal = {
   currentBedId: null,
   currentEventId: null,
   currentEventStatus: null,
+  _pendingTransferEventId: null,
   _pendingFlash: false,
 
   open(bedId) {
+    if (this.currentBedId !== bedId) this._pendingTransferEventId = null;
     this.currentBedId = bedId;
     const bed = AppState.getBedById(bedId);
     if (!bed) return;
@@ -44,8 +46,8 @@ const BedModal = {
       // 手動/ハイブリッドモードでは在室登録バナーを先頭に追加
       body.innerHTML = (isManual ? this._renderManualPatientBanner(bed) : '') + this._renderDepartForm(bed);
       footer.innerHTML = `
-        <button class="btn btn-primary btn-lg" id="btn-depart-submit" ${!bed.patient_name ? 'disabled' : ''}>
-          <i class="fas fa-paper-plane"></i> 出棟登録
+        <button class="btn btn-primary btn-lg" id="btn-transfer-start" ${!bed.patient_name ? 'disabled' : ''}>
+          <i class="fas fa-walking"></i> 移送を開始
         </button>
         ${isManual ? `
           <button class="btn btn-success" id="btn-patient-register" style="${bed.patient_name ? 'display:none;' : ''}">
@@ -135,6 +137,7 @@ const BedModal = {
     this.currentBedId = null;
     this.currentEventId = null;
     this.currentEventStatus = null;
+    this._pendingTransferEventId = null;
   },
 
   _getModalEventExpectedStatus(event) {
@@ -231,7 +234,7 @@ const BedModal = {
     } else {
       patientBanner = `
         <div style="background:#fff5f5; border:1px solid #fed7d7; border-radius:6px; padding:10px; margin-bottom:12px; font-size:12px; color:#c53030; font-weight:bold; text-align:center;">
-          現在、この病床は空床です。出棟登録は行えません。
+          現在、この病床は空床です。移送は開始できません。
         </div>
       `;
     }
@@ -241,7 +244,7 @@ const BedModal = {
       <div class="status-display-row" style="${!bed.patient_name ? 'opacity:0.5;' : ''}">
         <span class="status-badge badge-IN_BED">在床</span>
         <span class="status-arrow"><i class="fas fa-arrow-right"></i></span>
-        <span class="status-badge badge-DEPART_REGISTERED">出棟登録済</span>
+        <span class="status-badge badge-MOVING">移動中</span>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>検査種別 <span style="color:#dc2626">*</span></label>
@@ -282,14 +285,13 @@ const BedModal = {
     const remaining = event.estimated_pickup_at ? event.estimated_pickup_at - now : null;
 
     const timelineItems = [
-      { label: '出棟登録', time: event.created_at, icon: 'plus-circle', done: true },
-      { label: '移動開始', time: event.departed_at, icon: 'walking' },
+      { label: '移送開始', time: event.departed_at || event.created_at, icon: 'walking' },
       { label: '検査室到着', time: event.arrived_at, icon: 'map-marker-alt' },
       { label: '検査開始', time: event.exam_started_at, icon: 'flask' },
       { label: 'あと10分', time: event.nearly_done_at, icon: 'clock' },
       { label: '迎え要', time: event.pickup_ready_at, icon: 'bell' },
       { label: '帰棟完了', time: event.returned_at, icon: 'home' },
-    ].filter(item => item.label === '出棟登録' || item.time);
+    ].filter(item => item.time);
 
     const timelineHtml = timelineItems.map(item => `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:12px;">
@@ -465,8 +467,8 @@ const BedModal = {
       }
     }
 
-    // 出棟登録
-    const submitBtn = document.getElementById('btn-depart-submit');
+    // 移送開始
+    const submitBtn = document.getElementById('btn-transfer-start');
     if (submitBtn) {
       // 検査種別変更で所要時間自動入力
       const examTypeSelect = document.getElementById('f-exam-type');
@@ -482,7 +484,7 @@ const BedModal = {
       }
       this._bindOptionCardSelectors();
 
-      submitBtn.onclick = () => this._submitDepart();
+      submitBtn.onclick = () => this._startTransfer();
     }
 
     // 状態遷移ボタン
@@ -755,7 +757,7 @@ const BedModal = {
     }
   },
 
-  async _submitDepart() {
+  async _startTransfer() {
     const bed = AppState.getBedById(this.currentBedId);
     if (!bed) return;
 
@@ -772,46 +774,32 @@ const BedModal = {
       return;
     }
 
-    const btn = document.getElementById('btn-depart-submit');
+    const btn = document.getElementById('btn-transfer-start');
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 登録中...';
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 開始中...';
 
     try {
-      const now = Date.now();
       const durationMin = isNaN(duration) ? 30 : duration;
-      const eventId = `evt-${now}-${Math.random().toString(36).slice(2,7)}`;
-
-      const eventData = {
-        id: eventId,
-        bed_id: this.currentBedId,
-        ward_id: AppState.currentWardId,
-        exam_type_id: examTypeId,
-        exam_room_id: examRoomId,
-        escort_staff_id: escortStaffId || null,
-        current_status: 'DEPART_REGISTERED',
-        expected_duration_min: durationMin,
-        estimated_pickup_at: now + durationMin * 60 * 1000,
-        note: note || '',
-        patient_name: bed.patient_name || null,
-        patient_id: bed.patient_id || null,
-        patient_ic_tag_id: icTagId || null,
-        departed_at: null,
-        arrived_at: null,
-        exam_started_at: null,
-        nearly_done_at: null,
-        pickup_ready_at: null,
-        returned_at: null,
-      };
-
-      await API.createEvent(eventData);
-      await API.addStatusLog(eventId, null, 'DEPART_REGISTERED', 'nurse');
-
-      if (confirm('ステータスを移動中にしますか？')) {
-        await API.updateEventStatus(eventId, 'MOVING', {}, CONFIG.STATUS_SCOPE.WARD, 'DEPART_REGISTERED');
-        UI.toast(`${bed.bed_number}号床を移動中にしました`, 'success');
-      } else {
-        UI.toast(`${bed.bed_number}号床の出棟を登録しました`, 'success');
+      if (!this._pendingTransferEventId) {
+        this._pendingTransferEventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
       }
+
+      await API.startTransfer({
+        eventId: this._pendingTransferEventId,
+        bedId: this.currentBedId,
+        wardId: AppState.currentWardId,
+        examTypeId,
+        examRoomId,
+        escortStaffId: escortStaffId || null,
+        expectedDurationMin: durationMin,
+        note: note || '',
+        patientName: bed.patient_name || null,
+        patientId: bed.patient_id || null,
+        patientIcTagId: icTagId || null,
+      });
+
+      UI.toast(`${bed.bed_number}号床の移送を開始しました`, 'success');
+      this._pendingTransferEventId = null;
       this.close();
       await App.refreshData();
       
@@ -826,13 +814,13 @@ const BedModal = {
       }
     } catch (e) {
       console.error(e);
-      if (await App.handleDataConflict(e, '他端末で出棟登録済みです。最新状態に更新します。')) {
+      if (await App.handleDataConflict(e, '他端末で移送が開始されています。最新状態に更新します。')) {
         this.close();
         return;
       }
-      UI.toast('登録に失敗しました: ' + e.message, 'danger');
+      UI.toast('移送開始に失敗しました: ' + e.message, 'danger');
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-paper-plane"></i> 出棟登録';
+      btn.innerHTML = '<i class="fas fa-walking"></i> 移送を開始';
     }
   },
 

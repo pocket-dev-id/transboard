@@ -273,7 +273,7 @@ const SEEDS = {
     { id: "import_connection_type", value: "csv" },
     { id: "odbc_connection_string", value: "DSN=EMR_DB;UID=admin;PWD=admin_pass;" },
     { id: "odbc_sql_query", value: "SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS" },
-    { id: "notification_sounds", value: "{\"PICKUP_REQUIRED\":{\"enabled\":true,\"sound\":\"alarm\"},\"NEARLY_DONE\":{\"enabled\":true,\"sound\":\"chime\"},\"SOON\":{\"enabled\":true,\"sound\":\"chime\"},\"DEPART_REGISTERED\":{\"enabled\":false,\"sound\":\"ding\"},\"ARRIVED\":{\"enabled\":false,\"sound\":\"ding\"},\"RETURNED\":{\"enabled\":false,\"sound\":\"ding\"}}" },
+    { id: "notification_sounds", value: "{\"PICKUP_REQUIRED\":{\"enabled\":true,\"sound\":\"alarm\"},\"NEARLY_DONE\":{\"enabled\":true,\"sound\":\"chime\"},\"SOON\":{\"enabled\":true,\"sound\":\"chime\"},\"MOVING\":{\"enabled\":false,\"sound\":\"ding\"},\"ARRIVED\":{\"enabled\":false,\"sound\":\"ding\"},\"RETURNED\":{\"enabled\":false,\"sound\":\"ding\"}}" },
     { id: "incoming_ring_sound", value: "ring" },
     { id: "share_mode", value: "parent" },
     { id: "parent_ip", value: "" },
@@ -390,6 +390,118 @@ function decryptDbFileContent(raw) {
 // キャッシュと実ファイルがズレるような競合は発生しない
 let dbCache = null;
 
+function getLegacyDepartureTimestamp(event, statusLogs, migrationTime) {
+  const directCandidates = [
+    ['departed_at', event.departed_at],
+    ['registered_at', event.registered_at],
+    ['created_at', event.created_at],
+  ];
+  for (const [source, value] of directCandidates) {
+    const timestamp = Number(value);
+    if (Number.isFinite(timestamp) && timestamp > 0) return { timestamp, source };
+  }
+
+  const firstStatusLog = (statusLogs || [])
+    .filter(log =>
+      String(log.transfer_event_id) === String(event.id) &&
+      ['DEPART_REGISTERED', 'MOVING'].includes(log.to_status) &&
+      Number.isFinite(Number(log.changed_at))
+    )
+    .sort((a, b) => Number(a.changed_at) - Number(b.changed_at))[0];
+  if (firstStatusLog) {
+    return { timestamp: Number(firstStatusLog.changed_at), source: 'status_log' };
+  }
+
+  const idMatch = String(event.id || '').match(/(?:^|[-_:])(\d{13})(?:[-_:]|$)/);
+  if (idMatch) {
+    const timestamp = Number(idMatch[1]);
+    if (Number.isFinite(timestamp) && timestamp > 946684800000 && timestamp <= migrationTime + 86400000) {
+      return { timestamp, source: 'event_id' };
+    }
+  }
+
+  return { timestamp: migrationTime, source: 'migration_time' };
+}
+
+function migrateTransferWorkflow(db) {
+  db.transfer_events = Array.isArray(db.transfer_events) ? db.transfer_events : [];
+  db.transfer_status_logs = Array.isArray(db.transfer_status_logs) ? db.transfer_status_logs : [];
+
+  let changed = false;
+  const migrationTime = Date.now();
+  const departureTimeSources = {};
+  const migratedEventIds = [];
+
+  for (const event of db.transfer_events) {
+    if (event.current_status !== 'DEPART_REGISTERED') continue;
+
+    const inferred = getLegacyDepartureTimestamp(event, db.transfer_status_logs, migrationTime);
+    event.current_status = 'MOVING';
+    event.departed_at = inferred.timestamp;
+    if (!event.registered_at) event.registered_at = inferred.timestamp;
+    if (!event.created_at) event.created_at = inferred.timestamp;
+
+    db.transfer_status_logs.push({
+      id: `log-${migrationTime}-${Math.random().toString(36).slice(2, 7)}`,
+      transfer_event_id: event.id,
+      from_status: 'DEPART_REGISTERED',
+      to_status: 'MOVING',
+      changed_by: 'system-migration',
+      changed_at: migrationTime,
+      note: `出棟登録済から移動中へ統合（出棟時刻: ${inferred.source}）`,
+    });
+    departureTimeSources[inferred.source] = (departureTimeSources[inferred.source] || 0) + 1;
+    migratedEventIds.push(event.id);
+    changed = true;
+  }
+
+  const hiddenSetting = (db.system_settings || []).find(s => s.id === 'hidden_statuses');
+  if (hiddenSetting?.value) {
+    try {
+      const hidden = JSON.parse(hiddenSetting.value);
+      if (Array.isArray(hidden) && hidden.includes('MOVING')) {
+        hiddenSetting.value = JSON.stringify(hidden.filter(status => status !== 'MOVING'));
+        changed = true;
+      }
+    } catch {}
+  }
+
+  const notificationSetting = (db.system_settings || []).find(s => s.id === 'notification_sounds');
+  if (notificationSetting?.value) {
+    try {
+      const settings = JSON.parse(notificationSetting.value);
+      if (
+        settings &&
+        typeof settings === 'object' &&
+        settings.DEPART_REGISTERED &&
+        !Object.prototype.hasOwnProperty.call(settings, 'MOVING')
+      ) {
+        settings.MOVING = { ...settings.DEPART_REGISTERED };
+        notificationSetting.value = JSON.stringify(settings);
+        changed = true;
+      }
+    } catch {}
+  }
+
+  if (migratedEventIds.length > 0) {
+    if (db.transfer_status_logs.length > 1000) {
+      db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
+    }
+    appendAuditLog(db, 'DATA_MIGRATION', {
+      targetType: 'transfer_events',
+      actorType: 'system',
+      details: {
+        migration: 'depart_registered_to_moving',
+        migratedCount: migratedEventIds.length,
+        eventIds: migratedEventIds,
+        departureTimeSources,
+      },
+    });
+  }
+
+  return changed;
+}
+
 // ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）
 function readDB() {
   if (dbCache) {
@@ -454,6 +566,14 @@ function readDB() {
       db.handover_notes = [];
       hasDuplicates = true;
     }
+    if (!db.transfer_events) {
+      db.transfer_events = [];
+      hasDuplicates = true;
+    }
+    if (!db.transfer_status_logs) {
+      db.transfer_status_logs = [];
+      hasDuplicates = true;
+    }
 
     // センシティブな設定情報の復号化
     if (db.system_settings && Array.isArray(db.system_settings)) {
@@ -488,9 +608,13 @@ function readDB() {
         db[table] = uniqueList;
       }
     }
+
+    if (migrateTransferWorkflow(db)) {
+      hasDuplicates = true;
+    }
     
     if (hasDuplicates || needsEncryptionRewrite) {
-      console.log('[DB] 重複データ検出または暗号化適用のための再書き込みを実施します。');
+      console.log('[DB] データ補正または暗号化適用のための再書き込みを実施します。');
       writeDB(db);
     }
 
@@ -2012,7 +2136,7 @@ const ACTIVE_TRANSFER_STATUSES = new Set([
   'NEARLY_DONE',
   'PICKUP_REQUIRED',
 ]);
-const HIDEABLE_TRANSFER_STATUSES = new Set(['MOVING', 'ARRIVED', 'NEARLY_DONE']);
+const HIDEABLE_TRANSFER_STATUSES = new Set(['ARRIVED', 'NEARLY_DONE']);
 const WARD_STATUS_ACTIONS = {
   DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
   MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
@@ -2174,6 +2298,154 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
   return null;
 }
 
+const TRANSFER_START_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+
+function sanitizeTransferStartString(value, maxLength) {
+  return String(value == null ? '' : value).trim().slice(0, maxLength);
+}
+
+async function processTransferStartRequest(method, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
+  if (method !== 'POST') {
+    return { success: false, message: 'Method Not Allowed' };
+  }
+  if (isExternal && !isValidApiToken(apiToken)) {
+    console.warn('[Security] 移送開始APIトークン認証失敗');
+    return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+
+  let payload;
+  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+    return { success: false, message: 'リクエストボディのJSONが不正です' };
+  }
+
+  const eventId = sanitizeTransferStartString(payload.eventId, 128);
+  const bedId = sanitizeTransferStartString(payload.bedId, 128);
+  const examTypeId = sanitizeTransferStartString(payload.examTypeId, 128);
+  const examRoomId = sanitizeTransferStartString(payload.examRoomId, 128);
+  const escortStaffId = sanitizeTransferStartString(payload.escortStaffId, 128);
+  const note = sanitizeTransferStartString(payload.note, 2000);
+  const patientIcTagId = sanitizeTransferStartString(payload.patientIcTagId, 200);
+
+  if (!eventId || !TRANSFER_START_ID_PATTERN.test(eventId)) {
+    return { success: false, message: 'eventId is invalid' };
+  }
+  if (!bedId || !examTypeId || !examRoomId) {
+    return { success: false, message: '病床、検査種別、検査室は必須です' };
+  }
+
+  const db = readDB();
+  const events = db.transfer_events || (db.transfer_events = []);
+  const existing = events.find(event => String(event.id) === eventId);
+  if (existing) {
+    if (String(existing.bed_id) === bedId && ACTIVE_TRANSFER_STATUSES.has(existing.current_status)) {
+      return { success: true, idempotent: true, event: existing };
+    }
+    return {
+      success: false,
+      conflict: true,
+      conflictType: 'event_id_conflict',
+      message: '同じ操作IDの別イベントが既に存在します。最新状態に更新してください。',
+      existingEventId: existing.id,
+      currentStatus: existing.current_status || null,
+    };
+  }
+
+  const bed = (db.beds || []).find(item => String(item.id) === bedId);
+  const examType = (db.exam_types || []).find(item => String(item.id) === examTypeId);
+  const examRoom = (db.exam_rooms || []).find(item => String(item.id) === examRoomId && item.is_active !== false);
+  const escortStaff = escortStaffId
+    ? (db.staffs || []).find(item =>
+        String(item.id) === escortStaffId &&
+        item.is_active !== false &&
+        String(item.ward_id) === String(bed?.ward_id || '')
+      )
+    : null;
+
+  if (!bed) return { success: false, message: '病床情報が見つかりません。最新状態に更新してください。' };
+  if (!bed.patient_name) {
+    return {
+      success: false,
+      conflict: true,
+      conflictType: 'patient_changed',
+      message: '患者情報が変更されています。最新状態に更新してください。',
+    };
+  }
+  if (!examType) return { success: false, message: '検査種別が見つかりません。設定を確認してください。' };
+  if (!examRoom) return { success: false, message: '検査室が無効または削除されています。設定を確認してください。' };
+  if (escortStaffId && !escortStaff) {
+    return { success: false, message: '付き添いスタッフが無効または病棟と一致しません。' };
+  }
+
+  const requestedDuration = Number(payload.expectedDurationMin);
+  const defaultDuration = Number(examType.standard_duration_min);
+  const durationCandidate = Number.isFinite(requestedDuration)
+    ? requestedDuration
+    : (Number.isFinite(defaultDuration) ? defaultDuration : 30);
+  const durationMin = Math.min(300, Math.max(5, Math.round(durationCandidate)));
+  const now = Date.now();
+  const eventData = {
+    id: eventId,
+    bed_id: bed.id,
+    ward_id: bed.ward_id,
+    exam_type_id: examType.id,
+    exam_room_id: examRoom.id,
+    escort_staff_id: escortStaff?.id || null,
+    current_status: 'MOVING',
+    expected_duration_min: durationMin,
+    estimated_pickup_at: now + durationMin * 60 * 1000,
+    note,
+    patient_name: bed.patient_name || null,
+    patient_id: bed.patient_id || null,
+    patient_ic_tag_id: patientIcTagId || null,
+    registered_at: now,
+    created_at: now,
+    departed_at: now,
+    arrived_at: null,
+    exam_started_at: null,
+    nearly_done_at: null,
+    pickup_ready_at: null,
+    returned_at: null,
+  };
+
+  const conflict = findActiveBedEventConflict(events, eventData, eventId);
+  if (conflict) return activeBedConflictResponse(conflict);
+
+  events.push(eventData);
+  db.transfer_status_logs = db.transfer_status_logs || [];
+  db.transfer_status_logs.push({
+    id: `log-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    transfer_event_id: eventId,
+    from_status: null,
+    to_status: 'MOVING',
+    changed_by: 'UI操作',
+    changed_at: now,
+    note: '',
+  });
+  if (db.transfer_status_logs.length > 1000) {
+    db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
+  }
+  appendAuditLog(db, 'TRANSFER_START', {
+    targetType: 'transfer_events',
+    targetId: eventId,
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    remoteIp: requestMeta.remoteIp || '',
+    after: summarizeAuditRecord('transfer_events', eventData),
+    details: { fromStatus: null, toStatus: 'MOVING', scope: 'ward' },
+  });
+
+  if (!writeDB(db)) {
+    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+
+  const speechMsg = createStatusSpeechMessage(db, eventData, 'MOVING', false);
+  if (speechMsg?.to) {
+    processWebrtcRequest('POST', 'webrtc/send', JSON.stringify(speechMsg));
+  }
+
+  console.log(`[Transfer] Started: id=${eventId}, bed=${bed.id}, room=${examRoom.id}`);
+  return { success: true, idempotent: false, event: eventData };
+}
+
 async function processStatusUpdateRequest(method, bodyStr, isExternal = false, apiToken = null) {
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
@@ -2212,10 +2484,15 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     newStatus === 'RETURNED' &&
     ACTIVE_TRANSFER_STATUSES.has(fromStatus)
   );
-  if (expectedStatus && fromStatus !== expectedStatus) {
+  const legacyMovingRetry = (
+    expectedStatus === 'DEPART_REGISTERED' &&
+    fromStatus === 'MOVING' &&
+    newStatus === 'MOVING'
+  );
+  if (expectedStatus && fromStatus !== expectedStatus && !legacyMovingRetry) {
     return statusMismatchConflictResponse(expectedStatus, current);
   }
-  if (fromStatus === newStatus) {
+  if (fromStatus === newStatus || legacyMovingRetry) {
     return { success: true, idempotent: true, event: current };
   }
   if (!maintenanceComplete && !isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
@@ -2415,6 +2692,36 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     try { data = JSON.parse(bodyStr); } catch {
       return { success: false, message: 'リクエストボディのJSONが不正です' };
     }
+    let normalizedLegacyTransfer = false;
+    if (table === 'transfer_events' && data.current_status === 'DEPART_REGISTERED') {
+      const now = Date.now();
+      const inferred = getLegacyDepartureTimestamp(data, db.transfer_status_logs || [], now);
+      data.current_status = 'MOVING';
+      data.departed_at = inferred.timestamp;
+      if (!data.registered_at) data.registered_at = inferred.timestamp;
+      if (!data.created_at) data.created_at = inferred.timestamp;
+      normalizedLegacyTransfer = true;
+    }
+    if (
+      table === 'transfer_status_logs' &&
+      !data.from_status &&
+      data.to_status === 'DEPART_REGISTERED'
+    ) {
+      const event = (db.transfer_events || []).find(item =>
+        String(item.id) === String(data.transfer_event_id) &&
+        item.current_status === 'MOVING'
+      );
+      if (event) {
+        const existingInitialLog = list.find(log =>
+          String(log.transfer_event_id) === String(event.id) &&
+          !log.from_status &&
+          log.to_status === 'MOVING'
+        );
+        if (existingInitialLog) return existingInitialLog;
+        data.to_status = 'MOVING';
+        data.note = data.note || '旧端末の出棟登録ログを移動中へ統合';
+      }
+    }
     if (!data.id) {
       data.id = `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     }
@@ -2453,6 +2760,22 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         if (conflict) return activeBedConflictResponse(conflict);
       }
       list.push(data);
+      if (table === 'transfer_events' && normalizedLegacyTransfer) {
+        const changedAt = data.departed_at || Date.now();
+        db.transfer_status_logs = db.transfer_status_logs || [];
+        db.transfer_status_logs.push({
+          id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          transfer_event_id: data.id,
+          from_status: null,
+          to_status: 'MOVING',
+          changed_by: 'legacy-client',
+          changed_at: changedAt,
+          note: '旧端末の出棟登録を移動中へ統合',
+        });
+        if (db.transfer_status_logs.length > 1000) {
+          db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
+        }
+      }
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
     }
 
@@ -2482,6 +2805,12 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
 
     if (!writeDB(db)) {
       throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
+    if (table === 'transfer_events' && normalizedLegacyTransfer && index === -1) {
+      const speechMsg = createStatusSpeechMessage(db, data, 'MOVING', false);
+      if (speechMsg?.to) {
+        processWebrtcRequest('POST', 'webrtc/send', JSON.stringify(speechMsg));
+      }
     }
     return data;
   }
@@ -2649,6 +2978,9 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
   }
   if (url === 'status/update') {
     return processStatusUpdateRequest(method, options.body || '', false);
+  }
+  if (url === 'transfer/start') {
+    return processTransferStartRequest(method, options.body || '', false);
   }
   const result = await processDbRequest(method, url, options.body || '', false);
   syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
@@ -3788,6 +4120,10 @@ function startParentServer() {
           });
         } else if (cleanUrl === 'status/update') {
           result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token']);
+        } else if (cleanUrl === 'transfer/start') {
+          result = await processTransferStartRequest(req.method, body, true, req.headers['x-api-token'], {
+            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+          });
         } else if (cleanUrl.startsWith('parent-actions/')) {
           const action = cleanUrl.replace(/^parent-actions\//, '').split('?')[0];
           result = await processParentActionRequest(req.method, action, body, req.headers['x-api-token'], {

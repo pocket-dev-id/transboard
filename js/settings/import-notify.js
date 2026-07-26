@@ -1348,7 +1348,6 @@ Object.assign(Settings, {
       PICKUP_REQUIRED: { enabled: true,  sound: 'alarm', toast: true },
       NEARLY_DONE:     { enabled: true,  sound: 'chime', toast: true },
       SOON:            { enabled: true,  sound: 'chime', toast: true },
-      DEPART_REGISTERED: { enabled: false, sound: 'ding', toast: true },
       MOVING:          { enabled: false, sound: 'ding', toast: true },
       ARRIVED:         { enabled: false, sound: 'ding', toast: true },
       IN_EXAM:         { enabled: false, sound: 'ding', toast: true },
@@ -1356,7 +1355,16 @@ Object.assign(Settings, {
     };
     const localSoundsRaw = isChildMode ? localStorage.getItem('tbs_notification_sounds') : null;
     if (localSoundsRaw) {
-      try { soundSettings = { ...soundSettings, ...JSON.parse(localSoundsRaw) }; } catch(e) {}
+      try {
+        const localSettings = JSON.parse(localSoundsRaw);
+        if (
+          localSettings?.DEPART_REGISTERED &&
+          !Object.prototype.hasOwnProperty.call(localSettings, 'MOVING')
+        ) {
+          localSettings.MOVING = { ...localSettings.DEPART_REGISTERED };
+        }
+        soundSettings = { ...soundSettings, ...localSettings };
+      } catch(e) {}
     } else {
       const rec = AppState.systemSettings?.find(s => s.id === 'notification_sounds');
       if (rec?.value) try { soundSettings = { ...soundSettings, ...JSON.parse(rec.value) }; } catch(e) {}
@@ -1401,8 +1409,7 @@ Object.assign(Settings, {
       { key: 'PICKUP_REQUIRED',   label: '迎え要（検査終了によるお迎え要請）',        defaultSound: 'alarm' },
       { key: 'NEARLY_DONE',       label: 'あと10分（検査終了見込み10分前）',           defaultSound: 'chime' },
       { key: 'SOON',              label: 'お迎え5分前（登録済みお迎え時刻の5分前）',    defaultSound: 'chime' },
-      { key: 'DEPART_REGISTERED', label: '出棟登録済（移送イベント新規登録時）',        defaultSound: 'ding' },
-      { key: 'MOVING',            label: '移動中（出棟開始など移送が動き出したとき）',  defaultSound: 'ding' },
+      { key: 'MOVING',            label: '移動中（移送を開始したとき）',                defaultSound: 'ding' },
       { key: 'ARRIVED',           label: '到着（患者が検査室に到着したとき）',          defaultSound: 'ding' },
       { key: 'IN_EXAM',           label: '検査中（患者の検査が開始されたとき）',        defaultSound: 'ding' },
       { key: 'RETURNED',          label: '帰棟済（移送が完了したとき）',               defaultSound: 'ding' },

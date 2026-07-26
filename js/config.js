@@ -22,7 +22,7 @@ const CONFIG = {
   // 状態表示名（施設ごとのカスタム表示名で上書きされる可能性がある実行時の値）
   STATUS_LABEL: {
     IN_BED: '在床',
-    DEPART_REGISTERED: '出棟登録済',
+    DEPART_REGISTERED: '出棟登録済（旧）',
     MOVING: '移動中',
     ARRIVED: '検査室到着',
     IN_EXAM: '検査中',
@@ -37,7 +37,7 @@ const CONFIG = {
   // 「本来のデフォルト」を参照する必要がある箇所は STATUS_LABEL ではなくこちらを使う
   STATUS_LABEL_DEFAULTS: Object.freeze({
     IN_BED: '在床',
-    DEPART_REGISTERED: '出棟登録済',
+    DEPART_REGISTERED: '出棟登録済（旧）',
     MOVING: '移動中',
     ARRIVED: '検査室到着',
     IN_EXAM: '検査中',
@@ -70,7 +70,7 @@ const CONFIG = {
 
   // 状態遷移ルール: key = 現在状態, value = 遷移可能な次状態[]
   STATUS_TRANSITIONS: {
-    IN_BED: ['DEPART_REGISTERED'],
+    IN_BED: ['MOVING'],
     DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
     MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
     ARRIVED: ['IN_EXAM', 'CANCELLED'],
@@ -145,7 +145,7 @@ const CONFIG = {
   },
 
   // ロール定義 (セキュリティ #5: RBAC基盤)
-  HIDEABLE_STATUSES: ['MOVING', 'ARRIVED', 'NEARLY_DONE'],
+  HIDEABLE_STATUSES: ['ARRIVED', 'NEARLY_DONE'],
 
   STATUS_SCOPE: {
     WARD: 'ward',

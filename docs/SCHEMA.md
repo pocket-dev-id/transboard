@@ -66,7 +66,7 @@ TransBoard はSQLiteを使用せず、JSONファイル（`transboard-db.json`）
 | `current_status` | string | 現在ステータス（下記参照） |
 | `escort_staff_id` | string \| null | 付き添いスタッフID |
 | `estimated_pickup_at` | number \| null | 迎え目安時刻（Unixms） |
-| `registered_at` | number | 出棟登録日時 |
+| `registered_at` | number | 互換用の登録日時（新規データでは移送開始日時と同値） |
 | `departed_at` | number \| null | 出棟日時 |
 | `arrived_at` | number \| null | 到着日時 |
 | `exam_started_at` | number \| null | 検査開始日時 |
@@ -78,9 +78,11 @@ TransBoard はSQLiteを使用せず、JSONファイル（`transboard-db.json`）
 
 **ステータス遷移:**
 ```
-IN_BED → DEPART_REGISTERED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED → RETURNED
+IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED → RETURNED
                                                                          ↘ CANCELLED
 ```
+
+`DEPART_REGISTERED` は旧データの読み取り互換用にのみ保持され、起動時に `MOVING` へ移行されます。
 
 ---
 
