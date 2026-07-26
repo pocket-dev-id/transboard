@@ -242,11 +242,11 @@ const SEEDS = {
     { id: "bed-type-icu", code: "icu", name: "ICU", sort_order: 3, is_active: true }
   ],
   exam_rooms: [
-    { id: "room-ct", name: "CT室", code: "CT", floor: "1F", phone: "2001", is_active: true },
-    { id: "room-mri", name: "MRI室", code: "MRI", floor: "1F", phone: "2002", is_active: true },
-    { id: "room-xp", name: "X線室", code: "XP", floor: "2F", phone: "2010", is_active: true },
-    { id: "room-endo", name: "内視鏡室", code: "ENDO", floor: "2F", phone: "2030", is_active: true },
-    { id: "room-echo", name: "エコー室", code: "ECHO", floor: "2F", phone: "2020", is_active: true }
+    { id: "room-ct", name: "CT室", code: "CT", floor: "1F", phone: "2001", icon: "fa-x-ray", is_active: true },
+    { id: "room-mri", name: "MRI室", code: "MRI", floor: "1F", phone: "2002", icon: "fa-magnet", is_active: true },
+    { id: "room-xp", name: "X線室", code: "XP", floor: "2F", phone: "2010", icon: "fa-radiation", is_active: true },
+    { id: "room-endo", name: "内視鏡室", code: "ENDO", floor: "2F", phone: "2030", icon: "fa-procedures", is_active: true },
+    { id: "room-echo", name: "エコー室", code: "ECHO", floor: "2F", phone: "2020", icon: "fa-wave-square", is_active: true }
   ],
   exam_types: [
     { id: "exam-ct", name: "CT", code: "CT", standard_duration_min: 30 },

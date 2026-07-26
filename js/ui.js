@@ -3,6 +3,24 @@
  */
 
 const UI = {
+  EXAM_ROOM_ICON_PRESETS: [
+    { icon: 'fa-x-ray', label: 'X線/CT' },
+    { icon: 'fa-magnet', label: 'MRI' },
+    { icon: 'fa-radiation', label: '放射線' },
+    { icon: 'fa-procedures', label: '処置' },
+    { icon: 'fa-stethoscope', label: '診察' },
+    { icon: 'fa-wave-square', label: 'エコー' },
+    { icon: 'fa-heartbeat', label: '心電図' },
+    { icon: 'fa-microscope', label: '検体' },
+    { icon: 'fa-camera', label: '内視鏡' },
+    { icon: 'fa-hospital-symbol', label: '検査室' },
+  ],
+
+  normalizeExamRoomIcon(icon) {
+    const value = String(icon || '').trim();
+    return this.EXAM_ROOM_ICON_PRESETS.some(item => item.icon === value) ? value : 'fa-x-ray';
+  },
+
 
   /* ---------- 患者名マスキング (データ #1) ---------- */
   isPatientMaskEnabled() {

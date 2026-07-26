@@ -290,9 +290,11 @@ const BedMap = {
       }
     }
 
+    const cardTitle = `${bed.bed_number}号床 - ${statusLabel}${event && event.patient_ic_tag_id ? ' (ICカード登録済)' : ''}`;
+
     return `
-      <div class="bed-card status-${status}" data-bed-id="${bed.id}" style="${cardStyle}"
-           title="${bed.bed_number}号床 - ${statusLabel}${event && event.patient_ic_tag_id ? ' (ICカード登録済: ' + event.patient_ic_tag_id + ')' : ''}">
+      <div class="bed-card status-${UI.escapeHTML(status)}" data-bed-id="${UI.escapeHTML(bed.id)}" style="${cardStyle}"
+           title="${UI.escapeHTML(cardTitle)}">
         ${pulseDot}
         <div class="bed-number">${displayNo}</div>
         <div class="bed-status-badge badge-${status}" style="${badgeStyle}">${statusLabel}</div>
@@ -351,11 +353,13 @@ const BedMap = {
         card.style.opacity = '1';
         card.style.pointerEvents = 'auto';
         card.style.transform = '';
+        card.classList.remove('filtered-out');
       } else {
         card.style.opacity = '0.15';
-        card.style.pointerEvents = 'none';
+        card.style.pointerEvents = 'auto';
         card.style.transform = 'scale(0.96)';
         card.style.transition = 'all 0.2s ease';
+        card.classList.add('filtered-out');
       }
     });
   },

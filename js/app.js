@@ -1300,30 +1300,120 @@ const App = {
     const wardEl = document.getElementById('device-presence-display');
     if (wardEl) {
       wardEl.className = `device-presence-chip ${summary.stateClass}`;
-      wardEl.title = summary.title;
       if (isChild) {
         const parentState = this._connectionLost
           ? (this._connectionLostReason === 'unauthorized' ? '親機: トークン不一致' : '親機: 再接続中')
           : '親機: 接続中';
-        wardEl.innerHTML = `<i class="fas fa-network-wired"></i> ${parentState} / 同じ病棟 ${summary.currentWardCount}台 / 検査室 ${summary.examCount}台${summary.warningNote}`;
+        this._updateDevicePresenceChip(wardEl, `<i class="fas fa-network-wired"></i> ${parentState} / 同じ病棟 ${summary.currentWardCount}台 / 検査室 ${summary.examCount}台${summary.warningNote}`, summary, error);
       } else {
-        wardEl.innerHTML = `<i class="fas fa-network-wired"></i> 接続端末: ${summary.total}台 / この病棟 ${summary.currentWardCount} / 検査室 ${summary.examCount} / 不明 ${summary.unknownCount}${summary.warningNote}${summary.childNote}`;
+        this._updateDevicePresenceChip(wardEl, `<i class="fas fa-network-wired"></i> 接続端末: ${summary.total}台 / この病棟 ${summary.currentWardCount} / 検査室 ${summary.examCount} / 不明 ${summary.unknownCount}${summary.warningNote}${summary.childNote}`, summary, error);
       }
     }
 
     const examEl = document.getElementById('exam-device-presence');
     if (examEl) {
       examEl.className = `device-presence-chip ${summary.stateClass}`;
-      examEl.title = summary.title;
       if (isChild) {
         const parentState = this._connectionLost
           ? (this._connectionLostReason === 'unauthorized' ? '親機トークン不一致' : '親機再接続中')
           : '親機接続中';
-        examEl.innerHTML = `<i class="fas fa-network-wired"></i> ${parentState} / 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`;
+        this._updateDevicePresenceChip(examEl, `<i class="fas fa-network-wired"></i> ${parentState} / 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`, summary, error);
       } else {
-        examEl.innerHTML = `<i class="fas fa-network-wired"></i> 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`;
+        this._updateDevicePresenceChip(examEl, `<i class="fas fa-network-wired"></i> 病棟端末 ${summary.wardPageCount}台 / 検査室端末 ${summary.examCount}台${summary.warningNote}`, summary, error);
       }
     }
+  },
+
+  _updateDevicePresenceChip(el, html, summary, error) {
+    el.innerHTML = html;
+    el.title = `${summary.title}\nクリックで端末詳細を表示`;
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', '接続端末の詳細を表示');
+    el.onclick = (event) => {
+      event.stopPropagation();
+      this._toggleDevicePresencePopover(el, summary.devices, error);
+    };
+    el.onkeydown = (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        this._toggleDevicePresencePopover(el, summary.devices, error);
+      }
+    };
+  },
+
+  _toggleDevicePresencePopover(anchor, devices, error) {
+    const existing = document.getElementById('device-presence-popover');
+    if (existing && existing.dataset.anchorId === anchor.id) {
+      existing.remove();
+      return;
+    }
+    if (existing) existing.remove();
+
+    const popover = document.createElement('div');
+    popover.id = 'device-presence-popover';
+    popover.className = 'device-presence-popover';
+    popover.dataset.anchorId = anchor.id || '';
+    popover.innerHTML = this._renderDevicePresencePopover(devices, error);
+    document.body.appendChild(popover);
+
+    const rect = anchor.getBoundingClientRect();
+    const top = rect.bottom + window.scrollY + 8;
+    const maxLeft = window.scrollX + window.innerWidth - popover.offsetWidth - 12;
+    const left = Math.max(12 + window.scrollX, Math.min(rect.left + window.scrollX, maxLeft));
+    popover.style.top = `${top}px`;
+    popover.style.left = `${left}px`;
+
+    const close = (event) => {
+      if (!popover.contains(event.target) && event.target !== anchor) {
+        popover.remove();
+        document.removeEventListener('click', close);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close), 0);
+  },
+
+  _renderDevicePresencePopover(devices, error) {
+    if (error) {
+      return '<div class="device-popover-title">接続端末</div><div class="device-popover-empty">端末一覧を取得できませんでした</div>';
+    }
+    const safeDevices = Array.isArray(devices) ? devices : [];
+    const rows = safeDevices.slice(0, 12).map(device => {
+      const name = UI.escapeHTML(device.name || device.hostname || device.deviceId || device.id || '端末');
+      const page = UI.escapeHTML(this._devicePageLabel(device.page || device.mode || ''));
+      const ward = UI.escapeHTML(device.wardId || '-');
+      const seconds = DevicePresence.secondsSince(device);
+      const seen = seconds === null ? '不明' : `${seconds}秒前`;
+      const version = device.appVersion ? `v${UI.escapeHTML(device.appVersion)}` : '';
+      const stale = seconds !== null && seconds > 20;
+      return `
+        <div class="device-popover-row ${stale ? 'stale' : ''}">
+          <div class="device-popover-main">
+            <span class="device-popover-name">${name}</span>
+            <span class="device-popover-meta">${page} / 病棟 ${ward}</span>
+          </div>
+          <div class="device-popover-sub">${UI.escapeHTML(seen)}${version ? ` / ${version}` : ''}</div>
+        </div>
+      `;
+    }).join('');
+    const extra = safeDevices.length > 12
+      ? `<div class="device-popover-more">ほか ${safeDevices.length - 12} 台</div>`
+      : '';
+    return `
+      <div class="device-popover-title">接続端末 ${safeDevices.length}台</div>
+      ${rows || '<div class="device-popover-empty">接続端末はありません</div>'}
+      ${extra}
+    `;
+  },
+
+  _devicePageLabel(page) {
+    const labels = {
+      'ward-dashboard': '病棟画面',
+      'exam-room': '検査室画面',
+      settings: '設定画面',
+      timeline: 'タイムライン',
+    };
+    return labels[page] || page || '不明';
   },
 
   syncWardSelect() {

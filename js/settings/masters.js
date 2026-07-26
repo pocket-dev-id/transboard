@@ -888,7 +888,7 @@ Object.assign(Settings, {
         </div>
         <table class="settings-table" id="rooms-table">
           <thead>
-            <tr><th>検査室名</th><th>コード</th><th>階</th><th>内線番号</th><th>備考</th><th>有効</th><th>操作</th></tr>
+            <tr><th>アイコン</th><th>検査室名</th><th>コード</th><th>階</th><th>内線番号</th><th>備考</th><th>有効</th><th>操作</th></tr>
           </thead>
           <tbody id="rooms-tbody">
           </tbody>
@@ -904,6 +904,7 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(r => `
         <tr class="${r.is_active === false ? 'row--inactive' : ''}">
+          <td><span class="room-icon-preview"><i class="fas ${UI.escapeHTML(UI.normalizeExamRoomIcon(r.icon))}"></i></span></td>
           <td class="font-bold">${UI.escapeHTML(r.name)}</td>
           <td>${UI.escapeHTML(r.code)}</td>
           <td>${UI.escapeHTML(r.floor || '')}</td>
@@ -920,7 +921,7 @@ Object.assign(Settings, {
             </button>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="7" class="text-muted" style="text-align:center;">検査室が登録されていません</td></tr>';
+      `).join('') || '<tr><td colspan="8" class="text-muted" style="text-align:center;">検査室が登録されていません</td></tr>';
 
       // 無効件数ヒント
       const chk = document.getElementById('chk-show-inactive-rooms');
@@ -945,15 +946,23 @@ Object.assign(Settings, {
       };
     });
 
-    this._setupCsvHandlers('rooms', 'exam_rooms', ['id', 'name', 'code', 'floor', 'phone', 'note', 'is_active']);
+    this._setupCsvHandlers('rooms', 'exam_rooms', ['id', 'name', 'code', 'floor', 'phone', 'note', 'is_active', 'icon'], { optionalHeaders: ['icon'] });
   },
 
   _openRoomForm(room) {
     const isNew = !room;
+    const selectedIcon = UI.normalizeExamRoomIcon(room?.icon);
+    const iconOptions = UI.EXAM_ROOM_ICON_PRESETS.map(item => `
+      <label class="room-icon-option ${item.icon === selectedIcon ? 'selected' : ''}">
+        <input type="radio" name="rf-icon" value="${UI.escapeHTML(item.icon)}" ${item.icon === selectedIcon ? 'checked' : ''}>
+        <span class="room-icon-option-preview"><i class="fas ${UI.escapeHTML(item.icon)}"></i></span>
+        <span>${UI.escapeHTML(item.label)}</span>
+      </label>
+    `).join('');
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-      <div class="modal" style="max-width:440px;">
+      <div class="modal" style="max-width:560px;">
         <div class="modal-header">
           <h2>${isNew ? '検査室を追加' : '検査室を編集'}</h2>
           <button class="modal-close-btn" id="room-form-close"><i class="fas fa-times"></i></button>
@@ -970,6 +979,10 @@ Object.assign(Settings, {
           <div class="form-row">
             <label>階</label>
             <input type="text" id="rf-floor" value="${UI.escapeHTML(room?.floor || '')}" placeholder="例: 2F">
+          </div>
+          <div class="form-row">
+            <label>アイコン</label>
+            <div class="room-icon-picker">${iconOptions}</div>
           </div>
           <div class="form-row">
             <label><i class="fas fa-phone"></i> 内線番号</label>
@@ -1001,6 +1014,13 @@ Object.assign(Settings, {
     document.getElementById('rf-cancel').onclick = close;
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     this._addEscapeClose(overlay, close);
+    overlay.querySelectorAll('input[name="rf-icon"]').forEach(input => {
+      input.addEventListener('change', () => {
+        overlay.querySelectorAll('.room-icon-option').forEach(label => {
+          label.classList.toggle('selected', label.querySelector('input')?.checked);
+        });
+      });
+    });
 
     // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
     setTimeout(() => {
@@ -1015,6 +1035,7 @@ Object.assign(Settings, {
         name,
         code,
         floor: document.getElementById('rf-floor').value.trim(),
+        icon: UI.normalizeExamRoomIcon(overlay.querySelector('input[name="rf-icon"]:checked')?.value),
         phone: document.getElementById('rf-phone').value.trim(),
         note: document.getElementById('rf-note').value.trim(),
         is_active: document.getElementById('rf-active').value === 'true',
@@ -1439,7 +1460,7 @@ Object.assign(Settings, {
     document.body.removeChild(link);
   },
 
-  _setupCsvHandlers(tabName, tableName, headers) {
+  _setupCsvHandlers(tabName, tableName, headers, { optionalHeaders = [] } = {}) {
     const exportBtn = document.getElementById(`btn-export-${tabName}`);
     const importBtn = document.getElementById(`btn-import-${tabName}`);
     
@@ -1448,7 +1469,10 @@ Object.assign(Settings, {
         let data = [];
         if (tableName === 'wards') data = AppState.wards;
         else if (tableName === 'beds') data = AppState.beds.filter(b => b.ward_id === AppState.currentWardId);
-        else if (tableName === 'exam_rooms') data = AppState.allExamRooms || AppState.examRooms;
+        else if (tableName === 'exam_rooms') data = (AppState.allExamRooms || AppState.examRooms).map(room => ({
+          ...room,
+          icon: UI.normalizeExamRoomIcon(room.icon),
+        }));
         else if (tableName === 'exam_types') data = AppState.examTypes;
         else if (tableName === 'staffs') data = AppState.staffs.filter(s => s.ward_id === AppState.currentWardId);
         
@@ -1478,7 +1502,8 @@ Object.assign(Settings, {
               }
               
               const csvHeaders = rows[0].map(h => h.trim());
-              const missing = headers.filter(h => !csvHeaders.includes(h));
+              const optionalSet = new Set(optionalHeaders);
+              const missing = headers.filter(h => !optionalSet.has(h) && !csvHeaders.includes(h));
               if (missing.length > 0) {
                 UI.toast(`ヘッダーが一致しません。不足: ${missing.join(', ')}`, 'danger');
                 return;
@@ -1492,7 +1517,7 @@ Object.assign(Settings, {
                 const record = {};
                 headers.forEach(h => {
                   const idx = csvHeaders.indexOf(h);
-                  let val = row[idx] !== undefined ? row[idx].trim() : '';
+                  let val = idx >= 0 && row[idx] !== undefined ? row[idx].trim() : '';
                   
                   // Convert fields to expected types
                   if (h === 'map_col' || h === 'map_row' || h === 'sort_order' || h === 'standard_duration_min') {
@@ -1507,6 +1532,10 @@ Object.assign(Settings, {
                   
                   record[h] = val;
                 });
+
+                if (tableName === 'exam_rooms') {
+                  record.icon = UI.normalizeExamRoomIcon(record.icon);
+                }
                 
                 if (tableName === 'beds' || tableName === 'staffs') {
                   record.ward_id = record.ward_id || AppState.currentWardId;

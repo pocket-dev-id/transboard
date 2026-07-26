@@ -171,8 +171,7 @@ const ExamRoom = {
       }
 
       const actions = CONFIG.getAllowedActions(matchEvent.current_status, CONFIG.STATUS_SCOPE.EXAM);
-      const action = actions[0];
-      if (!action) {
+      if (!actions.length) {
         UI.toast('このステータスではICカードによる自動更新はできません', 'info');
         UI.playScanSound(false);
         return;
@@ -181,21 +180,24 @@ const ExamRoom = {
       const bed = AppState.getBedById(matchEvent.bed_id);
       const bedName = bed ? UI.formatBedName(bed) : '患者';
       const currentLabel = CONFIG.STATUS_LABEL[matchEvent.current_status] || matchEvent.current_status;
-      const actionLabels = AppState.getSettingJSON('action_button_labels', {});
-      const directExamStart = (
-        action.toStatus === 'IN_EXAM' &&
-        CONFIG.isStatusHidden('ARRIVED') &&
-        ['DEPART_REGISTERED', 'MOVING'].includes(matchEvent.current_status)
-      );
-      const nextLabel = directExamStart
-        ? (actionLabels[`EXAM:${matchEvent.current_status}:IN_EXAM`] || '到着・検査開始')
-        : (CONFIG.STATUS_LABEL[action.toStatus] || action.toStatus);
-      const optionsText = actions.length > 1
-        ? `\n候補: ${actions.map(a => CONFIG.STATUS_LABEL[a.toStatus] || a.toStatus).join(' / ')}`
-        : '';
-      if (!confirm(`${bedName}（現在: ${currentLabel}）を${nextLabel}にしますか？${optionsText}`)) {
+      const action = actions.length === 1
+        ? actions[0]
+        : await this._selectScanAction(matchEvent, bedName, currentLabel, actions);
+      if (!action) {
         UI.playScanSound(false);
         return;
+      }
+
+      const nextLabel = this._getExamActionLabel(matchEvent, action);
+      if (actions.length === 1) {
+        const ok = await UI.confirmModal(
+          `${bedName}（現在: ${currentLabel}）を${nextLabel}にしますか？`,
+          { title: 'ICスキャン確認', confirmLabel: '更新する' }
+        );
+        if (!ok) {
+          UI.playScanSound(false);
+          return;
+        }
       }
 
       await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM, matchEvent.current_status);
@@ -215,6 +217,83 @@ const ExamRoom = {
       UI.toast('ICスキャン処理中にエラーが発生しました', 'danger');
       UI.playScanSound(false);
     }
+  },
+
+  _getExamActionLabel(event, action) {
+    const actionLabels = AppState.getSettingJSON('action_button_labels', {});
+    const directExamStart = (
+      action.toStatus === 'IN_EXAM' &&
+      CONFIG.isStatusHidden('ARRIVED') &&
+      ['DEPART_REGISTERED', 'MOVING'].includes(event.current_status)
+    );
+    return directExamStart
+      ? (actionLabels[`EXAM:${event.current_status}:IN_EXAM`] || '到着・検査開始')
+      : (action.label || CONFIG.STATUS_LABEL[action.toStatus] || action.toStatus);
+  },
+
+  _selectScanAction(event, bedName, currentLabel, actions) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay confirm-modal-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'modal exam-scan-action-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const body = document.createElement('div');
+      body.className = 'modal-body';
+
+      const title = document.createElement('div');
+      title.className = 'confirm-modal-title';
+      title.textContent = 'ICスキャン後の更新先を選択';
+
+      const text = document.createElement('div');
+      text.className = 'confirm-modal-text';
+      text.textContent = `${bedName}（現在: ${currentLabel}）`;
+
+      const options = document.createElement('div');
+      options.className = 'exam-scan-action-options';
+      actions.forEach(action => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `btn ${action.cls || 'btn-primary'} exam-scan-action-option`;
+        btn.textContent = this._getExamActionLabel(event, action);
+        btn.addEventListener('click', () => cleanup(action));
+        options.appendChild(btn);
+      });
+
+      body.appendChild(title);
+      body.appendChild(text);
+      body.appendChild(options);
+
+      const footer = document.createElement('div');
+      footer.className = 'modal-footer confirm-modal-footer';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'btn btn-outline btn-sm';
+      cancelBtn.textContent = 'キャンセル';
+      footer.appendChild(cancelBtn);
+
+      modal.appendChild(body);
+      modal.appendChild(footer);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(result);
+      };
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+      cancelBtn.addEventListener('click', () => cleanup(null));
+      document.addEventListener('keydown', onKeydown);
+      const first = options.querySelector('button');
+      if (first) first.focus();
+    });
   },
 
   async _renderQueue() {
@@ -422,6 +501,14 @@ const ExamRoom = {
             const date = new Date(refDate);
             date.setHours(hh, mm, 0, 0);
             const newEstimated = date.getTime();
+            const oldTime = activeEvent?.estimated_pickup_at ? UI.formatTime(activeEvent.estimated_pickup_at) : '--:--';
+            if (oldTime !== timeStr) {
+              const ok = await UI.confirmModal(
+                `迎え目安を ${oldTime} から ${timeStr} に変更しますか？`,
+                { title: '迎え目安を変更', confirmLabel: '変更する' }
+              );
+              if (!ok) return;
+            }
 
             await API.patch('transfer_events', eventId, { estimated_pickup_at: newEstimated });
             UI.toast('迎え目安を変更しました', 'success');
@@ -431,6 +518,7 @@ const ExamRoom = {
           } catch (err) {
             console.error(err);
             UI.toast('時間の変更に失敗しました', 'danger');
+          } finally {
             btn.disabled = false;
             btn.innerHTML = oldHtml;
           }
@@ -478,16 +566,8 @@ const ExamRoom = {
       : '';
 
     const actions = CONFIG.getAllowedActions(event.current_status, CONFIG.STATUS_SCOPE.EXAM);
-    const actionLabels = AppState.getSettingJSON('action_button_labels', {});
     const actionBtns = actions.map(a => {
-      const directExamStart = (
-        a.toStatus === 'IN_EXAM' &&
-        CONFIG.isStatusHidden('ARRIVED') &&
-        ['DEPART_REGISTERED', 'MOVING'].includes(event.current_status)
-      );
-      const label = directExamStart
-        ? (actionLabels[`EXAM:${event.current_status}:IN_EXAM`] || '到着・検査開始')
-        : a.label;
+      const label = this._getExamActionLabel(event, a);
       return `<button class="btn ${UI.escapeHTML(a.cls)} btn-sm" data-exam-action="${UI.escapeHTML(a.toStatus)}" data-event-id="${UI.escapeHTML(event.id)}" data-current-status="${UI.escapeHTML(event.current_status)}">
         ${UI.escapeHTML(label)}
       </button>`
@@ -544,7 +624,7 @@ const ExamRoom = {
           </div>
           ${elapsedHtml}
           ${event.estimated_pickup_at ? `
-          <div class="exam-card-info-row" style="align-items: center;">
+          <div class="exam-card-info-row exam-pickup-control" style="align-items: center;">
             <span class="label">迎え目安</span>
             <span style="display:inline-flex; align-items:center; gap:4px;">
               <input type="time" class="exam-pickup-time-input" data-event-id="${UI.escapeHTML(event.id)}" value="${UI.formatTime(event.estimated_pickup_at)}" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 12px; font-weight: bold; width: 80px; height: 24px; box-sizing: border-box;">
@@ -563,10 +643,14 @@ const ExamRoom = {
           </div>` : ''}
         </div>
         <div class="exam-card-actions">
-          ${actionBtns}
-          <button class="btn btn-success btn-sm btn-call-ward" data-event-id="${UI.escapeHTML(event.id)}">
-            <i class="fas fa-phone"></i> 病棟へコール
-          </button>
+          <div class="exam-primary-actions">
+            ${actionBtns}
+          </div>
+          <div class="exam-secondary-actions">
+            <button class="btn btn-success btn-sm btn-call-ward" data-event-id="${UI.escapeHTML(event.id)}" title="病棟へ連絡">
+              <i class="fas fa-phone"></i> 病棟へコール
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -644,12 +728,13 @@ const ExamRoom = {
       const pillsHtml = pills.length
         ? `<div class="examroom-card-pills">${pills.join('')}</div>`
         : `<div class="examroom-card-empty-note">患者なし</div>`;
+      const roomIcon = UI.normalizeExamRoomIcon(room.icon);
 
       return `
         <div class="examroom-card ${urgentClass}" data-select-room="${room.id}" tabindex="0" role="button"
           aria-label="${UI.escapeHTML(room.name)} — 患者${total}名">
           <div class="examroom-card-header">
-            <div class="examroom-card-icon"><i class="fas fa-x-ray"></i></div>
+            <div class="examroom-card-icon"><i class="fas ${UI.escapeHTML(roomIcon)}"></i></div>
             <div class="examroom-card-info">
               <div class="examroom-card-name">${UI.escapeHTML(room.name)}</div>
               <div class="examroom-card-floor">${UI.escapeHTML(room.floor || '')}</div>
