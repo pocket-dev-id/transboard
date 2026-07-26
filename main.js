@@ -311,7 +311,8 @@ const SEEDS = {
   calls: [],
   import_logs: [],
   schedule_feeds: [],
-  schedule_items: []
+  schedule_items: [],
+  handover_notes: []
 };
 
 // センシティブな設定情報の暗号化リストと暗号・復号ヘルパー
@@ -446,6 +447,10 @@ function readDB() {
     }
     if (!db.schedule_items) {
       db.schedule_items = [];
+      hasDuplicates = true;
+    }
+    if (!db.handover_notes) {
+      db.handover_notes = [];
       hasDuplicates = true;
     }
 
@@ -1929,11 +1934,12 @@ const ALLOWED_TABLES = new Set([
   'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs',
   'system_settings', 'transfer_events', 'transfer_status_logs',
   'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
-  'audit_logs',
+  'audit_logs', 'handover_notes',
 ]);
 
 // 患者情報（氏名・ID）を含むテーブル。外部HTTPアクセス時はAPIトークン必須（セキュリティ: A-2）
-const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs']);
+// 申し送りメモ(handover_notes)は本文に患者名等が入りうるため患者データ扱いとする
+const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes']);
 const ACTIVE_TRANSFER_STATUSES = new Set([
   'DEPART_REGISTERED',
   'MOVING',
