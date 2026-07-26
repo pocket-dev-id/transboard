@@ -111,6 +111,13 @@ const API = {
     return this._fetch(`tables/transfer_events/ward-status?${qs}`);
   },
 
+  // 申し送りメモ（指定病棟、新しい順）。親機/子機ともAPI経由で取得する
+  async getHandoverNotes(wardId) {
+    const res = await this.getAll('handover_notes');
+    const list = (res.data || []).filter(n => !wardId || n.ward_id === wardId);
+    return list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  },
+
   async getOne(table, id) {
     return this._fetch(`tables/${table}/${id}`);
   },
