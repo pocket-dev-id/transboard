@@ -8,6 +8,7 @@ const WardDashboard = {
     Priority.renderSummary();
     Priority.renderPriorityList();
     Timeline.render();
+    if (typeof Handover !== 'undefined') Handover.render();
   },
 };
 
@@ -702,6 +703,10 @@ const App = {
       setTimeout(() => {
         Wizard.open();
       }, 500);
+    } else {
+      // 通常運用時のみ、日跨ぎ（帰棟し忘れ）の未完了出棟をチェックして通知する
+      // （初回セットアップ中はウィザードを優先し邪魔しない）
+      setTimeout(() => this.checkCarriedOver(), 800);
     }
 
     // デスクトップアプリ用自動インポートのリスナー登録
@@ -1464,6 +1469,9 @@ const App = {
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
 
+      // 申し送りメモを読み込む（現在病棟）
+      if (typeof Handover !== 'undefined') await Handover.load().catch(() => {});
+
       // 保持期間設定に基づき古い完了済みイベントを削除（起動時に1回）
       EventRetentionManager.run().catch(e => console.warn('[App] イベントクリーンアップ失敗:', e));
     } catch (e) {
@@ -1569,6 +1577,12 @@ const App = {
           }
 
           this._checkNotifications();
+
+          // 24時間稼働端末での日跨ぎ対応：日付が変わったら未完了出棟を再チェック
+          const nowDateStr = new Date().toDateString();
+          if (this._lastDateStr && this._lastDateStr !== nowDateStr) {
+            this.checkCarriedOver();
+          }
         }
       } catch (e) {
         ok = false;
@@ -1614,10 +1628,28 @@ const App = {
     }
   },
 
+  // 日跨ぎ（帰棟し忘れ等）の未完了出棟を検出し、起動時・日付変更時に一度だけ通知する。
+  // 同日中は localStorage の ack で再通知を抑止（翌日は再度通知）。患者安全のため自動では消さない。
+  checkCarriedOver() {
+    try {
+      const todayStr = new Date().toDateString();
+      this._lastDateStr = todayStr;
+      const list = AppState.getCarriedOverEvents();
+      if (!list || list.length === 0) return;
+      if (localStorage.getItem('tbs_carryover_ack') === todayStr) return; // 本日は確認済み
+      localStorage.setItem('tbs_carryover_ack', todayStr);
+      UI.toast(`前日から未完了の出棟が ${list.length} 件あります。確認してください。`, 'warning', 8000);
+      UI.showOsNotification?.('TransBoard: 未完了の出棟', `前日から ${list.length} 件`);
+      if (typeof CarryoverModal !== 'undefined') CarryoverModal.open(list);
+    } catch (e) {
+      console.error('[Carryover]', e);
+    }
+  },
+
   _checkNotifications() {
     const now = Date.now();
     this._updateNavBadge();
-    
+
     // 通知音設定のロード (デフォルト値)
     let soundSettings = {
       PICKUP_REQUIRED: { enabled: true, sound: 'alarm' },
