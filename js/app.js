@@ -6,6 +6,7 @@ const WardDashboard = {
   render() {
     BedMap.render();
     Priority.renderSummary();
+    Priority.renderKpi();
     Priority.renderPriorityList();
     Timeline.render();
     if (typeof Handover !== 'undefined') Handover.render();
@@ -994,6 +995,7 @@ const App = {
     setInterval(() => {
       BedMap.updateTimers();
       Priority.renderSummary();
+      Priority.renderKpi();
       Priority.renderPriorityList();
       this._checkNotifications();
     }, 30000);
