@@ -6,6 +6,7 @@ const WardDashboard = {
   render() {
     BedMap.render();
     Priority.renderSummary();
+    Priority.renderKpi();
     Priority.renderPriorityList();
     if (typeof StaffStatus !== 'undefined') StaffStatus.render();
     Timeline.render();
@@ -996,6 +997,7 @@ const App = {
     setInterval(() => {
       BedMap.updateTimers();
       Priority.renderSummary();
+      Priority.renderKpi();
       Priority.renderPriorityList();
       this._checkNotifications();
     }, 30000);
