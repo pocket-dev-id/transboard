@@ -3133,6 +3133,20 @@ function redactPatientData(dbObj) {
   return clone;
 }
 
+// 平文エクスポート（redactedバックアップ・診断バンドル）に認証情報を残さないためのマスク。
+// ODBC接続文字列・SMBパスワード・APIトークン（SENSITIVE_SETTING_IDS）＋管理者パスコードを伏せる。
+const EXPORT_REDACTED_SETTING_IDS = [...SENSITIVE_SETTING_IDS, 'admin_passcode'];
+function redactCredentials(dbObj) {
+  if (Array.isArray(dbObj.system_settings)) {
+    dbObj.system_settings.forEach(s => {
+      if (EXPORT_REDACTED_SETTING_IDS.includes(s.id) && s.value) {
+        s.value = '[REDACTED]';
+      }
+    });
+  }
+  return dbObj;
+}
+
 // IPC通信でデータベースをバックアップファイルとして保存する
 // mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報を除去）
 ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } = {}) => {
@@ -3155,7 +3169,8 @@ ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } 
     let outputContent;
     if (mode === 'redacted') {
       const dbObj = JSON.parse(plaintextJson);
-      outputContent = JSON.stringify(redactPatientData(dbObj), null, 2);
+      // 平文エクスポートでは患者情報に加えて認証情報（接続文字列・パスワード・トークン）も除去する
+      outputContent = JSON.stringify(redactCredentials(redactPatientData(dbObj)), null, 2);
     } else {
       outputContent = encryptBackupContent(plaintextJson, password);
     }
@@ -3168,6 +3183,10 @@ ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } 
         actorType: 'local_ui',
         details: { mode, fileName: path.basename(filePath) },
       });
+      // 保守画面の「最終バックアップ日時」表示・未実施リマインダー用に記録
+      const backupTsSetting = db.system_settings?.find(s => s.id === 'last_backup_at');
+      if (backupTsSetting) backupTsSetting.value = String(Date.now());
+      else db.system_settings.push({ id: 'last_backup_at', value: String(Date.now()) });
       writeDB(db);
     }
     return { success: true, filePath };
@@ -3298,6 +3317,85 @@ ipcMain.handle('get-encryption-status', () => {
     }
   } catch {}
   return { available, dbIsEncrypted };
+});
+
+// IPC通信で保守画面向けの概況情報（DBサイズ・件数・最終バックアップ日時など）を返す
+ipcMain.handle('get-db-info', () => {
+  const db = readDB();
+  let fileSizeBytes = 0;
+  try { fileSizeBytes = fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0; } catch {}
+  const lastBackupSetting = db.system_settings?.find(s => s.id === 'last_backup_at');
+  return {
+    appVersion: app.getVersion(),
+    dbPath: DB_FILE,
+    fileSizeBytes,
+    counts: {
+      transfer_events: (db.transfer_events || []).length,
+      transfer_status_logs: (db.transfer_status_logs || []).length,
+      audit_logs: (db.audit_logs || []).length,
+      import_logs: (db.import_logs || []).length,
+      calls: (db.calls || []).length,
+      beds: (db.beds || []).length,
+      wards: (db.wards || []).length,
+    },
+    lastBackupAt: lastBackupSetting?.value ? Number(lastBackupSetting.value) : null,
+  };
+});
+
+// IPC通信でトラブルシューティング用の診断バンドル(1ファイル)を出力する。
+// debug.log・import_logs直近分・システム概況をまとめる。患者情報・認証情報は含めない
+ipcMain.handle('export-diagnostics-bundle', async () => {
+  if (!mainWindow) return { success: false, message: 'Window not found' };
+  const { filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: '診断情報の保存',
+    defaultPath: `transboard_diagnostics_${new Date().toISOString().slice(0, 10)}.txt`,
+    filters: [{ name: 'Text Files', extensions: ['txt'] }]
+  });
+  if (!filePath) return { success: false, message: 'Cancelled' };
+
+  try {
+    const db = readDB();
+    let fileSizeBytes = 0;
+    try { fileSizeBytes = fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0; } catch {}
+
+    const importLogsTail = (db.import_logs || []).slice(-30);
+    // 患者データ・認証情報が絶対に混入しないよう、既存のredact関数で除去したうえで出力する
+    const redactedForDiag = redactCredentials(redactPatientData({ import_logs: importLogsTail, system_settings: [] }));
+
+    let debugLogTail = '(debug.logはまだありません)';
+    try {
+      const logPath = getDebugLogPath();
+      if (fs.existsSync(logPath)) {
+        const lines = fs.readFileSync(logPath, 'utf-8').split('\n');
+        debugLogTail = lines.slice(-200).join('\n');
+      }
+    } catch (e) {
+      debugLogTail = `(debug.logの読み込みに失敗: ${e.message})`;
+    }
+
+    const shareMode = db.system_settings?.find(s => s.id === 'share_mode')?.value || 'parent';
+    const lines = [
+      '=== TransBoard 診断情報バンドル ===',
+      `出力日時: ${new Date().toISOString()}`,
+      `アプリバージョン: ${app.getVersion()}`,
+      `OS: ${os.platform()} ${os.release()} (${os.arch()})`,
+      `ホスト名: ${os.hostname()}`,
+      `稼働モード: ${shareMode}`,
+      `DBファイルサイズ: ${fileSizeBytes} bytes`,
+      `テーブル件数: transfer_events=${(db.transfer_events||[]).length}, transfer_status_logs=${(db.transfer_status_logs||[]).length}, audit_logs=${(db.audit_logs||[]).length}, import_logs=${(db.import_logs||[]).length}, calls=${(db.calls||[]).length}`,
+      '',
+      '=== 直近の取り込みログ（最大30件、患者情報は除去済み） ===',
+      JSON.stringify(redactedForDiag.import_logs, null, 2),
+      '',
+      '=== debug.log（直近200行） ===',
+      debugLogTail,
+    ];
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+    return { success: true, filePath };
+  } catch (err) {
+    console.error('[Diagnostics Export Error]', err);
+    return { success: false, message: err.message };
+  }
 });
 
 // IPC通信でデータベースの保存先設定を変更する
