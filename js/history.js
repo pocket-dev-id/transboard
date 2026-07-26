@@ -2,6 +2,15 @@
  * TransBoard - 履歴・監査ビュー
  */
 
+// CSVを表計算ソフトで開いた際、外部由来の値が数式として評価されないようにする。
+// 引用符で囲むだけでは数式インジェクションを防げないため、危険な先頭文字には
+// アポストロフィを付けて文字列として扱わせる。
+function escapeCSVCell(value) {
+  let text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 const HistoryView = {
   _isInitialized: false,
 
@@ -265,7 +274,7 @@ const HistoryView = {
       });
 
       const csvContent = [headers, ...rows]
-        .map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+        .map(r => r.map(escapeCSVCell).join(','))
         .join('\n');
 
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]); // UTF-8 Excel BOM
@@ -493,7 +502,7 @@ const ExamStats = {
       });
 
       const csvContent = [headers, ...rows]
-        .map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+        .map(r => r.map(escapeCSVCell).join(','))
         .join('\n');
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
       const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
