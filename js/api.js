@@ -190,6 +190,16 @@ const API = {
     return res.data.filter(e => e.ward_id === wardId);
   },
 
+  // 指定病床の過去(帰棟済み/キャンセル)の移送履歴を新しい順で返す。
+  // 進行中のイベントは対象外(excludeEventIdは念のための二重防御)
+  async getPastEventsForBed(bedId, wardId, excludeEventId = null) {
+    const all = await this.getAllEventsForWard(wardId);
+    return all
+      .filter(e => e.bed_id === bedId && e.id !== excludeEventId &&
+        (e.current_status === 'RETURNED' || e.current_status === 'CANCELLED'))
+      .sort((a, b) => (b.returned_at || b.created_at || 0) - (a.returned_at || a.created_at || 0));
+  },
+
   async getScheduleFeeds() {
     const res = await this.getAll('schedule_feeds');
     return res.data || [];
