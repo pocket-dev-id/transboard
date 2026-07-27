@@ -7,10 +7,17 @@ const Priority = {
   renderSummary() {
     const s = AppState.getSummary();
     document.getElementById('cnt-depart').textContent = s.depart;
-    document.getElementById('cnt-escort').textContent = s.escort;
+    document.getElementById('cnt-escort').textContent = s.escortActive;
     document.getElementById('cnt-pickup').textContent = s.pickup;
     document.getElementById('cnt-soon').textContent = s.soon;
     document.getElementById('cnt-delay').textContent = s.delay;
+
+    // 「付き添い中」の数字は実際に移動している人数のみ。検査中などで病棟へ戻り
+    // 手離れしているスタッフの人数は添字で補足する
+    const standbyEl = document.getElementById('cnt-escort-standby');
+    if (standbyEl) {
+      standbyEl.textContent = s.escortStandby > 0 ? `（待機${s.escortStandby}）` : '';
+    }
 
     // 迎え要がある場合はヘッダー点滅
     const pickupCard = document.getElementById('summary-pickup');
@@ -133,7 +140,15 @@ const Priority = {
           ${event.departed_at ? ' | ' + UI.formatTime(event.departed_at) + '出棟' : ''}
         </div>
         ${timeHtml}
-        ${event.escort_staff_id ? `<div class="text-xs text-muted"><i class="fas fa-user-nurse"></i> ${AppState.getStaffById(event.escort_staff_id)?.name || '--'}</div>` : ''}
+        ${(() => {
+          if (!event.escort_staff_id) return '';
+          const staffName = UI.escapeHTML(AppState.getStaffById(event.escort_staff_id)?.name || '--');
+          // 実際に移動中(MOVING/PICKUP_REQUIRED)か、検査中等で病棟待機中かで表示を変える
+          const isActive = CONFIG.ESCORT_ACTIVE_STATUSES.includes(status);
+          return isActive
+            ? `<div class="text-xs priority-escort priority-escort--active"><i class="fas fa-walking"></i> ${staffName}</div>`
+            : `<div class="text-xs priority-escort priority-escort--standby"><i class="fas fa-user-nurse"></i> ${staffName}（待機）</div>`;
+        })()}
       </div>
     `;
   },
@@ -144,6 +159,8 @@ const StaffStatus = {
     const panel = document.getElementById('staff-status-panel');
     if (!panel) return;
 
+    // 「稼働中のみ」フィルタでは空き(free)のスタッフを除外する
+    const filter = localStorage.getItem('cfg_staff_filter') || 'all';
     const wardStaffs = (AppState.staffs || []).filter(staff =>
       !staff.ward_id || staff.ward_id === AppState.currentWardId
     );
@@ -164,8 +181,16 @@ const StaffStatus = {
     const showNames = localStorage.getItem('cfg_show_patient_names') === 'true' ||
       document.getElementById('chk-show-patient-names')?.checked === true;
 
-    panel.innerHTML = wardStaffs.map(staff => {
-      const event = assignedByStaff.get(staff.id);
+    const rows = wardStaffs
+      .map(staff => ({ staff, event: assignedByStaff.get(staff.id) }))
+      .filter(({ event }) => filter === 'busy' ? !!event : true);
+
+    if (rows.length === 0) {
+      panel.innerHTML = '<div class="empty-state"><i class="fas fa-user-nurse"></i><p>稼働中のスタッフはいません</p></div>';
+      return;
+    }
+
+    panel.innerHTML = rows.map(({ staff, event }) => {
       const bed = event ? AppState.getBedById(event.bed_id) : null;
       const state = this._classify(event);
       const patientName = event?.patient_name || bed?.patient_name || '';
@@ -202,7 +227,7 @@ const StaffStatus = {
 
   _classify(event) {
     if (!event) return { cls: 'free', label: '空き', icon: 'fa-check-circle' };
-    if (['DEPART_REGISTERED', 'MOVING', 'PICKUP_REQUIRED'].includes(event.current_status)) {
+    if (CONFIG.ESCORT_ACTIVE_STATUSES.includes(event.current_status)) {
       return { cls: 'active', label: '付き添い中', icon: 'fa-walking' };
     }
     return { cls: 'standby', label: '病棟待機', icon: 'fa-hourglass-half' };
