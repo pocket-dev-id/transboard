@@ -2243,29 +2243,51 @@ function activeBedConflictResponse(conflict) {
   };
 }
 
-// bed のPATCH前後で患者識別子（患者ID優先、なければ氏名）を比較し、
-// 検査室移送を伴わない入退院・患者入替も bed_occupancy_log に記録する。
-// transfer_events に依存しないため、移送なしの在室も履歴として残せる。
-function bedOccupancyIdentityKey(rec) {
-  if (!rec) return null;
-  if (rec.patient_id) return `id:${rec.patient_id}`;
-  if (rec.patient_name) return `name:${rec.patient_name}`;
-  return null;
+// bed のPATCH前後で在室者を比較し、検査室移送を伴わない入退院・患者入替も
+// bed_occupancy_log に記録する。transfer_events に依存しないため、移送なしの
+// 在室も履歴として残せる。
+function bedOccupancyHasOccupant(rec) {
+  return !!(rec && (rec.patient_id || rec.patient_name));
+}
+
+// 同一患者かどうか。両者に患者IDがある場合のみIDで判定し、片方でも欠けていれば
+// 氏名で判定する。CSV取込が氏名のみで登録した病床に後から患者IDを補記しても
+// 別患者への入れ替わりと誤判定しないため（IDの「変更」は入れ替わりとして扱う）。
+function isSameBedOccupant(before, after) {
+  if (!bedOccupancyHasOccupant(before) || !bedOccupancyHasOccupant(after)) return false;
+  if (before.patient_id && after.patient_id) {
+    return String(before.patient_id) === String(after.patient_id);
+  }
+  return String(before.patient_name || '') === String(after.patient_name || '');
+}
+
+function findOpenBedOccupancy(occupancyLog, bedId) {
+  return (occupancyLog || []).find(o => String(o.bed_id) === String(bedId) && o.ended_at == null) || null;
 }
 
 function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after, now, source) {
-  const beforeKey = bedOccupancyIdentityKey(before);
-  const afterKey = bedOccupancyIdentityKey(after);
-  if (beforeKey === afterKey) return;
+  const hadOccupant = bedOccupancyHasOccupant(before);
+  const hasOccupant = bedOccupancyHasOccupant(after);
+  if (!hadOccupant && !hasOccupant) return;
 
-  if (beforeKey) {
-    const open = occupancyLog.find(o => String(o.bed_id) === String(bedId) && o.ended_at == null);
+  const open = findOpenBedOccupancy(occupancyLog, bedId);
+
+  // 同一患者の情報が更新されただけ（患者IDの補記・氏名や入院日の修正）の場合は
+  // 滞在を分割せず、在室中のレコードを最新値へ追従させる
+  if (hadOccupant && hasOccupant && isSameBedOccupant(before, after)) {
     if (open) {
-      open.ended_at = now;
-      open.end_reason = source === 'csv_clear' ? 'csv_cleared' : (afterKey ? 'overwritten_by_new_admission' : 'discharged');
+      open.patient_id = after.patient_id || null;
+      open.patient_name = after.patient_name || null;
+      if (after.admission_date != null) open.admission_date = after.admission_date;
     }
+    return;
   }
-  if (afterKey) {
+
+  if (hadOccupant && open) {
+    open.ended_at = now;
+    open.end_reason = source === 'csv_clear' ? 'csv_cleared' : (hasOccupant ? 'overwritten_by_new_admission' : 'discharged');
+  }
+  if (hasOccupant) {
     occupancyLog.push({
       id: `bed-occ-${now}-${Math.random().toString(36).slice(2, 7)}`,
       bed_id: bedId,
@@ -2280,6 +2302,17 @@ function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after,
       created_at: now,
     });
   }
+}
+
+// 病床そのものが削除された場合に在室中のレコードを閉じる。閉じずに放置すると
+// 対象の病床が存在しないため二度とクローズされず、掃除も在室中を除外するため
+// 永久に残ってしまう
+function closeOpenBedOccupancyForDeletedBed(occupancyLog, bedId, now) {
+  const open = findOpenBedOccupancy(occupancyLog, bedId);
+  if (!open) return false;
+  open.ended_at = now;
+  open.end_reason = 'bed_deleted';
+  return true;
 }
 
 // 在室ログの掃除。保持期間（既定7日）を主軸とし、件数上限は通常運用では作動しない
@@ -2302,15 +2335,20 @@ function pruneBedOccupancyLog(occupancyLog, retentionDays, maxEntries, now) {
     }
   }
 
-  // 安全弁：期間削除後もなお上限を超える場合のみ、クローズ済みの古い順に間引く
-  let overflow = occupancyLog.length - maxEntries;
-  for (let i = 0; i < occupancyLog.length && overflow > 0;) {
-    if (occupancyLog[i].ended_at != null) {
-      occupancyLog.splice(i, 1);
-      overflow--;
+  // 安全弁：期間削除後もなお上限を超える場合のみ、クローズ済みを退院が古い順に間引く。
+  // 期間削除と基準を揃えるため配列順(≒入院順)ではなく ended_at 順で選ぶ
+  const overflow = occupancyLog.length - maxEntries;
+  if (overflow > 0) {
+    const closedIndices = [];
+    for (let i = 0; i < occupancyLog.length; i++) {
+      if (occupancyLog[i].ended_at != null) closedIndices.push(i);
+    }
+    closedIndices.sort((a, b) => (occupancyLog[a].ended_at || 0) - (occupancyLog[b].ended_at || 0));
+    // splice で添字がずれないよう、削除対象を添字の降順に並べ替えてから消す
+    const targets = closedIndices.slice(0, overflow).sort((a, b) => b - a);
+    for (const idx of targets) {
+      occupancyLog.splice(idx, 1);
       removed++;
-    } else {
-      i++;
     }
   }
 
@@ -2776,6 +2814,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       }
       return item;
     } else {
+      // 在室ログは全件だと最大2万件になりうるため、病床指定時はサーバー側で絞る
+      // （病床履歴パネルは1病床分しか使わない。子機では転送量にも効く）
+      if (table === 'bed_occupancy_log') {
+        const bedId = searchParams.get('bed_id');
+        if (bedId) {
+          return { data: list.filter(o => String(o.bed_id) === String(bedId)) };
+        }
+      }
       return { data: list };
     }
   }
@@ -2784,6 +2830,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     let data;
     try { data = JSON.parse(bodyStr); } catch {
       return { success: false, message: 'リクエストボディのJSONが不正です' };
+    }
+    let postOccupancySource = null;
+    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
+      postOccupancySource = data._occupancySource || null;
+      delete data._occupancySource;
     }
     let normalizedLegacyTransfer = false;
     if (table === 'transfer_events' && data.current_status === 'DEPART_REGISTERED') {
@@ -2870,6 +2921,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         }
       }
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
+    }
+
+    // beds はPATCHだけでなくPOSTでも患者情報が入りうるため、同じ経路で在室ログへ反映する
+    if (table === 'beds') {
+      const occupancyNow = Date.now();
+      const afterRecord = index !== -1 ? list[index] : data;
+      applyBedOccupancyTransition(db.bed_occupancy_log, data.id, afterRecord.ward_id, beforeItem, afterRecord, occupancyNow, postOccupancySource);
+      pruneBedOccupancyLogFromDb(db, occupancyNow);
     }
 
     // ディスク・メモリの管理：ログ・通話などの蓄積データテーブルの肥大化防止（自動トリム）
@@ -3059,6 +3118,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       return { success: false, message: 'Not Found' };
     }
     const removed = list.splice(index, 1)[0];
+    if (table === 'beds') {
+      const occupancyNow = Date.now();
+      closeOpenBedOccupancyForDeletedBed(db.bed_occupancy_log, id, occupancyNow);
+      pruneBedOccupancyLogFromDb(db, occupancyNow);
+    }
     appendAuditLog(db, 'DB_DELETE', {
       targetType: table,
       targetId: id,

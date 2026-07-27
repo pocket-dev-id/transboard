@@ -197,9 +197,11 @@ Object.assign(Settings, {
     document.getElementById('btn-delete-all-beds').onclick = async () => {
       const targetBeds = AppState.beds.filter(b => b.ward_id === wardId);
       if (targetBeds.length === 0) { UI.toast('削除する病床がありません', 'info'); return; }
+      const occupiedCount = targetBeds.filter(b => b.patient_name || b.patient_id).length;
       const ok = await UI.confirmModal(`「${wardName}」の病床 ${targetBeds.length} 件をすべて削除します。`, {
         title: '病床を全削除',
-        detail: 'マップ配置情報も失われます。この操作は元に戻せません。',
+        detail: (occupiedCount > 0 ? `うち ${occupiedCount} 件は患者が在室中です（在室記録は退院扱いで閉じられます）。` : '')
+          + 'マップ配置情報も失われます。この操作は元に戻せません。',
         danger: true,
         confirmLabel: `全削除（${targetBeds.length}件）`,
       });
@@ -403,7 +405,17 @@ Object.assign(Settings, {
   async _deleteBed(bedId) {
     const bed = AppState.beds.find(b => b.id === bedId);
     if (!bed) return;
-    if (!await UI.confirmModal(`${bed.bed_number}号床を削除しますか？`, { title: '病床を削除', detail: '出棟履歴は残ります。', type: 'warning', confirmLabel: '削除' })) return;
+    const isOccupied = !!(bed.patient_name || bed.patient_id);
+    const detail = isOccupied
+      ? `この病床には患者が在室中です（${UI.getPatientName(bed.patient_name || '')}）。削除すると在室記録は退院扱いで閉じられます。出棟履歴は残ります。`
+      : '出棟履歴は残ります。';
+    if (!await UI.confirmModal(`${bed.bed_number}号床を削除しますか？`, {
+      title: '病床を削除',
+      detail,
+      type: 'warning',
+      danger: isOccupied,
+      confirmLabel: '削除',
+    })) return;
     try {
       await API.remove('beds', bedId);
       UI.toast(`${bed.bed_number}号床を削除しました`, 'info');

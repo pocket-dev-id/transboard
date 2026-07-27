@@ -373,7 +373,9 @@ const BedModal = {
     // 保持期間を過ぎた入退室記録は自動削除されるため、その旨を明示する
     // (検査室への移送記録は別の保持設定で管理され、在室記録より長く残ることがある)
     const retentionSetting = AppState.systemSettings?.find(s => s.id === 'bed_occupancy_retention_days');
-    const retentionDays = Math.max(1, parseInt(retentionSetting?.value, 10) || 7);
+    // 0や不正値の扱いをサーバー側(getSystemSettingInt＋最低1日クランプ)と揃える
+    const parsedRetention = parseInt(retentionSetting?.value, 10);
+    const retentionDays = Math.max(1, Number.isFinite(parsedRetention) ? parsedRetention : 7);
     const caveatHtml = `<div class="bed-history-caveat"><i class="fas fa-info-circle"></i> 検査室への移送を伴わない入退室は、直近${retentionDays}日間の記録のみ保持されます（それ以前は自動削除されます）。</div>`;
     if (items.length === 0) {
       bodyEl.innerHTML = '<div class="bed-history-empty">過去の入退室履歴はありません</div>' + caveatHtml;
@@ -394,18 +396,25 @@ const BedModal = {
   },
 
   // 在室ログ1件分の行(1入院〜退院の滞在)。滞在中に検査室移送があれば
-  // 展開して各移送(_renderBedHistoryRowを再利用)を表示する
+  // 展開して各移送(_renderBedHistoryRowを再利用)を表示する。
+  // 主表示は記録上の在室期間(started_at→ended_at)。看護師が入院日を遡って
+  // 入力した場合のみ、乖離が分かるよう入院日を併記する
   _renderOccupancyHistoryRow(occ, nestedEvents, index) {
     const patientName = UI.getPatientName(occ.patient_name || '');
     const hasTransfers = nestedEvents.length > 0;
     const nestedHtml = hasTransfers
       ? nestedEvents.map((e, i) => this._renderBedHistoryRow(e, `${index}-${i}`)).join('')
       : '';
+    const admissionHtml = (occ.admission_date != null && occ.started_at != null &&
+      Math.abs(occ.started_at - occ.admission_date) >= 86400000)
+      ? `<span class="bed-history-admission-date">入院日: ${this._formatDateOnly(occ.admission_date)}</span>`
+      : '';
     return `
       <div class="bed-history-occupancy-row" data-history-index="occ-${index}">
         <div class="bed-history-occupancy-row-main${hasTransfers ? '' : ' bed-history-occupancy-row-main--static'}">
           <span class="bed-history-patient">${patientName ? UI.escapeHTML(patientName) : '患者名なし'}</span>
           <span class="bed-history-time"><i class="fas fa-clock"></i> ${UI.formatDateTime(occ.started_at)} → ${occ.ended_at ? UI.formatDateTime(occ.ended_at) : '--'}</span>
+          ${admissionHtml}
           ${hasTransfers
             ? `<span class="bed-history-occupancy-badge"><i class="fas fa-exchange-alt"></i> 検査室へ移送あり (${nestedEvents.length}件)</span><i class="fas fa-chevron-down bed-history-row-caret"></i>`
             : `<span class="bed-history-no-transfer-badge">検査室への移送なし（在室のみ）</span>`}
@@ -413,6 +422,13 @@ const BedModal = {
         ${hasTransfers ? `<div class="bed-history-occupancy-detail hidden">${nestedHtml}</div>` : ''}
       </div>
     `;
+  },
+
+  // 入院日は日付入力由来で時刻が00:00になるため、時刻を出さずに整形する
+  _formatDateOnly(ms) {
+    if (!ms) return '--';
+    const d = new Date(ms);
+    return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
   },
 
   // 移送1件の進捗タイムライン(移送開始〜帰棟完了)HTML。現在進行中イベントと

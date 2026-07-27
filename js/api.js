@@ -202,10 +202,12 @@ const API = {
 
   // 指定病床の過去(退院済み)の在室記録を新しい順で返す。検査室への移送有無に関わらず
   // 入院〜退院の滞在を記録するため、transfer_eventsに現れない在室も追跡できる
+  // bed_idはサーバー側でも絞り込まれるが、絞り込み未対応の親機に接続した場合の
+  // 保険としてクライアント側のフィルタも残す（二重に絞っても結果は変わらない）
   async getOccupancyHistoryForBed(bedId) {
-    const res = await this.getAll('bed_occupancy_log');
+    const res = await this.getAll('bed_occupancy_log', { bed_id: bedId });
     return (res.data || [])
-      .filter(o => o.bed_id === bedId && o.ended_at != null)
+      .filter(o => String(o.bed_id) === String(bedId) && o.ended_at != null)
       .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
   },
 

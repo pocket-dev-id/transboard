@@ -119,9 +119,19 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 
 `transfer_events` は検査室への移送が発生した場合にしか作られないため、移送を伴わない
 入退院（登録・編集・退院、CSV取込による一括反映）を追跡できない。本テーブルは `beds`
-テーブルの患者識別子（`patient_id`優先、なければ`patient_name`）の変化を検知して
-1入院〜退院の滞在ごとに1レコードを記録する。`audit_logs`とは異なり患者氏名・IDは
-マスクされない（`beds`/`transfer_events`と同じ患者データテーブルとして保護される）。
+テーブルの在室者の変化を検知して1入院〜退院の滞在ごとに1レコードを記録する。
+`audit_logs`とは異なり患者氏名・IDはマスクされない（`beds`/`transfer_events`と同じ
+患者データテーブルとして保護される）。
+
+**同一患者の判定規則:** 前後の状態を比較し、**両者に患者IDがある場合のみ患者IDで判定、
+片方でも欠けていれば氏名で判定する**。CSV取込が氏名のみで登録した病床に後から患者IDを
+補記しても、別患者への入れ替わりと誤判定せず同一の滞在として扱うため。患者IDの
+「変更」は入れ替わりとして扱う。同一患者と判定された場合は滞在を分割せず、在室中の
+レコードの `patient_id` / `patient_name` / `admission_date` を最新値へ追従させる。
+
+※ この規則の導入以前は「患者ID優先・なければ氏名」の単一キーで比較していたため、
+患者IDの後付けで同一入院が2件に分割された記録が残っている場合がある。同一患者だったと
+確実に判定する手段が無いため、過去データの遡及マージは行わない。
 
 | フィールド | 型 | 説明 |
 |---|---|---|
@@ -133,7 +143,7 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 | `admission_date` | number \| null | 入院日時（未指定時は`started_at`と同値） |
 | `started_at` | number | 在室開始日時（サーバー側で検知した時刻） |
 | `ended_at` | number \| null | 在室終了日時（在室中は`null`） |
-| `end_reason` | string \| null | 終了理由（`discharged` / `overwritten_by_new_admission` / `csv_cleared`、在室中は`null`） |
+| `end_reason` | string \| null | 終了理由（`discharged` / `overwritten_by_new_admission` / `csv_cleared` / `bed_deleted`、在室中は`null`） |
 | `source` | string | 記録元（`manual_register` / `manual_discharge` / `csv_import` / `csv_clear` / `unknown`） |
 | `created_at` | number | レコード作成日時 |
 
@@ -145,9 +155,11 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 既存の書き込みに相乗りするため追加のI/Oは発生しない。
 
 - **在室中のレコード（`ended_at` が `null`）は日数に関わらず削除されない。** 病床あたり
-  最大1件しか存在しないため、これ自体が肥大化することはない。
+  最大1件しか存在せず、病床が削除された場合も `bed_deleted` でクローズされるため、
+  在室中のレコードが積み残ることはない。
 - 件数上限（20,000件）も併用するが、これは通常運用では作動しない安全弁であり、
-  保持期間を勝手に切り詰めないよう十分高い値に設定されている。
+  保持期間を勝手に切り詰めないよう十分高い値に設定されている。期間削除と基準を
+  揃えるため、上限超過時は `ended_at` が古い順に削除する。
 - 保持期間の設定値が `0` や負値の場合も最低1日にクランプされ、全件削除にはならない。
 
 なお `event_retention_days`（既定は無期限）とは独立した設定のため、在室レコードが

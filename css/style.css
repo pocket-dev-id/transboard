@@ -1658,6 +1658,7 @@ h1, h2, h3, h4,
 .bed-history-occupancy-row-main--static { cursor: default; }
 .bed-history-occupancy-badge { font-size: 11px; font-weight: 700; color: var(--clr-primary, var(--clr-text)); }
 .bed-history-no-transfer-badge { font-size: 11px; color: var(--clr-text-muted); }
+.bed-history-admission-date { font-size: 11px; color: var(--clr-text-muted); font-variant-numeric: tabular-nums; }
 .bed-history-occupancy-row-main.expanded .bed-history-row-caret { transform: rotate(180deg); }
 .bed-history-occupancy-detail {
   margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--clr-border);
