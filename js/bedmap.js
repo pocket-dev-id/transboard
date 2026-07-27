@@ -226,7 +226,11 @@ const BedMap = {
     let staffHtml = '';
     if (staff && CONFIG.DEPART_STATUSES.includes(status)) {
       const lastName = staff.name.split(/[\s　]/)[0];
-      staffHtml = `<div class="bed-staff-badge" style="margin-bottom:2px;"><i class="fas fa-user-nurse"></i> ${UI.escapeHTML(lastName)}</div>`;
+      // 実際に移動中(MOVING/PICKUP_REQUIRED)か、検査中等で病棟へ戻り手離れしている状態かで表示を変える
+      const isActive = CONFIG.ESCORT_ACTIVE_STATUSES.includes(status);
+      staffHtml = isActive
+        ? `<div class="bed-staff-badge bed-staff-badge--active" style="margin-bottom:2px;"><i class="fas fa-walking"></i> ${UI.escapeHTML(lastName)}</div>`
+        : `<div class="bed-staff-badge bed-staff-badge--standby" style="margin-bottom:2px;"><i class="fas fa-user-nurse"></i> ${UI.escapeHTML(lastName)}（待機）</div>`;
     }
 
     let icBadgeHtml = '';

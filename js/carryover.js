@@ -100,7 +100,14 @@ const CarryoverModal = {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
-      await API.updateEventStatus(eventId, action);
+      // 帰棟完了は前日から残った任意のステータス(IN_EXAM等)から直接RETURNEDへ倒す整理操作のため、
+      // 通常のワード遷移ルール(PICKUP_REQUIRED->RETURNEDのみ許可)をバイパスするmaintenance経路を使う
+      if (action === 'RETURNED') {
+        const target = items.find(x => x.id === eventId);
+        await API.completeEventForMaintenance(eventId, target?.current_status || null);
+      } else {
+        await API.updateEventStatus(eventId, action);
+      }
       UI.toast(action === 'RETURNED' ? '帰棟完了にしました' : '移送をキャンセルしました', 'success');
       // 盤面へ反映
       await App.refreshData();

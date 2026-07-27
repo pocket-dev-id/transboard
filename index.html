@@ -90,7 +90,7 @@
           <div class="summary-icon"><i class="fas fa-user-nurse"></i></div>
           <div class="summary-body">
             <div class="summary-value" id="cnt-escort">0</div>
-            <div class="summary-label">付き添い中</div>
+            <div class="summary-label">付き添い中<span id="cnt-escort-standby" class="text-muted" style="font-size:11px;"></span></div>
           </div>
         </div>
         <div class="summary-card alert" id="summary-pickup">
@@ -115,6 +115,9 @@
           </div>
         </div>
       </div>
+
+      <!-- 占有率・当日KPIのミニサマリー -->
+      <div id="kpi-strip"></div>
 
       <!-- メインコンテンツ -->
       <div id="dashboard-content">
@@ -170,7 +173,10 @@
         <div id="staff-status-area">
           <div class="panel-header">
             <h2><i class="fas fa-user-nurse"></i> スタッフ稼働状況</h2>
-            <span class="panel-sub">付き添い・待機・空き</span>
+            <select id="staff-status-filter" class="staff-status-filter" title="表示するスタッフを絞り込みます">
+              <option value="all">全員</option>
+              <option value="busy">稼働中のみ</option>
+            </select>
           </div>
           <div id="staff-status-panel"></div>
         </div>
@@ -288,6 +294,31 @@
         </div>
       </div>
       <div id="history-content">
+        <!-- 検査時間実績（帰棟済みの移送から自動集計） -->
+        <div class="history-panel">
+          <h3 style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <i class="fas fa-stopwatch"></i> 検査時間実績
+            <span style="display:flex; gap:8px; align-items:center; margin-left:auto; font-size:12px; font-weight:600;">
+              <select id="exam-stats-period" style="padding:4px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
+                <option value="7">直近7日</option>
+                <option value="30" selected>直近30日</option>
+                <option value="90">直近90日</option>
+                <option value="0">全期間</option>
+              </select>
+              <select id="exam-stats-groupby" style="padding:4px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
+                <option value="examType" selected>検査種別ごと</option>
+                <option value="examRoom">検査室ごと</option>
+              </select>
+              <button class="btn btn-outline btn-sm" id="btn-exam-stats-csv" style="padding:4px 10px; font-size:12px;">
+                <i class="fas fa-file-csv" style="color:#16a34a;"></i> 明細CSV
+              </button>
+            </span>
+          </h3>
+          <p style="font-size:11px; color:var(--clr-text-muted); margin:0 0 8px 0;">
+            <b>表示中の病棟</b>の帰棟済みの移送のみが集計対象です。表示できる範囲はデータ保持期間の設定（共有・ネットワーク設定）に依存します。標準時間は全病棟共通のため、更新時は件数をご確認ください。
+          </p>
+          <div id="exam-stats-table"></div>
+        </div>
         <div class="history-panel">
           <h3><i class="fas fa-list"></i> イベント一覧</h3>
           <div id="event-list"></div>

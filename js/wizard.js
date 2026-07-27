@@ -15,6 +15,7 @@ const Wizard = {
       // 再度開いたときに子機なのに親機が選択された状態で表示されてしまう。
       // localStorageの値（未設定なら初回起動とみなしローカルDBのgs()にフォールバック）を優先する。
       share_mode:                   localStorage.getItem('cfg_share_mode') || gs('share_mode') || 'parent',
+      standalone:                   localStorage.getItem('cfg_standalone_mode') === 'true',
       parent_ip:                    localStorage.getItem('cfg_parent_ip')  || gs('parent_ip')  || '',
       api_token:                    localStorage.getItem('cfg_api_token') || '',
       import_connection_type:       gs('import_connection_type')       || 'csv',
@@ -112,15 +113,20 @@ const Wizard = {
 
   // ── Step 1: 稼働モード ──────────────────────────────
   _step1() {
-    const sel = v => this.config.share_mode === v;
+    // ウィザード上は3択(単独/親機共有/子機)。standalone/parentはどちらもshare_mode='parent'に集約する
+    const role = this.config.share_mode === 'client' ? 'client' : (this.config.standalone ? 'standalone' : 'parent');
+    const sel = v => role === v;
     return `
       <h4 class="wiz-step-title">1. 稼働モードの選択</h4>
-      <p class="wiz-step-desc">このPCの役割を選択してください。すでに親機が院内にある場合は「子機モード」を選んで接続します。</p>
+      <p class="wiz-step-desc">このPCの役割を選択してください。1台だけで使う場合は「単独運用」、複数台で共有する場合は「親機」または「子機」を選びます。</p>
       <div class="wiz-radio-group">
-        ${this._radioCard('share_mode', 'parent', sel('parent'),
-          'fa-server', '親機モード（スタンドアロン / サーバー）',
-          'このPCがマスターデータと履歴を管理します。他クライアントからの接続を受け付けます。')}
-        ${this._radioCard('share_mode', 'client', sel('client'),
+        ${this._radioCard('wiz_role', 'standalone', sel('standalone'),
+          'fa-desktop', '単独運用モード（この1台だけ）',
+          'このPC1台で全工程を完結させます。接続端末表示・病棟間通話・検査室画面など複数台前提の機能は隠されます。')}
+        ${this._radioCard('wiz_role', 'parent', sel('parent'),
+          'fa-server', '親機モード（子機と共有 / サーバー）',
+          'このPCがマスターデータと履歴を管理し、子機PCからの接続を受け付けます。')}
+        ${this._radioCard('wiz_role', 'client', sel('client'),
           'fa-laptop', '子機モード（クライアント）',
           'ネットワーク上の親機PCに接続し、表示の同期・操作を行います。')}
       </div>
@@ -332,7 +338,9 @@ const Wizard = {
 
   // ── Step 4: 確認と完了 ──────────────────────────────
   _step4() {
-    const modeLabel   = this.config.share_mode === 'parent' ? '親機モード' : '子機モード';
+    const modeLabel   = this.config.share_mode === 'client'
+      ? '子機モード'
+      : (this.config.standalone ? '単独運用モード（この1台だけ）' : '親機モード（子機と共有）');
     const connLabels  = { csv: 'CSVファイル連携', odbc: 'ODBCデータベース連携', none: '手動入力' };
     const admLabels   = { csv: 'CSVインポート', manual: '手動登録', hybrid: 'ハイブリッド' };
     const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', apple: 'Apple (Human Interface)', material: 'Google (Material Design)', fluent: 'Microsoft (Fluent 2)', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
@@ -368,6 +376,15 @@ const Wizard = {
         </div>
       </div>` : '';
 
+    const standaloneNote = (this.config.share_mode === 'parent' && this.config.standalone) ? `
+      <div class="wiz-callout wiz-callout-info">
+        <i class="fas fa-desktop"></i>
+        <div>
+          <strong>単独運用モード — この1台だけで運用します</strong><br>
+          <span style="font-size:11px; font-weight:400;">検査室画面・病棟間通話・接続端末表示は隠されます。全工程を病棟画面から操作してください。あとから子機を追加する場合は「共有・ネットワーク設定」でOFFにできます。</span>
+        </div>
+      </div>` : '';
+
     const demoCheck = this.config.share_mode === 'parent' ? `
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:700; margin-top:14px; color:var(--clr-text);">
         <input type="checkbox" id="wizard-insert-demo" ${this.config.insert_demo ? 'checked' : ''}>
@@ -381,6 +398,7 @@ const Wizard = {
         ${tableRows}
       </table>
       ${clientWarning}
+      ${standaloneNote}
       ${demoCheck}
     `;
   },
@@ -433,11 +451,12 @@ const Wizard = {
     // 完了
     document.getElementById('wizard-finish')?.addEventListener('click', () => this.finish());
 
-    // Step 1: 稼働モード切り替え
-    overlay.querySelectorAll('input[name="share_mode"]').forEach(r => {
+    // Step 1: 稼働モード切り替え（単独/親機共有/子機の3択→share_mode+standaloneに集約）
+    overlay.querySelectorAll('input[name="wiz_role"]').forEach(r => {
       r.addEventListener('change', () => {
         this._saveCurrentStepState();
-        this.config.share_mode = r.value;
+        this.config.share_mode = r.value === 'client' ? 'client' : 'parent';
+        this.config.standalone = r.value === 'standalone';
         this._renderModal();
       });
     });
@@ -607,8 +626,11 @@ const Wizard = {
 
   _saveCurrentStepState() {
     if (this.currentStep === 1) {
-      const r = document.querySelector('input[name="share_mode"]:checked');
-      if (r) this.config.share_mode = r.value;
+      const r = document.querySelector('input[name="wiz_role"]:checked');
+      if (r) {
+        this.config.share_mode = r.value === 'client' ? 'client' : 'parent';
+        this.config.standalone = r.value === 'standalone';
+      }
       const ip = document.getElementById('wizard-parent-ip');
       if (ip) this.config.parent_ip = ip.value.trim();
       const token = document.getElementById('wizard-api-token');
@@ -679,6 +701,9 @@ const Wizard = {
       localStorage.setItem('cfg_share_mode', this.config.share_mode);
       localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
       localStorage.setItem('cfg_api_token', this.config.api_token || '');
+      // 単独運用モードは親機のときのみ有効な端末ローカルの表示フラグ
+      localStorage.setItem('cfg_standalone_mode',
+        (this.config.share_mode === 'parent' && this.config.standalone) ? 'true' : 'false');
 
       // 稼働モード・親機IPはこの端末自身のローカルDBにも書き込む
       // （main.jsが起動時にローカルDBの share_mode を見て共有サーバーの起動を判定するため。
@@ -752,6 +777,9 @@ const Wizard = {
       await App.loadMasters();
       await App.refreshData();
       await App.applySystemVisualSettings();
+      // 単独運用モードのUI反映（検査室タブ・通話ボタン・接続端末チップ）とポーリング再判定
+      App._applyStandaloneMode();
+      App._startDevicePresenceMonitor();
       WardDashboard.render();
       this.close();
     } catch (err) {

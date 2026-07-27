@@ -3517,3 +3517,38 @@ body.theme-fluent #app-header {
 .device-popover-more {
   padding: 8px 0 2px;
 }
+
+/* ───────────────────────────────────────────────
+   占有率・当日KPIサマリー（ダッシュボード上部）
+   ─────────────────────────────────────────────── */
+#kpi-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-left: 3px solid var(--clr-primary);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--clr-text);
+}
+#kpi-strip:empty { display: none; }
+.kpi-item { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.kpi-item b { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.kpi-k { color: var(--clr-text-muted); font-weight: 700; }
+.kpi-sub { color: var(--clr-text-muted); font-size: 11px; }
+.kpi-div { width: 1px; align-self: stretch; background: var(--clr-border); }
+
+/* 検査時間実績テーブル */
+.exam-stats-table { font-size: 12px; }
+.exam-stats-table th { white-space: nowrap; }
+.exam-stats-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.exam-stats-over { color: #dc2626; font-weight: 800; }   /* 実績が標準を超過 */
+.exam-stats-under { color: #16a34a; font-weight: 800; }  /* 実績が標準より短い */
+body.theme-dark .exam-stats-over { color: #fca5a5; }
+body.theme-dark .exam-stats-under { color: #86efac; }
+body.theme-high-contrast .exam-stats-over,
+body.theme-high-contrast .exam-stats-under { color: #ffff00; }

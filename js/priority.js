@@ -7,10 +7,17 @@ const Priority = {
   renderSummary() {
     const s = AppState.getSummary();
     document.getElementById('cnt-depart').textContent = s.depart;
-    document.getElementById('cnt-escort').textContent = s.escort;
+    document.getElementById('cnt-escort').textContent = s.escortActive;
     document.getElementById('cnt-pickup').textContent = s.pickup;
     document.getElementById('cnt-soon').textContent = s.soon;
     document.getElementById('cnt-delay').textContent = s.delay;
+
+    // 「付き添い中」の数字は実際に移動している人数のみ。検査中などで病棟へ戻り
+    // 手離れしているスタッフの人数は添字で補足する
+    const standbyEl = document.getElementById('cnt-escort-standby');
+    if (standbyEl) {
+      standbyEl.textContent = s.escortStandby > 0 ? `（待機${s.escortStandby}）` : '';
+    }
 
     // 迎え要がある場合はヘッダー点滅
     const pickupCard = document.getElementById('summary-pickup');
@@ -19,6 +26,55 @@ const Priority = {
     } else {
       pickupCard.style.animation = '';
     }
+  },
+
+  // 占有率（在床/空床/稼働率）と当日KPI（出棟件数・平均検査時間・迎え待ち平均）を1行で表示
+  renderKpi() {
+    const el = document.getElementById('kpi-strip');
+    if (!el) return;
+
+    const wardId = AppState.currentWardId;
+    const beds = (AppState.beds || []).filter(b => b.ward_id === wardId);
+    const total = beds.length;
+    const occupied = beds.filter(b => b.patient_name).length;   // 患者割当あり
+    const present = beds.filter(b => b.patient_name && b.is_present).length;
+    const absent = occupied - present;
+    const empty = total - occupied;
+    const rate = total ? Math.round(occupied / total * 100) : 0;
+
+    // 当日KPI: 本日の帰棟済み移送から平均を算出（ExamStats.computeMetricsを再利用）
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
+    const events = AppState.todayEvents || [];
+    // 「移動中」を記録しない運用でも出棟登録した時点でカウントするため、
+    // departed_at（移動中で記録）が無ければ created_at（出棟登録時刻）で判定する
+    const departsToday = events.filter(e => (e.departed_at || e.created_at || 0) >= todayMs).length;
+
+    const examVals = [], pickupVals = [];
+    if (typeof ExamStats !== 'undefined') {
+      events.filter(e => e.current_status === 'RETURNED').forEach(e => {
+        const m = ExamStats.computeMetrics(e);
+        if (m) {
+          if (m.exam != null) examVals.push(m.exam);
+          if (m.pickup != null) pickupVals.push(m.pickup);
+        }
+      });
+    }
+    const avg = arr => arr.length ? Math.round(arr.reduce((s, x) => s + x, 0) / arr.length) : null;
+    const examAvg = avg(examVals);
+    const pickupAvg = avg(pickupVals);
+
+    const absentNote = absent > 0 ? `<span class="kpi-sub">（不在${absent}）</span>` : '';
+    const examPart = examAvg != null ? `<span class="kpi-item"><span class="kpi-k">平均検査</span> <b>${examAvg}</b>分</span>` : '';
+    const pickupPart = pickupAvg != null ? `<span class="kpi-item"><span class="kpi-k">迎え待ち平均</span> <b>${pickupAvg}</b>分</span>` : '';
+
+    el.innerHTML = `
+      <span class="kpi-item kpi-rate"><span class="kpi-k">稼働率</span> <b>${rate}%</b> <span class="kpi-sub">在床${present} / 空床${empty}</span>${absentNote}</span>
+      <span class="kpi-div"></span>
+      <span class="kpi-item"><span class="kpi-k">本日 出棟</span> <b>${departsToday}</b>件</span>
+      ${examPart}
+      ${pickupPart}`;
   },
 
   renderPriorityList() {
@@ -84,7 +140,15 @@ const Priority = {
           ${event.departed_at ? ' | ' + UI.formatTime(event.departed_at) + '出棟' : ''}
         </div>
         ${timeHtml}
-        ${event.escort_staff_id ? `<div class="text-xs text-muted"><i class="fas fa-user-nurse"></i> ${AppState.getStaffById(event.escort_staff_id)?.name || '--'}</div>` : ''}
+        ${(() => {
+          if (!event.escort_staff_id) return '';
+          const staffName = UI.escapeHTML(AppState.getStaffById(event.escort_staff_id)?.name || '--');
+          // 実際に移動中(MOVING/PICKUP_REQUIRED)か、検査中等で病棟待機中かで表示を変える
+          const isActive = CONFIG.ESCORT_ACTIVE_STATUSES.includes(status);
+          return isActive
+            ? `<div class="text-xs priority-escort priority-escort--active"><i class="fas fa-walking"></i> ${staffName}</div>`
+            : `<div class="text-xs priority-escort priority-escort--standby"><i class="fas fa-user-nurse"></i> ${staffName}（待機）</div>`;
+        })()}
       </div>
     `;
   },
@@ -95,6 +159,8 @@ const StaffStatus = {
     const panel = document.getElementById('staff-status-panel');
     if (!panel) return;
 
+    // 「稼働中のみ」フィルタでは空き(free)のスタッフを除外する
+    const filter = localStorage.getItem('cfg_staff_filter') || 'all';
     const wardStaffs = (AppState.staffs || []).filter(staff =>
       !staff.ward_id || staff.ward_id === AppState.currentWardId
     );
@@ -115,8 +181,16 @@ const StaffStatus = {
     const showNames = localStorage.getItem('cfg_show_patient_names') === 'true' ||
       document.getElementById('chk-show-patient-names')?.checked === true;
 
-    panel.innerHTML = wardStaffs.map(staff => {
-      const event = assignedByStaff.get(staff.id);
+    const rows = wardStaffs
+      .map(staff => ({ staff, event: assignedByStaff.get(staff.id) }))
+      .filter(({ event }) => filter === 'busy' ? !!event : true);
+
+    if (rows.length === 0) {
+      panel.innerHTML = '<div class="empty-state"><i class="fas fa-user-nurse"></i><p>稼働中のスタッフはいません</p></div>';
+      return;
+    }
+
+    panel.innerHTML = rows.map(({ staff, event }) => {
       const bed = event ? AppState.getBedById(event.bed_id) : null;
       const state = this._classify(event);
       const patientName = event?.patient_name || bed?.patient_name || '';
@@ -153,7 +227,7 @@ const StaffStatus = {
 
   _classify(event) {
     if (!event) return { cls: 'free', label: '空き', icon: 'fa-check-circle' };
-    if (['DEPART_REGISTERED', 'MOVING', 'PICKUP_REQUIRED'].includes(event.current_status)) {
+    if (CONFIG.ESCORT_ACTIVE_STATUSES.includes(event.current_status)) {
       return { cls: 'active', label: '付き添い中', icon: 'fa-walking' };
     }
     return { cls: 'standby', label: '病棟待機', icon: 'fa-hourglass-half' };
