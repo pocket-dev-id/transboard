@@ -304,7 +304,8 @@ const SEEDS = {
     { id: "soon_threshold_min", value: "15" },
     { id: "status_colors", value: "{}" },
     { id: "action_button_labels", value: "{}" },
-    { id: "hidden_statuses", value: "[]" }
+    { id: "hidden_statuses", value: "[]" },
+    { id: "bed_occupancy_retention_days", value: "7" }
   ],
   transfer_events: [],
   transfer_status_logs: [],
@@ -313,7 +314,8 @@ const SEEDS = {
   import_logs: [],
   schedule_feeds: [],
   schedule_items: [],
-  handover_notes: []
+  handover_notes: [],
+  bed_occupancy_log: []
 };
 
 // センシティブな設定情報の暗号化リストと暗号・復号ヘルパー
@@ -321,6 +323,10 @@ const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_to
 const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 5000;
+// 在室ログの保持は bed_occupancy_retention_days（既定7日）が主軸。この件数上限は
+// 通常運用では作動しない安全弁で、最長90日設定でも現実的な回転率に対し十分な余裕がある。
+const BED_OCCUPANCY_LOG_MAX_ENTRIES = 20000;
+const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 
 function encryptSensitiveValue(value) {
   if (!value) return value;
@@ -564,6 +570,10 @@ function readDB() {
     }
     if (!db.handover_notes) {
       db.handover_notes = [];
+      hasDuplicates = true;
+    }
+    if (!db.bed_occupancy_log) {
+      db.bed_occupancy_log = [];
       hasDuplicates = true;
     }
     if (!db.transfer_events) {
@@ -2122,12 +2132,13 @@ const ALLOWED_TABLES = new Set([
   'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs',
   'system_settings', 'transfer_events', 'transfer_status_logs',
   'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
-  'audit_logs', 'handover_notes',
+  'audit_logs', 'handover_notes', 'bed_occupancy_log',
 ]);
 
 // 患者情報（氏名・ID）を含むテーブル。外部HTTPアクセス時はAPIトークン必須（セキュリティ: A-2）
 // 申し送りメモ(handover_notes)は本文に患者名等が入りうるため患者データ扱いとする
-const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes']);
+// bed_occupancy_logは非マスクの氏名・IDを保持するため同様に患者データ扱いとする
+const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes', 'bed_occupancy_log']);
 const ACTIVE_TRANSFER_STATUSES = new Set([
   'DEPART_REGISTERED',
   'MOVING',
@@ -2230,6 +2241,126 @@ function activeBedConflictResponse(conflict) {
     existingEventId: conflict?.id || null,
     currentStatus: conflict?.current_status || null,
   };
+}
+
+// bed のPATCH前後で在室者を比較し、検査室移送を伴わない入退院・患者入替も
+// bed_occupancy_log に記録する。transfer_events に依存しないため、移送なしの
+// 在室も履歴として残せる。
+function bedOccupancyHasOccupant(rec) {
+  return !!(rec && (rec.patient_id || rec.patient_name));
+}
+
+// 同一患者かどうか。両者に患者IDがある場合のみIDで判定し、片方でも欠けていれば
+// 氏名で判定する。CSV取込が氏名のみで登録した病床に後から患者IDを補記しても
+// 別患者への入れ替わりと誤判定しないため（IDの「変更」は入れ替わりとして扱う）。
+function isSameBedOccupant(before, after) {
+  if (!bedOccupancyHasOccupant(before) || !bedOccupancyHasOccupant(after)) return false;
+  if (before.patient_id && after.patient_id) {
+    return String(before.patient_id) === String(after.patient_id);
+  }
+  return String(before.patient_name || '') === String(after.patient_name || '');
+}
+
+function findOpenBedOccupancy(occupancyLog, bedId) {
+  return (occupancyLog || []).find(o => String(o.bed_id) === String(bedId) && o.ended_at == null) || null;
+}
+
+function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after, now, source) {
+  const hadOccupant = bedOccupancyHasOccupant(before);
+  const hasOccupant = bedOccupancyHasOccupant(after);
+  if (!hadOccupant && !hasOccupant) return;
+
+  const open = findOpenBedOccupancy(occupancyLog, bedId);
+
+  // 同一患者の情報が更新されただけ（患者IDの補記・氏名や入院日の修正）の場合は
+  // 滞在を分割せず、在室中のレコードを最新値へ追従させる
+  if (hadOccupant && hasOccupant && isSameBedOccupant(before, after)) {
+    if (open) {
+      open.patient_id = after.patient_id || null;
+      open.patient_name = after.patient_name || null;
+      if (after.admission_date != null) open.admission_date = after.admission_date;
+    }
+    return;
+  }
+
+  if (hadOccupant && open) {
+    open.ended_at = now;
+    open.end_reason = source === 'csv_clear' ? 'csv_cleared' : (hasOccupant ? 'overwritten_by_new_admission' : 'discharged');
+  }
+  if (hasOccupant) {
+    occupancyLog.push({
+      id: `bed-occ-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      bed_id: bedId,
+      ward_id: wardId || null,
+      patient_name: after.patient_name || null,
+      patient_id: after.patient_id || null,
+      admission_date: after.admission_date != null ? after.admission_date : now,
+      started_at: now,
+      ended_at: null,
+      end_reason: null,
+      source: source || 'unknown',
+      created_at: now,
+    });
+  }
+}
+
+// 病床そのものが削除された場合に在室中のレコードを閉じる。閉じずに放置すると
+// 対象の病床が存在しないため二度とクローズされず、掃除も在室中を除外するため
+// 永久に残ってしまう
+function closeOpenBedOccupancyForDeletedBed(occupancyLog, bedId, now) {
+  const open = findOpenBedOccupancy(occupancyLog, bedId);
+  if (!open) return false;
+  open.ended_at = now;
+  open.end_reason = 'bed_deleted';
+  return true;
+}
+
+// 在室ログの掃除。保持期間（既定7日）を主軸とし、件数上限は通常運用では作動しない
+// 安全弁として併用する。件数のみで間引くと病床数・回転率次第で保持期間が勝手に
+// 縮み「入退院のたびに過去の記録が消える」挙動になるため、期間を主軸に据えている。
+// 在室中のエントリ（ended_at == null）は期間・件数いずれの理由でも削除しない
+// （病床あたり最大1件しか存在しないため、これ自体が無制限に増えることはない）。
+// 戻り値は削除件数。
+function pruneBedOccupancyLog(occupancyLog, retentionDays, maxEntries, now) {
+  // 設定値が0や負値でも「全件即削除」にならないよう最低1日にクランプする
+  const days = Math.max(1, retentionDays);
+  const cutoff = now - days * 24 * 60 * 60 * 1000;
+  let removed = 0;
+
+  for (let i = occupancyLog.length - 1; i >= 0; i--) {
+    const entry = occupancyLog[i];
+    if (entry.ended_at != null && entry.ended_at < cutoff) {
+      occupancyLog.splice(i, 1);
+      removed++;
+    }
+  }
+
+  // 安全弁：期間削除後もなお上限を超える場合のみ、クローズ済みを退院が古い順に間引く。
+  // 期間削除と基準を揃えるため配列順(≒入院順)ではなく ended_at 順で選ぶ
+  const overflow = occupancyLog.length - maxEntries;
+  if (overflow > 0) {
+    const closedIndices = [];
+    for (let i = 0; i < occupancyLog.length; i++) {
+      if (occupancyLog[i].ended_at != null) closedIndices.push(i);
+    }
+    closedIndices.sort((a, b) => (occupancyLog[a].ended_at || 0) - (occupancyLog[b].ended_at || 0));
+    // splice で添字がずれないよう、削除対象を添字の降順に並べ替えてから消す
+    const targets = closedIndices.slice(0, overflow).sort((a, b) => b - a);
+    for (const idx of targets) {
+      occupancyLog.splice(idx, 1);
+      removed++;
+    }
+  }
+
+  return removed;
+}
+
+// 設定値を読んで在室ログを掃除する。db.bed_occupancy_log を直接書き換えるため、
+// 呼び出し側は既存の writeDB(db) にそのまま相乗りできる（追加のI/Oは発生しない）
+function pruneBedOccupancyLogFromDb(db, now = Date.now()) {
+  if (!db.bed_occupancy_log || db.bed_occupancy_log.length === 0) return 0;
+  const days = getSystemSettingInt(db, 'bed_occupancy_retention_days', BED_OCCUPANCY_RETENTION_DAYS_DEFAULT);
+  return pruneBedOccupancyLog(db.bed_occupancy_log, days, BED_OCCUPANCY_LOG_MAX_ENTRIES, now);
 }
 
 function statusMismatchConflictResponse(expectedStatus, current) {
@@ -2683,6 +2814,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       }
       return item;
     } else {
+      // 在室ログは全件だと最大2万件になりうるため、病床指定時はサーバー側で絞る
+      // （病床履歴パネルは1病床分しか使わない。子機では転送量にも効く）
+      if (table === 'bed_occupancy_log') {
+        const bedId = searchParams.get('bed_id');
+        if (bedId) {
+          return { data: list.filter(o => String(o.bed_id) === String(bedId)) };
+        }
+      }
       return { data: list };
     }
   }
@@ -2691,6 +2830,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     let data;
     try { data = JSON.parse(bodyStr); } catch {
       return { success: false, message: 'リクエストボディのJSONが不正です' };
+    }
+    let postOccupancySource = null;
+    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
+      postOccupancySource = data._occupancySource || null;
+      delete data._occupancySource;
     }
     let normalizedLegacyTransfer = false;
     if (table === 'transfer_events' && data.current_status === 'DEPART_REGISTERED') {
@@ -2779,6 +2923,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
     }
 
+    // beds はPATCHだけでなくPOSTでも患者情報が入りうるため、同じ経路で在室ログへ反映する
+    if (table === 'beds') {
+      const occupancyNow = Date.now();
+      const afterRecord = index !== -1 ? list[index] : data;
+      applyBedOccupancyTransition(db.bed_occupancy_log, data.id, afterRecord.ward_id, beforeItem, afterRecord, occupancyNow, postOccupancySource);
+      pruneBedOccupancyLogFromDb(db, occupancyNow);
+    }
+
     // ディスク・メモリの管理：ログ・通話などの蓄積データテーブルの肥大化防止（自動トリム）
     if (table === 'import_logs' && list.length > 100) {
       list.splice(0, list.length - 100);
@@ -2853,15 +3005,27 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       }
       const updatedItems = [];
       const beforeItems = [];
+      const bulkOccupancyNow = Date.now();
       bulkData.forEach(patchItem => {
         const targetId = patchItem.id;
+        const occupancySource = patchItem._occupancySource;
+        if (Object.prototype.hasOwnProperty.call(patchItem, '_occupancySource')) {
+          delete patchItem._occupancySource;
+        }
         const index = list.findIndex(x => String(x.id) === String(targetId));
         if (index !== -1) {
-          beforeItems.push(JSON.parse(JSON.stringify(list[index])));
+          const beforeSnap = JSON.parse(JSON.stringify(list[index]));
+          beforeItems.push(beforeSnap);
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
+          if (table === 'beds') {
+            applyBedOccupancyTransition(db.bed_occupancy_log, targetId, list[index].ward_id, beforeSnap, list[index], bulkOccupancyNow, occupancySource);
+          }
         }
       });
+      if (table === 'beds') {
+        pruneBedOccupancyLogFromDb(db, bulkOccupancyNow);
+      }
       appendAuditLog(db, 'DB_BULK_UPDATE', {
         targetType: table,
         targetId: 'bulk',
@@ -2899,6 +3063,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       expectedStatus = data.expectedStatus || null;
       delete data.expectedStatus;
     }
+    let occupancySource = null;
+    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
+      occupancySource = data._occupancySource || null;
+      delete data._occupancySource;
+    }
     if (expectedStatus && list[index].current_status !== expectedStatus) {
       return statusMismatchConflictResponse(expectedStatus, list[index]);
     }
@@ -2921,6 +3090,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     const beforeItem = JSON.parse(JSON.stringify(list[index]));
     list[index] = { ...list[index], ...data };
+    if (table === 'beds') {
+      const occupancyNow = Date.now();
+      applyBedOccupancyTransition(db.bed_occupancy_log, id, list[index].ward_id, beforeItem, list[index], occupancyNow, occupancySource);
+      pruneBedOccupancyLogFromDb(db, occupancyNow);
+    }
     appendAuditLog(db, 'DB_UPDATE', {
       targetType: table,
       targetId: id,
@@ -2944,6 +3118,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       return { success: false, message: 'Not Found' };
     }
     const removed = list.splice(index, 1)[0];
+    if (table === 'beds') {
+      const occupancyNow = Date.now();
+      closeOpenBedOccupancyForDeletedBed(db.bed_occupancy_log, id, occupancyNow);
+      pruneBedOccupancyLogFromDb(db, occupancyNow);
+    }
     appendAuditLog(db, 'DB_DELETE', {
       targetType: table,
       targetId: id,
@@ -4226,6 +4405,15 @@ app.whenReady().then(() => {
 
   // ネットワーク共有モードに基づき、必要に応じて親機サーバーを起動
   const db = readDB();
+
+  // 病床の更新が長期間発生しない環境でも保持期間が守られるよう、起動時に1回掃除する。
+  // 実際に削除が発生したときだけ書き込む
+  const prunedOccupancy = pruneBedOccupancyLogFromDb(db);
+  if (prunedOccupancy > 0) {
+    console.log(`[DB Cleaner] Pruned ${prunedOccupancy} expired bed_occupancy_log entries at startup.`);
+    writeDB(db);
+  }
+
   const shareModeSetting = db.system_settings?.find(s => s.id === 'share_mode') || { value: shareMode };
   if (normalizeShareMode(shareModeSetting.value) !== 'client') {
     startParentServer();

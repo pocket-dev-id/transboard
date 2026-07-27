@@ -862,7 +862,8 @@ const App = {
               id: bed.id,
               patient_name: hasPatient && patientName !== emptyBedLabel ? patientName : null,
               patient_id: hasPatient && patientName !== emptyBedLabel ? patientId : null,
-              is_present: hasPatient && patientName !== emptyBedLabel ? isPresent : false
+              is_present: hasPatient && patientName !== emptyBedLabel ? isPresent : false,
+              _occupancySource: 'csv_import'
             };
 
             listedBedIds.add(bed.id);
@@ -890,7 +891,7 @@ const App = {
               if (!listedBedIds.has(bed.id) && (bed.patient_name || bed.patient_id) && !activeBedIds.has(bed.id)) {
                 // ハイブリッドモードでは手動登録済み病床をCSVクリアから保護
                 if (admMode === 'hybrid' && bed.manually_registered) continue;
-                bulkUpdates.push({ id: bed.id, patient_name: null, patient_id: null, is_present: false });
+                bulkUpdates.push({ id: bed.id, patient_name: null, patient_id: null, is_present: false, _occupancySource: 'csv_clear' });
                 clearCount++;
               }
             }

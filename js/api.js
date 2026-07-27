@@ -190,6 +190,27 @@ const API = {
     return res.data.filter(e => e.ward_id === wardId);
   },
 
+  // 指定病床の過去(帰棟済み/キャンセル)の移送履歴を新しい順で返す。
+  // 進行中のイベントは対象外(excludeEventIdは念のための二重防御)
+  async getPastEventsForBed(bedId, wardId, excludeEventId = null) {
+    const all = await this.getAllEventsForWard(wardId);
+    return all
+      .filter(e => e.bed_id === bedId && e.id !== excludeEventId &&
+        (e.current_status === 'RETURNED' || e.current_status === 'CANCELLED'))
+      .sort((a, b) => (b.returned_at || b.created_at || 0) - (a.returned_at || a.created_at || 0));
+  },
+
+  // 指定病床の過去(退院済み)の在室記録を新しい順で返す。検査室への移送有無に関わらず
+  // 入院〜退院の滞在を記録するため、transfer_eventsに現れない在室も追跡できる
+  // bed_idはサーバー側でも絞り込まれるが、絞り込み未対応の親機に接続した場合の
+  // 保険としてクライアント側のフィルタも残す（二重に絞っても結果は変わらない）
+  async getOccupancyHistoryForBed(bedId) {
+    const res = await this.getAll('bed_occupancy_log', { bed_id: bedId });
+    return (res.data || [])
+      .filter(o => String(o.bed_id) === String(bedId) && o.ended_at != null)
+      .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
+  },
+
   async getScheduleFeeds() {
     const res = await this.getAll('schedule_feeds');
     return res.data || [];
