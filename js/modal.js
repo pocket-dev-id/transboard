@@ -370,7 +370,11 @@ const BedModal = {
     if (!bodyEl || !this._historyCache) return;
 
     const items = this._historyCache.items;
-    const caveatHtml = '<div class="bed-history-caveat"><i class="fas fa-info-circle"></i> 検査室への移送を伴わない入退室は、本機能導入日以降の記録のみ表示されます。</div>';
+    // 保持期間を過ぎた入退室記録は自動削除されるため、その旨を明示する
+    // (検査室への移送記録は別の保持設定で管理され、在室記録より長く残ることがある)
+    const retentionSetting = AppState.systemSettings?.find(s => s.id === 'bed_occupancy_retention_days');
+    const retentionDays = Math.max(1, parseInt(retentionSetting?.value, 10) || 7);
+    const caveatHtml = `<div class="bed-history-caveat"><i class="fas fa-info-circle"></i> 検査室への移送を伴わない入退室は、直近${retentionDays}日間の記録のみ保持されます（それ以前は自動削除されます）。</div>`;
     if (items.length === 0) {
       bodyEl.innerHTML = '<div class="bed-history-empty">過去の入退室履歴はありません</div>' + caveatHtml;
       return;

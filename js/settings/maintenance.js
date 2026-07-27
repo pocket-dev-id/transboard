@@ -27,6 +27,9 @@ Object.assign(Settings, {
     const eventRetentionSetting = AppState.systemSettings?.find(s => s.id === 'event_retention_days') || { value: '0' };
     const eventRetentionDays = eventRetentionSetting.value;
 
+    const bedOccupancyRetentionSetting = AppState.systemSettings?.find(s => s.id === 'bed_occupancy_retention_days') || { value: '7' };
+    const bedOccupancyRetentionDays = bedOccupancyRetentionSetting.value;
+
     const lastBackupAt = dbInfo?.lastBackupAt || null;
     const lastBackupDaysAgo = lastBackupAt ? Math.floor((Date.now() - lastBackupAt) / 86400000) : null;
 
@@ -92,10 +95,10 @@ Object.assign(Settings, {
         </div>
       </div>
 
-      <!-- 移送履歴データの保持期間設定 -->
+      <!-- 履歴データの保持期間設定 -->
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
-          <h3><i class="fas fa-trash-alt"></i> 移送履歴データの自動削除</h3>
+          <h3><i class="fas fa-trash-alt"></i> 履歴データの自動削除</h3>
           <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
         </div>
         <p class="settings-note" style="margin-bottom:12px;">
@@ -117,6 +120,23 @@ Object.assign(Settings, {
           <button class="btn btn-outline btn-sm" id="btn-run-event-cleanup" style="border-color:#ef4444; color:#ef4444;">
             <i class="fas fa-broom"></i> 今すぐ削除を実行
           </button>
+        </div>
+
+        <p class="settings-note" style="margin-top:16px; margin-bottom:12px; padding-top:14px; border-top:1px dashed var(--clr-border);">
+          病床の入退室記録（検査室への移送を伴わないものを含む）を、指定した日数より古い場合に自動削除します。
+          入退院のたびに増える記録のため、無期限には設定できません。現在入院中の患者の記録は日数に関わらず保持されます。
+        </p>
+        <div class="form-row" style="max-width:320px;">
+          <label>病床の入退室記録の保持期間</label>
+          <select id="cfg-bed-occupancy-retention-days" style="width:100%; padding:6px; border:1px solid var(--clr-border); border-radius:6px; font-size:12px; cursor:pointer;">
+            <option value="7"  ${bedOccupancyRetentionDays === '7'  ? 'selected' : ''}>7日間（既定）</option>
+            <option value="14" ${bedOccupancyRetentionDays === '14' ? 'selected' : ''}>14日間（約2週間）</option>
+            <option value="30" ${bedOccupancyRetentionDays === '30' ? 'selected' : ''}>30日間（約1ヶ月）</option>
+            <option value="90" ${bedOccupancyRetentionDays === '90' ? 'selected' : ''}>90日間（約3ヶ月）</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn btn-primary btn-sm" id="btn-save-bed-occupancy-retention"><i class="fas fa-save"></i> 保持期間を保存</button>
         </div>
       </div>
 
@@ -339,6 +359,26 @@ Object.assign(Settings, {
           UI.toast('保存に失敗しました: ' + e.message, 'danger');
         } finally {
           saveRetentionBtn.disabled = false;
+        }
+      };
+    }
+
+    // ── 病床の入退室記録の保持期間 ──
+    // 掃除は親機側で書き込み時・起動時に自動実行されるため「今すぐ実行」は設けない
+    const saveOccupancyRetentionBtn = document.getElementById('btn-save-bed-occupancy-retention');
+    if (saveOccupancyRetentionBtn) {
+      saveOccupancyRetentionBtn.onclick = async () => {
+        const val = document.getElementById('cfg-bed-occupancy-retention-days')?.value || '7';
+        saveOccupancyRetentionBtn.disabled = true;
+        try {
+          await API.patch('system_settings', 'bed_occupancy_retention_days', { value: val });
+          const obj = AppState.systemSettings?.find(s => s.id === 'bed_occupancy_retention_days');
+          if (obj) obj.value = val; else AppState.systemSettings.push({ id: 'bed_occupancy_retention_days', value: val });
+          UI.toast('保持期間を保存しました', 'success');
+        } catch (e) {
+          UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        } finally {
+          saveOccupancyRetentionBtn.disabled = false;
         }
       };
     }
