@@ -89,7 +89,8 @@ const BedModal = {
         try {
           await API.patch('beds', bedId, {
             patient_name: null, patient_id: null, is_present: false,
-            admission_date: null, patient_note: null, manually_registered: false
+            admission_date: null, patient_note: null, manually_registered: false,
+            _occupancySource: 'manual_discharge'
           });
           API.writeAuditLog('PATIENT_DISCHARGE', {
             targetType: 'bed', targetId: bedId,
@@ -320,7 +321,9 @@ const BedModal = {
   },
 
   // 病床履歴の取得(初回トグル時のみ)＋一覧描画。_historyCacheへ結果をキャッシュし、
-  // 同一モーダル表示中の再トグルでは再フェッチしない
+  // 同一モーダル表示中の再トグルでは再フェッチしない。
+  // 検査室移送履歴(transfer_events)と在室ログ(bed_occupancy_log、移送を伴わない
+  // 入退院も含む)を並行取得し、1入院〜退院の滞在ごとに統合する
   async _loadBedHistory(bedId) {
     const bodyEl = document.getElementById('bed-history-body');
     if (!bodyEl) return;
@@ -328,8 +331,11 @@ const BedModal = {
     if (!this._historyCache || this._historyCache.bedId !== bedId) {
       bodyEl.innerHTML = '<div class="bed-history-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>';
       try {
-        const events = await API.getPastEventsForBed(bedId, AppState.currentWardId, this.currentEventId);
-        this._historyCache = { bedId, events };
+        const [events, occupancy] = await Promise.all([
+          API.getPastEventsForBed(bedId, AppState.currentWardId, this.currentEventId),
+          API.getOccupancyHistoryForBed(bedId),
+        ]);
+        this._historyCache = { bedId, items: this._mergeBedHistory(events, occupancy) };
       } catch (err) {
         console.error('[BedHistory]', err);
         bodyEl.innerHTML = '<div class="bed-history-empty">履歴の取得に失敗しました</div>';
@@ -339,24 +345,70 @@ const BedModal = {
     this._renderBedHistoryList();
   },
 
+  // 在室ログの各滞在(started_at〜ended_at)に含まれるtransfer_eventsを入れ子にする。
+  // 在室ログに紐付かない(＝本機能導入前からの)transfer_eventsは単独行のまま残す
+  _mergeBedHistory(events, occupancy) {
+    const claimedEventIds = new Set();
+    const occupancyItems = occupancy.map(occ => {
+      const nested = events.filter(e => {
+        const t = e.departed_at || e.created_at;
+        return t != null && occ.started_at != null && occ.ended_at != null && t >= occ.started_at && t <= occ.ended_at;
+      });
+      nested.forEach(e => claimedEventIds.add(e.id));
+      nested.sort((a, b) => (b.departed_at || b.created_at || 0) - (a.departed_at || a.created_at || 0));
+      return { type: 'occupancy', time: occ.ended_at, occupancy: occ, nestedEvents: nested };
+    });
+    const standaloneItems = events
+      .filter(e => !claimedEventIds.has(e.id))
+      .map(e => ({ type: 'event', time: e.returned_at || e.created_at, event: e }));
+
+    return [...occupancyItems, ...standaloneItems].sort((a, b) => (b.time || 0) - (a.time || 0));
+  },
+
   _renderBedHistoryList() {
     const bodyEl = document.getElementById('bed-history-body');
     if (!bodyEl || !this._historyCache) return;
 
-    const events = this._historyCache.events;
-    if (events.length === 0) {
-      bodyEl.innerHTML = '<div class="bed-history-empty">過去の移送履歴はありません</div>';
+    const items = this._historyCache.items;
+    const caveatHtml = '<div class="bed-history-caveat"><i class="fas fa-info-circle"></i> 検査室への移送を伴わない入退室は、本機能導入日以降の記録のみ表示されます。</div>';
+    if (items.length === 0) {
+      bodyEl.innerHTML = '<div class="bed-history-empty">過去の入退室履歴はありません</div>' + caveatHtml;
       return;
     }
 
-    const visibleCount = Math.min(this._historyVisibleCount || 5, events.length);
-    const rowsHtml = events.slice(0, visibleCount).map((e, i) => this._renderBedHistoryRow(e, i)).join('');
-    const remaining = events.length - visibleCount;
+    const visibleCount = Math.min(this._historyVisibleCount || 5, items.length);
+    const rowsHtml = items.slice(0, visibleCount).map((item, i) => item.type === 'occupancy'
+      ? this._renderOccupancyHistoryRow(item.occupancy, item.nestedEvents, i)
+      : this._renderBedHistoryRow(item.event, i)
+    ).join('');
+    const remaining = items.length - visibleCount;
     const loadMoreHtml = remaining > 0
       ? `<button type="button" class="bed-history-loadmore" id="btn-bed-history-loadmore">もっと見る (+${Math.min(5, remaining)}件)</button>`
       : '';
 
-    bodyEl.innerHTML = `<div class="bed-history-list">${rowsHtml}</div>${loadMoreHtml}`;
+    bodyEl.innerHTML = `<div class="bed-history-list">${rowsHtml}</div>${loadMoreHtml}${caveatHtml}`;
+  },
+
+  // 在室ログ1件分の行(1入院〜退院の滞在)。滞在中に検査室移送があれば
+  // 展開して各移送(_renderBedHistoryRowを再利用)を表示する
+  _renderOccupancyHistoryRow(occ, nestedEvents, index) {
+    const patientName = UI.getPatientName(occ.patient_name || '');
+    const hasTransfers = nestedEvents.length > 0;
+    const nestedHtml = hasTransfers
+      ? nestedEvents.map((e, i) => this._renderBedHistoryRow(e, `${index}-${i}`)).join('')
+      : '';
+    return `
+      <div class="bed-history-occupancy-row" data-history-index="occ-${index}">
+        <div class="bed-history-occupancy-row-main${hasTransfers ? '' : ' bed-history-occupancy-row-main--static'}">
+          <span class="bed-history-patient">${patientName ? UI.escapeHTML(patientName) : '患者名なし'}</span>
+          <span class="bed-history-time"><i class="fas fa-clock"></i> ${UI.formatDateTime(occ.started_at)} → ${occ.ended_at ? UI.formatDateTime(occ.ended_at) : '--'}</span>
+          ${hasTransfers
+            ? `<span class="bed-history-occupancy-badge"><i class="fas fa-exchange-alt"></i> 検査室へ移送あり (${nestedEvents.length}件)</span><i class="fas fa-chevron-down bed-history-row-caret"></i>`
+            : `<span class="bed-history-no-transfer-badge">検査室への移送なし（在室のみ）</span>`}
+        </div>
+        ${hasTransfers ? `<div class="bed-history-occupancy-detail hidden">${nestedHtml}</div>` : ''}
+      </div>
+    `;
   },
 
   // 移送1件の進捗タイムライン(移送開始〜帰棟完了)HTML。現在進行中イベントと
@@ -560,6 +612,13 @@ const BedModal = {
         if (e.target.closest('#btn-bed-history-loadmore')) {
           this._historyVisibleCount = (this._historyVisibleCount || 5) + 5;
           this._renderBedHistoryList();
+          return;
+        }
+        const occHeader = e.target.closest('.bed-history-occupancy-row-main');
+        if (occHeader) {
+          const detail = occHeader.parentElement.querySelector('.bed-history-occupancy-detail');
+          if (detail) detail.classList.toggle('hidden');
+          occHeader.classList.toggle('expanded', detail && !detail.classList.contains('hidden'));
           return;
         }
         const row = e.target.closest('.bed-history-row');
@@ -1115,7 +1174,8 @@ const PatientRegModal = {
       try {
         await API.patch('beds', bedId, {
           patient_name: null, patient_id: null, is_present: false,
-          admission_date: null, patient_note: null, manually_registered: false
+          admission_date: null, patient_note: null, manually_registered: false,
+          _occupancySource: 'manual_discharge'
         });
         await App.loadMasters();
         BedMap.render();
@@ -1149,6 +1209,7 @@ const PatientRegModal = {
           admission_date: admDate,
           patient_note: note || null,
           manually_registered: true,
+          _occupancySource: 'manual_register',
         });
         API.writeAuditLog(isEdit ? 'PATIENT_UPDATE' : 'PATIENT_REGISTER', {
           targetType: 'bed', targetId: bedId,

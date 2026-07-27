@@ -23,6 +23,7 @@ TransBoard はSQLiteを使用せず、JSONファイル（`transboard-db.json`）
 | `import_logs` | CSVインポート履歴 |
 | `schedule_feeds` | スケジュールフィード定義 |
 | `schedule_items` | スケジュールアイテム |
+| `bed_occupancy_log` | ベッドの在室ログ（検査室移送の有無に関わらず入院〜退院の滞在を記録） |
 
 ---
 
@@ -111,6 +112,33 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 | `staff_id` | string \| null | 操作スタッフID |
 | `details` | string | 操作詳細（JSON文字列） |
 | `created_at` | number | 操作日時（Unixms） |
+
+---
+
+### `bed_occupancy_log` — ベッドの在室ログ
+
+`transfer_events` は検査室への移送が発生した場合にしか作られないため、移送を伴わない
+入退院（登録・編集・退院、CSV取込による一括反映）を追跡できない。本テーブルは `beds`
+テーブルの患者識別子（`patient_id`優先、なければ`patient_name`）の変化を検知して
+1入院〜退院の滞在ごとに1レコードを記録する。`audit_logs`とは異なり患者氏名・IDは
+マスクされない（`beds`/`transfer_events`と同じ患者データテーブルとして保護される）。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー |
+| `bed_id` | string | 対象ベッドID |
+| `ward_id` | string \| null | 記録時点の所属病棟ID |
+| `patient_name` | string \| null | 患者氏名 |
+| `patient_id` | string \| null | 患者ID |
+| `admission_date` | number \| null | 入院日時（未指定時は`started_at`と同値） |
+| `started_at` | number | 在室開始日時（サーバー側で検知した時刻） |
+| `ended_at` | number \| null | 在室終了日時（在室中は`null`） |
+| `end_reason` | string \| null | 終了理由（`discharged` / `overwritten_by_new_admission` / `csv_cleared`、在室中は`null`） |
+| `source` | string | 記録元（`manual_register` / `manual_discharge` / `csv_import` / `csv_clear` / `unknown`） |
+| `created_at` | number | レコード作成日時 |
+
+本機能導入前に既に退院済みだった（移送を伴わない）滞在は復元不能なため記録されない。
+病床履歴パネルはその旨の注記を表示する。
 
 ---
 

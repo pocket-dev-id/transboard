@@ -200,6 +200,15 @@ const API = {
       .sort((a, b) => (b.returned_at || b.created_at || 0) - (a.returned_at || a.created_at || 0));
   },
 
+  // 指定病床の過去(退院済み)の在室記録を新しい順で返す。検査室への移送有無に関わらず
+  // 入院〜退院の滞在を記録するため、transfer_eventsに現れない在室も追跡できる
+  async getOccupancyHistoryForBed(bedId) {
+    const res = await this.getAll('bed_occupancy_log');
+    return (res.data || [])
+      .filter(o => o.bed_id === bedId && o.ended_at != null)
+      .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
+  },
+
   async getScheduleFeeds() {
     const res = await this.getAll('schedule_feeds');
     return res.data || [];

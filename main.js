@@ -313,7 +313,8 @@ const SEEDS = {
   import_logs: [],
   schedule_feeds: [],
   schedule_items: [],
-  handover_notes: []
+  handover_notes: [],
+  bed_occupancy_log: []
 };
 
 // センシティブな設定情報の暗号化リストと暗号・復号ヘルパー
@@ -321,6 +322,7 @@ const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_to
 const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 5000;
+const BED_OCCUPANCY_LOG_MAX_ENTRIES = 5000;
 
 function encryptSensitiveValue(value) {
   if (!value) return value;
@@ -564,6 +566,10 @@ function readDB() {
     }
     if (!db.handover_notes) {
       db.handover_notes = [];
+      hasDuplicates = true;
+    }
+    if (!db.bed_occupancy_log) {
+      db.bed_occupancy_log = [];
       hasDuplicates = true;
     }
     if (!db.transfer_events) {
@@ -2122,12 +2128,13 @@ const ALLOWED_TABLES = new Set([
   'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs',
   'system_settings', 'transfer_events', 'transfer_status_logs',
   'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
-  'audit_logs', 'handover_notes',
+  'audit_logs', 'handover_notes', 'bed_occupancy_log',
 ]);
 
 // 患者情報（氏名・ID）を含むテーブル。外部HTTPアクセス時はAPIトークン必須（セキュリティ: A-2）
 // 申し送りメモ(handover_notes)は本文に患者名等が入りうるため患者データ扱いとする
-const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes']);
+// bed_occupancy_logは非マスクの氏名・IDを保持するため同様に患者データ扱いとする
+const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes', 'bed_occupancy_log']);
 const ACTIVE_TRANSFER_STATUSES = new Set([
   'DEPART_REGISTERED',
   'MOVING',
@@ -2230,6 +2237,59 @@ function activeBedConflictResponse(conflict) {
     existingEventId: conflict?.id || null,
     currentStatus: conflict?.current_status || null,
   };
+}
+
+// bed のPATCH前後で患者識別子（患者ID優先、なければ氏名）を比較し、
+// 検査室移送を伴わない入退院・患者入替も bed_occupancy_log に記録する。
+// transfer_events に依存しないため、移送なしの在室も履歴として残せる。
+function bedOccupancyIdentityKey(rec) {
+  if (!rec) return null;
+  if (rec.patient_id) return `id:${rec.patient_id}`;
+  if (rec.patient_name) return `name:${rec.patient_name}`;
+  return null;
+}
+
+function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after, now, source) {
+  const beforeKey = bedOccupancyIdentityKey(before);
+  const afterKey = bedOccupancyIdentityKey(after);
+  if (beforeKey === afterKey) return;
+
+  if (beforeKey) {
+    const open = occupancyLog.find(o => String(o.bed_id) === String(bedId) && o.ended_at == null);
+    if (open) {
+      open.ended_at = now;
+      open.end_reason = source === 'csv_clear' ? 'csv_cleared' : (afterKey ? 'overwritten_by_new_admission' : 'discharged');
+    }
+  }
+  if (afterKey) {
+    occupancyLog.push({
+      id: `bed-occ-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      bed_id: bedId,
+      ward_id: wardId || null,
+      patient_name: after.patient_name || null,
+      patient_id: after.patient_id || null,
+      admission_date: after.admission_date != null ? after.admission_date : now,
+      started_at: now,
+      ended_at: null,
+      end_reason: null,
+      source: source || 'unknown',
+      created_at: now,
+    });
+  }
+}
+
+// 蓄積防止：上限を超えたら、クローズ済み（在室中でない）の古いエントリから間引く
+function trimBedOccupancyLog(occupancyLog, maxEntries) {
+  let overflow = occupancyLog.length - maxEntries;
+  if (overflow <= 0) return;
+  for (let i = 0; i < occupancyLog.length && overflow > 0;) {
+    if (occupancyLog[i].ended_at != null) {
+      occupancyLog.splice(i, 1);
+      overflow--;
+    } else {
+      i++;
+    }
+  }
 }
 
 function statusMismatchConflictResponse(expectedStatus, current) {
@@ -2853,15 +2913,27 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       }
       const updatedItems = [];
       const beforeItems = [];
+      const bulkOccupancyNow = Date.now();
       bulkData.forEach(patchItem => {
         const targetId = patchItem.id;
+        const occupancySource = patchItem._occupancySource;
+        if (Object.prototype.hasOwnProperty.call(patchItem, '_occupancySource')) {
+          delete patchItem._occupancySource;
+        }
         const index = list.findIndex(x => String(x.id) === String(targetId));
         if (index !== -1) {
-          beforeItems.push(JSON.parse(JSON.stringify(list[index])));
+          const beforeSnap = JSON.parse(JSON.stringify(list[index]));
+          beforeItems.push(beforeSnap);
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
+          if (table === 'beds') {
+            applyBedOccupancyTransition(db.bed_occupancy_log, targetId, list[index].ward_id, beforeSnap, list[index], bulkOccupancyNow, occupancySource);
+          }
         }
       });
+      if (table === 'beds' && db.bed_occupancy_log.length > BED_OCCUPANCY_LOG_MAX_ENTRIES) {
+        trimBedOccupancyLog(db.bed_occupancy_log, BED_OCCUPANCY_LOG_MAX_ENTRIES);
+      }
       appendAuditLog(db, 'DB_BULK_UPDATE', {
         targetType: table,
         targetId: 'bulk',
@@ -2899,6 +2971,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       expectedStatus = data.expectedStatus || null;
       delete data.expectedStatus;
     }
+    let occupancySource = null;
+    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
+      occupancySource = data._occupancySource || null;
+      delete data._occupancySource;
+    }
     if (expectedStatus && list[index].current_status !== expectedStatus) {
       return statusMismatchConflictResponse(expectedStatus, list[index]);
     }
@@ -2921,6 +2998,12 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     const beforeItem = JSON.parse(JSON.stringify(list[index]));
     list[index] = { ...list[index], ...data };
+    if (table === 'beds') {
+      applyBedOccupancyTransition(db.bed_occupancy_log, id, list[index].ward_id, beforeItem, list[index], Date.now(), occupancySource);
+      if (db.bed_occupancy_log.length > BED_OCCUPANCY_LOG_MAX_ENTRIES) {
+        trimBedOccupancyLog(db.bed_occupancy_log, BED_OCCUPANCY_LOG_MAX_ENTRIES);
+      }
+    }
     appendAuditLog(db, 'DB_UPDATE', {
       targetType: table,
       targetId: id,

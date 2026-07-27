@@ -1648,6 +1648,27 @@ h1, h2, h3, h4,
 }
 .bed-history-loadmore:hover { background: var(--clr-surface); color: var(--clr-text); }
 
+.bed-history-occupancy-row {
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  background: var(--clr-surface);
+}
+.bed-history-occupancy-row-main { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; cursor: pointer; }
+.bed-history-occupancy-row-main--static { cursor: default; }
+.bed-history-occupancy-badge { font-size: 11px; font-weight: 700; color: var(--clr-primary, var(--clr-text)); }
+.bed-history-no-transfer-badge { font-size: 11px; color: var(--clr-text-muted); }
+.bed-history-occupancy-row-main.expanded .bed-history-row-caret { transform: rotate(180deg); }
+.bed-history-occupancy-detail {
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--clr-border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.bed-history-occupancy-detail.hidden { display: none; }
+.bed-history-caveat {
+  margin-top: 8px; font-size: 10.5px; color: var(--clr-text-muted);
+  display: flex; align-items: flex-start; gap: 6px; line-height: 1.4;
+}
+
 /* ---------- ローディング ---------- */
 .loading-spinner {
   display: flex;
