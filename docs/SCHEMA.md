@@ -140,7 +140,7 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 | `ward_id` | string \| null | 記録時点の所属病棟ID |
 | `patient_name` | string \| null | 患者氏名 |
 | `patient_id` | string \| null | 患者ID |
-| `admission_date` | number \| null | 入院日時（未指定時は`started_at`と同値） |
+| `admission_date` | number \| null | 入院日時（このPATCH/POSTで明示的に指定されなかった場合は検知時刻と同値。前の入居者の値を持ち越さない） |
 | `started_at` | number | 在室開始日時（サーバー側で検知した時刻） |
 | `ended_at` | number \| null | 在室終了日時（在室中は`null`） |
 | `end_reason` | string \| null | 終了理由（`discharged` / `overwritten_by_new_admission` / `csv_cleared` / `bed_deleted`、在室中は`null`） |
@@ -148,6 +148,10 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 | `created_at` | number | レコード作成日時 |
 
 本機能導入前に既に退院済みだった（移送を伴わない）滞在は復元不能なため記録されない。
+
+**書き込み保護:** `audit_logs`と同様に外部からの直接POST/PATCH/DELETEを拒否する
+（GETのみ許可）。本テーブルは`beds`テーブルへの書き込みの副作用として親機内部
+でのみ更新されるサーバー管理テーブルであり、直接の書き換え・改ざんを防ぐ。
 
 **保持ポリシー:** `bed_occupancy_retention_days`（既定7日）より古い退院済みレコードは
 自動削除される。掃除は `beds` への書き込み時と起動時に親機側で自動実行され、

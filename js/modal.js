@@ -345,19 +345,26 @@ const BedModal = {
     this._renderBedHistoryList();
   },
 
-  // 在室ログの各滞在(started_at〜ended_at)に含まれるtransfer_eventsを入れ子にする。
-  // 在室ログに紐付かない(＝本機能導入前からの)transfer_eventsは単独行のまま残す
+  // 在室ログの各滞在(started_at〜ended_at、現在も在室中ならstarted_at〜現在)に
+  // 含まれるtransfer_eventsを入れ子にする。在室ログに紐付かない
+  // (＝本機能導入前からの)transfer_eventsは単独行のまま残す。
+  // 在室中(未退院)の滞在自体は、紐付く移送が無ければ表示しない
+  // (メイン画面の現在状態表示と重複するため)
   _mergeBedHistory(events, occupancy) {
     const claimedEventIds = new Set();
-    const occupancyItems = occupancy.map(occ => {
-      const nested = events.filter(e => {
-        const t = e.departed_at || e.created_at;
-        return t != null && occ.started_at != null && occ.ended_at != null && t >= occ.started_at && t <= occ.ended_at;
-      });
-      nested.forEach(e => claimedEventIds.add(e.id));
-      nested.sort((a, b) => (b.departed_at || b.created_at || 0) - (a.departed_at || a.created_at || 0));
-      return { type: 'occupancy', time: occ.ended_at, occupancy: occ, nestedEvents: nested };
-    });
+    const occupancyItems = occupancy
+      .map(occ => {
+        const windowEnd = occ.ended_at != null ? occ.ended_at : Date.now();
+        const nested = events.filter(e => {
+          const t = e.departed_at || e.created_at;
+          return t != null && occ.started_at != null && t >= occ.started_at && t <= windowEnd;
+        });
+        nested.forEach(e => claimedEventIds.add(e.id));
+        nested.sort((a, b) => (b.departed_at || b.created_at || 0) - (a.departed_at || a.created_at || 0));
+        const time = occ.ended_at != null ? occ.ended_at : Number.MAX_SAFE_INTEGER;
+        return { type: 'occupancy', time, occupancy: occ, nestedEvents: nested };
+      })
+      .filter(item => item.occupancy.ended_at != null || item.nestedEvents.length > 0);
     const standaloneItems = events
       .filter(e => !claimedEventIds.has(e.id))
       .map(e => ({ type: 'event', time: e.returned_at || e.created_at, event: e }));
