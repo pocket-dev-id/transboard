@@ -2265,12 +2265,18 @@ function findOpenBedOccupancy(occupancyLog, bedId) {
   return (occupancyLog || []).find(o => String(o.bed_id) === String(bedId) && o.ended_at == null) || null;
 }
 
-function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after, now, source) {
+// patchData: このPATCH/POSTで実際に送られてきた生の差分（マージ後のbedsレコードではない）。
+// admission_dateがこの中に明示的に含まれているかどうかの判定にのみ使う。
+// beds自体はPATCHされなかったフィールドを前の値のまま持ち越すため、after.admission_date
+// を無条件に信用すると「前の入居者の入院日」が新しい入居者の在室ログへ紛れ込む
+// （例: CSV取込が氏名/IDだけ書き換えてadmission_dateを送らないケース）
+function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after, patchData, now, source) {
   const hadOccupant = bedOccupancyHasOccupant(before);
   const hasOccupant = bedOccupancyHasOccupant(after);
   if (!hadOccupant && !hasOccupant) return;
 
   const open = findOpenBedOccupancy(occupancyLog, bedId);
+  const patchHasAdmissionDate = !!(patchData && Object.prototype.hasOwnProperty.call(patchData, 'admission_date') && patchData.admission_date != null);
 
   // 同一患者の情報が更新されただけ（患者IDの補記・氏名や入院日の修正）の場合は
   // 滞在を分割せず、在室中のレコードを最新値へ追従させる
@@ -2278,7 +2284,7 @@ function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after,
     if (open) {
       open.patient_id = after.patient_id || null;
       open.patient_name = after.patient_name || null;
-      if (after.admission_date != null) open.admission_date = after.admission_date;
+      if (patchHasAdmissionDate) open.admission_date = patchData.admission_date;
     }
     return;
   }
@@ -2294,7 +2300,9 @@ function applyBedOccupancyTransition(occupancyLog, bedId, wardId, before, after,
       ward_id: wardId || null,
       patient_name: after.patient_name || null,
       patient_id: after.patient_id || null,
-      admission_date: after.admission_date != null ? after.admission_date : now,
+      // このPATCHが明示的にadmission_dateを指定した場合のみ採用し、それ以外は今回検知した
+      // 時刻を使う（前の入居者の値を持ち越さない）
+      admission_date: patchHasAdmissionDate ? patchData.admission_date : now,
       started_at: now,
       ended_at: null,
       end_reason: null,
@@ -2728,6 +2736,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     return { success: false, message: 'Audit logs are append-only' };
   }
 
+  // bed_occupancy_logはbedsへの書き込みの副作用として内部でのみ更新される
+  // サーバー管理テーブル（applyBedOccupancyTransition等がdb.bed_occupancy_logを
+  // 直接書き換える。このtableに対するPOST/PATCH/DELETEは経由しない）。
+  // 外部からの直接書き換え・改ざんを防ぐため、GET以外は拒否する
+  if (table === 'bed_occupancy_log' && method !== 'GET') {
+    return { success: false, message: 'bed_occupancy_log is server-managed and cannot be written directly' };
+  }
+
   // 患者情報を含むテーブルへの外部アクセスはAPIトークンで保護する
   if (isExternal && PATIENT_DATA_TABLES.has(table)) {
     const tokenSetting = (db.system_settings || []).find(s => s.id === 'api_token');
@@ -2831,8 +2847,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     try { data = JSON.parse(bodyStr); } catch {
       return { success: false, message: 'リクエストボディのJSONが不正です' };
     }
+    // _occupancySourceは在室ログ用の内部ヒントであり、他のテーブルにも誤って
+    // 送られた場合にレコード本体へ紛れ込まないよう、テーブルを問わず必ず除去する
     let postOccupancySource = null;
-    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
+    if (Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
       postOccupancySource = data._occupancySource || null;
       delete data._occupancySource;
     }
@@ -2927,7 +2945,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (table === 'beds') {
       const occupancyNow = Date.now();
       const afterRecord = index !== -1 ? list[index] : data;
-      applyBedOccupancyTransition(db.bed_occupancy_log, data.id, afterRecord.ward_id, beforeItem, afterRecord, occupancyNow, postOccupancySource);
+      applyBedOccupancyTransition(db.bed_occupancy_log, data.id, afterRecord.ward_id, beforeItem, afterRecord, data, occupancyNow, postOccupancySource);
       pruneBedOccupancyLogFromDb(db, occupancyNow);
     }
 
@@ -3019,7 +3037,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
           if (table === 'beds') {
-            applyBedOccupancyTransition(db.bed_occupancy_log, targetId, list[index].ward_id, beforeSnap, list[index], bulkOccupancyNow, occupancySource);
+            applyBedOccupancyTransition(db.bed_occupancy_log, targetId, list[index].ward_id, beforeSnap, list[index], patchItem, bulkOccupancyNow, occupancySource);
           }
         }
       });
@@ -3063,8 +3081,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       expectedStatus = data.expectedStatus || null;
       delete data.expectedStatus;
     }
+    // _occupancySourceは在室ログ用の内部ヒントであり、他のテーブルにも誤って
+    // 送られた場合にレコード本体へ紛れ込まないよう、テーブルを問わず必ず除去する
     let occupancySource = null;
-    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
+    if (Object.prototype.hasOwnProperty.call(data, '_occupancySource')) {
       occupancySource = data._occupancySource || null;
       delete data._occupancySource;
     }
@@ -3092,7 +3112,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     list[index] = { ...list[index], ...data };
     if (table === 'beds') {
       const occupancyNow = Date.now();
-      applyBedOccupancyTransition(db.bed_occupancy_log, id, list[index].ward_id, beforeItem, list[index], occupancyNow, occupancySource);
+      applyBedOccupancyTransition(db.bed_occupancy_log, id, list[index].ward_id, beforeItem, list[index], data, occupancyNow, occupancySource);
       pruneBedOccupancyLogFromDb(db, occupancyNow);
     }
     appendAuditLog(db, 'DB_UPDATE', {

@@ -200,15 +200,18 @@ const API = {
       .sort((a, b) => (b.returned_at || b.created_at || 0) - (a.returned_at || a.created_at || 0));
   },
 
-  // 指定病床の過去(退院済み)の在室記録を新しい順で返す。検査室への移送有無に関わらず
-  // 入院〜退院の滞在を記録するため、transfer_eventsに現れない在室も追跡できる
+  // 指定病床の在室記録を新しい順で返す。検査室への移送有無に関わらず入院〜退院の
+  // 滞在を記録するため、transfer_eventsに現れない在室も追跡できる。
+  // 現在も在室中(ended_at===null)のレコードも含める。除外すると、現在の入院中に
+  // 既に完了した移送が「どの滞在にも属さない孤立イベント」として表示され、
+  // グルーピングが機能しなくなるため（_mergeBedHistory参照）。
   // bed_idはサーバー側でも絞り込まれるが、絞り込み未対応の親機に接続した場合の
   // 保険としてクライアント側のフィルタも残す（二重に絞っても結果は変わらない）
   async getOccupancyHistoryForBed(bedId) {
     const res = await this.getAll('bed_occupancy_log', { bed_id: bedId });
     return (res.data || [])
-      .filter(o => String(o.bed_id) === String(bedId) && o.ended_at != null)
-      .sort((a, b) => (b.ended_at || 0) - (a.ended_at || 0));
+      .filter(o => String(o.bed_id) === String(bedId))
+      .sort((a, b) => (b.ended_at ?? Number.MAX_SAFE_INTEGER) - (a.ended_at ?? Number.MAX_SAFE_INTEGER));
   },
 
   async getScheduleFeeds() {
