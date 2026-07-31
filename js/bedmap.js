@@ -295,13 +295,15 @@ const BedMap = {
     }
 
     const cardTitle = `${bed.bed_number}号床 - ${statusLabel}${event && event.patient_ic_tag_id ? ' (ICカード登録済)' : ''}`;
+    const safeDisplayNo = UI.escapeHTML(displayNo);
+    const safeStatusLabel = UI.escapeHTML(statusLabel);
 
     return `
       <div class="bed-card status-${UI.escapeHTML(status)}" data-bed-id="${UI.escapeHTML(bed.id)}" style="${cardStyle}"
            title="${UI.escapeHTML(cardTitle)}">
         ${pulseDot}
-        <div class="bed-number">${displayNo}</div>
-        <div class="bed-status-badge badge-${status}" style="${badgeStyle}">${statusLabel}</div>
+        <div class="bed-number">${safeDisplayNo}</div>
+        <div class="bed-status-badge badge-${UI.escapeHTML(status)}" style="${badgeStyle}">${safeStatusLabel}</div>
         ${examInfoHtml}
         ${timerHtml}
         <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:2px;">

@@ -188,10 +188,10 @@ Object.assign(Settings, {
         return `
           <tr>
             <td>${UI.formatDateTime(l.timestamp)}</td>
-            <td class="font-bold">${l.fileName}</td>
+            <td class="font-bold">${UI.escapeHTML(l.fileName)}</td>
             <td><span class="status-badge ${badgeCls}" style="padding:2px 6px; font-size:10px; border-radius:3px; display:inline-block; font-weight:800;">${statusLabel}</span></td>
-            <td>${l.message || ''}</td>
-            <td class="text-muted text-sm">${l.details || ''}</td>
+            <td>${UI.escapeHTML(l.message || '')}</td>
+            <td class="text-muted text-sm">${UI.escapeHTML(l.details || '')}</td>
           </tr>
         `;
       }).join('');
@@ -272,9 +272,9 @@ Object.assign(Settings, {
               <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748;"><i class="fas fa-folder-open"></i> 監視対象フォルダ</h4>
               <div class="form-row" style="margin-bottom:12px;">
                 <label>絶対パス</label>
-                <input type="text" id="cfg-import-path" placeholder="例: C:\\HospitalData\\Import" style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${dirSetting.value || ''}">
+                <input type="text" id="cfg-import-path" placeholder="例: C:\\HospitalData\\Import" style="width:100%; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${UI.escapeHTML(dirSetting.value || '')}">
                 <div style="margin-top:6px; font-size:11px; color:#718096;">
-                  <strong>現在の有効な監視先:</strong> <code style="background:#edf2f7; padding:2px 6px; border-radius:4px;">${currentPath}</code>
+                  <strong>現在の有効な監視先:</strong> <code style="background:#edf2f7; padding:2px 6px; border-radius:4px;">${UI.escapeHTML(currentPath)}</code>
                 </div>
               </div>
               
@@ -289,11 +289,11 @@ Object.assign(Settings, {
                 <div id="smb-custom-credentials" style="display:${smbAuthSetting.value === 'custom' ? 'flex' : 'none'}; flex-direction:column; gap:8px; margin-top:8px;">
                   <div class="form-row">
                     <label style="font-size:11px; margin-bottom:2px;">ユーザー名 (Domain\\User もしくは User)</label>
-                    <input type="text" id="cfg-smb-username" placeholder="例: domain\\username" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;" value="${smbUsernameSetting.value}">
+                    <input type="text" id="cfg-smb-username" placeholder="例: domain\\username" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;" value="${UI.escapeHTML(smbUsernameSetting.value)}">
                   </div>
                   <div class="form-row">
                     <label style="font-size:11px; margin-bottom:2px;">パスワード</label>
-                    <input type="password" id="cfg-smb-password" placeholder="パスワードを入力" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;" value="${smbPasswordSetting.value}">
+                    <input type="password" id="cfg-smb-password" placeholder="パスワードを入力" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;" value="${UI.escapeHTML(smbPasswordSetting.value)}">
                   </div>
                 </div>
               </div>
@@ -372,7 +372,7 @@ Object.assign(Settings, {
                   <div class="odbc-section-title"><i class="fas fa-code"></i> 接続文字列 <span class="odbc-hint-inline">— 上の設定から自動生成。直接編集も可</span></div>
                   <input type="text" id="cfg-odbc-conn" class="odbc-input odbc-mono"
                     placeholder="DSN=EMR_DB;UID=user;PWD=pass;"
-                    value="${odbcConnSetting.value}">
+                    value="${UI.escapeHTML(odbcConnSetting.value)}">
                 </div>
 
                 <!-- ④ SQLクエリ -->
@@ -396,7 +396,7 @@ Object.assign(Settings, {
                     </button>
                   </div>
                   <textarea id="cfg-odbc-query" rows="3" class="odbc-input odbc-mono"
-                    placeholder="SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS">${odbcQuerySetting.value}</textarea>
+                    placeholder="SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS">${UI.escapeHTML(odbcQuerySetting.value)}</textarea>
                   <div style="font-size:11px; color:#64748b; margin-top:3px;">
                     必須カラム: <code>BED_NO</code>, <code>PATIENT_ID</code>, <code>PATIENT_NAME</code>, <code>IS_PRESENT</code>（在床=1）
                   </div>
@@ -1341,7 +1341,8 @@ Object.assign(Settings, {
   //  通知音設定管理
   // ──────────────────────────────────
   _renderNotificationSettings(body) {
-    const isChildMode = localStorage.getItem('cfg_share_mode') === 'client';
+    const shareMode = localStorage.getItem('cfg_share_mode');
+    const isChildMode = shareMode === 'client' || shareMode === 'child';
 
     // 通知音設定
     let soundSettings = {
@@ -1397,11 +1398,6 @@ Object.assign(Settings, {
       : AppState.systemSettings?.find(s => s.id === 'notification_scan_sound')?.value !== 'false';
 
     // OS通知
-    const localOs = isChildMode ? localStorage.getItem('tbs_notification_os') : null;
-    const osEnabled = localOs !== null
-      ? localOs === 'true'
-      : AppState.systemSettings?.find(s => s.id === 'notification_os')?.value === 'true';
-
     // インポートトースト
     const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
 
@@ -1574,24 +1570,6 @@ Object.assign(Settings, {
         </div>
         <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px;">
 
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:12px 14px;
-            background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;gap:16px;">
-            <div style="flex:1;">
-              <div style="font-weight:700;font-size:13px;"><i class="fas fa-desktop"></i> OSネイティブ通知（Windowsデスクトップ通知）</div>
-              <div style="font-size:11.5px;color:#64748b;margin-top:3px;line-height:1.6;">
-                アプリが背面・最小化中でも迎え要・あと10分などをWindowsの通知センターに表示します。<br>
-                <span style="color:#92400e;">※ Windowsの「設定 → 通知」でTransBoardの通知が許可されている必要があります。</span>
-              </div>
-              <button class="btn btn-outline btn-sm" id="btn-test-os-notif" style="margin-top:8px;font-size:11px;">
-                <i class="fas fa-bell"></i> テスト通知を送る
-              </button>
-            </div>
-            <label class="toggle-switch" style="margin:4px 0 0;flex-shrink:0;">
-              <input type="checkbox" id="os-notif-enabled" ${osEnabled ? 'checked' : ''}>
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
           <label style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;
             background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;cursor:pointer;">
             <div>
@@ -1726,34 +1704,17 @@ Object.assign(Settings, {
       }
     };
 
-    // ── テスト通知ボタン ──
-    document.getElementById('btn-test-os-notif')?.addEventListener('click', () => {
-      if (window.electronAPI?.showOsNotification) {
-        window.electronAPI.showOsNotification('TransBoard テスト通知', 'デスクトップ通知が正常に動作しています。TransBoard からの通知です。');
-      } else {
-        UI.toast('この環境ではOSネイティブ通知を使用できません', 'warning');
-      }
-    });
-
-    // ── その他（OS通知・インポートトースト）保存 ──
     document.getElementById('btn-save-misc-notif').onclick = async () => {
-      const osOn      = document.getElementById('os-notif-enabled').checked;
       const importOn  = document.getElementById('import-toast-enabled').checked;
 
       try {
         if (isChildMode) {
-          localStorage.setItem('tbs_notification_os', String(osOn));
-          [['notification_os', String(osOn)], ['notification_import_toast', String(importOn)]].forEach(([id, value]) => {
-            const r = AppState.systemSettings?.find(s => s.id === id);
-            if (r) r.value = value; else AppState.systemSettings?.push({ id, value });
-          });
+          const r = AppState.systemSettings?.find(s => s.id === 'notification_import_toast');
+          if (r) r.value = String(importOn); else AppState.systemSettings?.push({ id: 'notification_import_toast', value: String(importOn) });
           // インポートトーストは全体設定（子機でも親機DBに保存）
           await API.patch('system_settings', 'notification_import_toast', { value: String(importOn) });
         } else {
-          await Promise.all([
-            API.patch('system_settings', 'notification_os',           { value: String(osOn) }),
-            API.patch('system_settings', 'notification_import_toast', { value: String(importOn) }),
-          ]);
+          await API.patch('system_settings', 'notification_import_toast', { value: String(importOn) });
           await App.loadMasters();
         }
         UI.toast('通知設定を保存しました', 'success');

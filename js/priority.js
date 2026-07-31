@@ -139,7 +139,7 @@ const Priority = {
     }
 
     return `
-      <div class="priority-item ${itemClass}" data-bed-id="${bed ? bed.id : ''}" style="cursor:pointer;">
+      <div class="priority-item ${itemClass}" data-bed-id="${bed ? UI.escapeHTML(bed.id) : ''}" style="cursor:pointer;">
         <div class="priority-item-header">
           <span class="priority-bed-num">${bed ? UI.formatBedName(bed) : '?'}</span>
           <div style="display:flex; gap:4px; align-items:center;">
@@ -148,7 +148,7 @@ const Priority = {
           </div>
         </div>
         <div class="priority-exam-info">
-          ${examType ? examType.name : '--'} ${examRoom ? '/ ' + examRoom.name : ''}
+          ${examType ? UI.escapeHTML(examType.name) : '--'} ${examRoom ? '/ ' + UI.escapeHTML(examRoom.name) : ''}
           ${event.departed_at ? ' | ' + UI.formatTime(event.departed_at) + '出棟' : ''}
         </div>
         ${timeHtml}

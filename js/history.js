@@ -6,6 +6,10 @@ const HistoryView = {
   _isInitialized: false,
 
   async render() {
+    if (typeof Auth !== 'undefined' && !Auth.can('HISTORY_VIEW')) {
+      UI.toast('履歴を表示する権限がありません', 'warning');
+      return;
+    }
     await this._loadData();
     ExamStats.render();
     this._renderEventList();
@@ -23,13 +27,21 @@ const HistoryView = {
     try {
       const [eventsRes, logsRes] = await Promise.all([
         API.getAllEventsForWard(AppState.currentWardId),
-        API.getAllStatusLogs(),
+        API.getAllStatusLogs(AppState.currentWardId),
       ]);
       AppState.allEvents = eventsRes.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
       AppState.statusLogs = logsRes.slice(0, 150); // 最大150件保持
     } catch (e) {
       console.error('[History] データのロード失敗:', e);
+      UI.toast('履歴を読み込めませんでした。親機との接続を確認してください。', 'danger');
     }
+  },
+
+  _getHistoricalPatient(event, bed) {
+    return {
+      name: String(event?.patient_name || bed?.patient_name || '').trim(),
+      id: String(event?.patient_id || bed?.patient_id || '').trim(),
+    };
   },
 
   _bindEvents() {
@@ -82,8 +94,9 @@ const HistoryView = {
       // キーワード検索
       if (query) {
         const bedNo = bed ? bed.bed_number.toLowerCase() : '';
-        const patName = bed && bed.patient_name ? bed.patient_name.toLowerCase() : '';
-        const patId = bed && bed.patient_id ? bed.patient_id.toLowerCase() : '';
+        const patient = this._getHistoricalPatient(e, bed);
+        const patName = patient.name.toLowerCase();
+        const patId = patient.id.toLowerCase();
         const examName = examType ? examType.name.toLowerCase() : '';
         const roomName = examRoom ? examRoom.name.toLowerCase() : '';
         const staffName = staff ? staff.name.toLowerCase() : '';
@@ -112,8 +125,9 @@ const HistoryView = {
       const examRoom = AppState.getExamRoomById(e.exam_room_id);
       const staff = AppState.getStaffById(e.escort_staff_id);
       
-      const patientName = bed && bed.patient_name ? (showNames ? UI.escapeHTML(bed.patient_name) : '＊＊＊＊') : '空床';
-      const patientLabel = bed && bed.patient_name ? `<span style="font-weight:700; color:#4b5563; margin-right:6px;">[${patientName}]</span>` : '';
+      const patient = this._getHistoricalPatient(e, bed);
+      const patientName = patient.name ? (showNames ? UI.escapeHTML(patient.name) : '＊＊＊＊') : '空床';
+      const patientLabel = patient.name ? `<span style="font-weight:700; color:#4b5563; margin-right:6px;">[${patientName}]</span>` : '';
 
       return `
         <div class="history-item" style="border-left: 4px solid var(--clr-${e.current_status.toLowerCase().replace(/_/g, '-') || 'primary-border'}); padding-left: 8px;">
@@ -158,8 +172,9 @@ const HistoryView = {
       // キーワード検索
       if (query) {
         const bedNo = bed ? bed.bed_number.toLowerCase() : '';
-        const patName = bed && bed.patient_name ? bed.patient_name.toLowerCase() : '';
-        const patId = bed && bed.patient_id ? bed.patient_id.toLowerCase() : '';
+        const patient = this._getHistoricalPatient(event, bed);
+        const patName = patient.name.toLowerCase();
+        const patId = patient.id.toLowerCase();
         const examName = examType ? examType.name.toLowerCase() : '';
         const roomName = examRoom ? examRoom.name.toLowerCase() : '';
         const changedBy = log.changed_by ? log.changed_by.toLowerCase() : '';
@@ -183,7 +198,8 @@ const HistoryView = {
     el.innerHTML = logs.map(log => {
       const event = AppState.allEvents.find(e => e.id === log.transfer_event_id);
       const bed = event ? AppState.getBedById(event.bed_id) : null;
-      const patientName = bed && bed.patient_name ? (showNames ? UI.escapeHTML(bed.patient_name) : '＊＊＊＊') : '';
+      const patient = this._getHistoricalPatient(event, bed);
+      const patientName = patient.name ? (showNames ? UI.escapeHTML(patient.name) : '＊＊＊＊') : '';
       const patientLabel = patientName ? `<span style="color:#718096; font-size:11px;">[${patientName}]</span>` : '';
       
       return `
@@ -255,7 +271,8 @@ const HistoryView = {
 
         const dateStr = UI.formatDateTime(e.created_at);
         const bedNo = bed ? bed.bed_number : '不明';
-        const patientName = bed && bed.patient_name ? (showNames ? bed.patient_name : '＊＊＊＊') : '空床';
+        const patient = this._getHistoricalPatient(e, bed);
+        const patientName = patient.name ? (showNames ? patient.name : '＊＊＊＊') : '空床';
         const patientId = bed && bed.patient_id ? (showNames ? bed.patient_id : '＊＊＊＊') : '';
         const examName = examType ? examType.name : '';
         const roomName = examRoom ? examRoom.name : '';
@@ -287,6 +304,7 @@ const HistoryView = {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
       UI.toast('履歴CSVをエクスポートしました', 'success');
     } catch (e) {
       console.error('[CSV Export Error]', e);

@@ -1077,7 +1077,7 @@ Object.assign(Settings, {
   // ──────────────────────────────────
   _renderStaffs(body) {
     const wardId = AppState.currentWardId;
-    const staffs = AppState.staffs.filter(s => s.ward_id === wardId);
+    const staffs = (AppState.allStaffs || AppState.staffs).filter(s => s.ward_id === wardId);
     const roleLabel = { nurse: '看護師', leader: 'リーダー', admin: '管理者' };
 
     body.innerHTML = `
@@ -1122,7 +1122,7 @@ Object.assign(Settings, {
     document.getElementById('btn-add-staff').onclick = () => this._openStaffForm(null);
     body.querySelectorAll('.btn-edit-staff').forEach(btn => {
       btn.onclick = () => {
-        const s = AppState.staffs.find(x => x.id === btn.dataset.staffId);
+        const s = (AppState.allStaffs || AppState.staffs).find(x => x.id === btn.dataset.staffId);
         this._openStaffForm(s);
       };
     });
@@ -1212,7 +1212,7 @@ Object.assign(Settings, {
   },
 
   async _toggleStaff(staffId) {
-    const staff = AppState.staffs.find(s => s.id === staffId);
+    const staff = (AppState.allStaffs || AppState.staffs).find(s => s.id === staffId);
     if (!staff) return;
     try {
       await API.patch('staffs', staff.id, { is_active: staff.is_active === false });
@@ -1486,7 +1486,7 @@ Object.assign(Settings, {
           icon: UI.normalizeExamRoomIcon(room.icon),
         }));
         else if (tableName === 'exam_types') data = AppState.examTypes;
-        else if (tableName === 'staffs') data = AppState.staffs.filter(s => s.ward_id === AppState.currentWardId);
+        else if (tableName === 'staffs') data = (AppState.allStaffs || AppState.staffs).filter(s => s.ward_id === AppState.currentWardId);
         
         const csvContent = this._generateCSV(headers, data);
         this._downloadCSV(`${tableName}_master_${Date.now()}.csv`, csvContent);
@@ -1521,7 +1521,9 @@ Object.assign(Settings, {
                 return;
               }
               
-              let importedCount = 0;
+              const records = [];
+              const seenIds = new Set();
+              const seenBedNumbers = new Set();
               for (let i = 1; i < rows.length; i++) {
                 const row = rows[i];
                 if (row.length === 0 || (row.length === 1 && !row[0])) continue;
@@ -1529,11 +1531,15 @@ Object.assign(Settings, {
                 const record = {};
                 headers.forEach(h => {
                   const idx = csvHeaders.indexOf(h);
-                  let val = idx >= 0 && row[idx] !== undefined ? row[idx].trim() : '';
+                   let val = idx >= 0 && row[idx] !== undefined ? row[idx].trim() : '';
+                   const rawValue = val;
                   
                   // Convert fields to expected types
-                  if (h === 'map_col' || h === 'map_row' || h === 'sort_order' || h === 'standard_duration_min') {
-                    val = val === '' ? null : parseInt(val, 10);
+                   if (h === 'map_col' || h === 'map_row' || h === 'sort_order' || h === 'standard_duration_min') {
+                     val = val === '' ? null : parseInt(val, 10);
+                     if (rawValue !== '' && !/^-?\d+$/.test(rawValue)) {
+                       throw new Error(`${i + 1}行目の${h}は整数で指定してください`);
+                     }
                   } else if (h === 'is_active') {
                     val = (val === 'true' || val === '1' || val === true);
                   } else {
@@ -1557,11 +1563,30 @@ Object.assign(Settings, {
                   record.id = `${tableName}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
                 }
                 
-                await API.create(tableName, record);
-                importedCount++;
+                if (seenIds.has(String(record.id))) {
+                  throw new Error(`${i + 1}行目のIDがCSV内で重複しています: ${record.id}`);
+                }
+                seenIds.add(String(record.id));
+                if ((tableName === 'beds' || tableName === 'staffs') &&
+                    !AppState.wards.some(ward => String(ward.id) === String(record.ward_id))) {
+                  throw new Error(`${i + 1}行目の病棟IDが存在しません: ${record.ward_id}`);
+                }
+                if (tableName === 'beds') {
+                  const bedNumber = String(record.bed_number || '').trim();
+                  if (!bedNumber) throw new Error(`${i + 1}行目の病床番号が空です`);
+                  if (seenBedNumbers.has(bedNumber)) {
+                    throw new Error(`${i + 1}行目の病床番号がCSV内で重複しています: ${bedNumber}`);
+                  }
+                  seenBedNumbers.add(bedNumber);
+                }
+                records.push(record);
               }
               
-              UI.toast(`CSVから ${importedCount} 件のマスタデータを取り込み/更新しました。`, 'success');
+              const result = await API.bulkUpsert(tableName, records);
+              if (result?.success === false) {
+                throw new Error(result.message || 'マスターの一括保存に失敗しました');
+              }
+              UI.toast(`CSVから ${records.length} 件のマスタデータを一括反映しました。`, 'success');
               await App.loadMasters();
               this._renderTab();
             } catch (err) {

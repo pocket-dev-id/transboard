@@ -31,9 +31,8 @@ const CallPanel = {
   _pollFailures: 0,
   _nextPollAt: 0,
 
-  // 再接続タイマー & チャット履歴
+  // 再接続タイマー
   reconnectTimeout: null,
-  chatMessages: [], // { senderType, name, text, timestamp }
 
   // ビデオ品質・統計・デバイス選択
   _videoQualityPreset: localStorage.getItem('tbs_video_quality') || 'medium',
@@ -94,9 +93,9 @@ const CallPanel = {
 
     // 検査室ボタン一覧を構築
     const roomBtns = AppState.examRooms.map(r => `
-      <button class="call-room-btn" data-room-id="${r.id}">
-        <span class="call-room-name">${r.name}</span>
-        <span class="call-room-phone">${r.phone ? '内線 ' + r.phone : '番号未設定'}</span>
+      <button class="call-room-btn" data-room-id="${UI.escapeHTML(r.id)}">
+        <span class="call-room-name">${UI.escapeHTML(r.name)}</span>
+        <span class="call-room-phone">${r.phone ? '内線 ' + UI.escapeHTML(r.phone) : '番号未設定'}</span>
       </button>
     `).join('');
 
@@ -104,9 +103,9 @@ const CallPanel = {
     const wardBtns = AppState.wards
       .filter(w => w.id !== this.getMyId())
       .map(w => `
-        <button class="call-room-btn" data-ward-id="${w.id}">
-          <span class="call-room-name">${w.name}</span>
-          <span class="call-room-phone">${w.phone ? '内線 ' + w.phone : '番号未設定'}</span>
+        <button class="call-room-btn" data-ward-id="${UI.escapeHTML(w.id)}">
+          <span class="call-room-name">${UI.escapeHTML(w.name)}</span>
+          <span class="call-room-phone">${w.phone ? '内線 ' + UI.escapeHTML(w.phone) : '番号未設定'}</span>
         </button>
       `).join('');
 
@@ -374,9 +373,6 @@ const CallPanel = {
     }
     else if (msg.type === 'speech') {
       this.playAnnouncement(msg.text, msg.from);
-    }
-    else if (msg.type === 'chat') {
-      this.appendChatMessage('remote', msg.text);
     }
   },
 
@@ -790,12 +786,9 @@ const CallPanel = {
   },
 
   createPeerConnection() {
-    const config = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
-      ]
-    };
+    // 院内LAN内の端末間通話ではhost candidateだけを使用する。公開STUNへ
+    // 内部IP情報を送信せず、完全オフラインでも接続待ちが発生しないようにする。
+    const config = { iceServers: [] };
 
     this.peerConnection = new RTCPeerConnection(config);
 
@@ -852,8 +845,6 @@ const CallPanel = {
             dialog.style.borderColor = '#d97706';
           }
           
-          this.appendChatMessage('system', '⚠️ 音声接続が切断されました。再接続を試みています...');
-          
           if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
           this.reconnectTimeout = setTimeout(() => {
             console.log('[WebRTC] Reconnection timeout exceeded. Cleaning up.');
@@ -878,7 +869,6 @@ const CallPanel = {
               dialog.style.borderColor = '#16a34a';
             }
             
-            this.appendChatMessage('system', '✅ 音声接続が正常に復旧しました。');
             UI.toast('通話が再接続されました', 'success');
           }
         }
@@ -1034,17 +1024,6 @@ const CallPanel = {
             </div>
           </div>
           
-          <!-- チャット履歴表示エリア -->
-          <div style="border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc; height: 120px; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px;" id="webrtc-chat-log">
-          </div>
-          
-          <!-- チャット入力欄 -->
-          <div style="display: flex; gap: 6px;">
-            <input type="text" id="webrtc-chat-input" placeholder="メッセージを入力..." style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 12px;">
-            <button class="btn btn-primary" id="webrtc-btn-send-chat" style="padding: 6px 12px; font-size: 12px; min-width: auto; height: auto;">
-              <i class="fas fa-paper-plane"></i>
-            </button>
-          </div>
         </div>
         <div class="phone-dialog-footer" style="display: flex; gap: 12px; justify-content: center; padding: 8px 16px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
           <button class="btn btn-danger" id="webrtc-btn-hangup" style="flex: 1; padding: 8px; font-weight: bold;">
@@ -1057,9 +1036,6 @@ const CallPanel = {
 
     document.getElementById('webrtc-btn-hangup').onclick = () => this.hangupCall();
 
-    // チャットのバインド
-    this.renderExistingChatMessages();
-    this.bindChatEvents();
   },
 
   showConnectedDialog(targetId) {
@@ -1116,17 +1092,6 @@ const CallPanel = {
             </button>` : ''}
           </div>
           
-          <!-- チャット履歴表示エリア -->
-          <div style="border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc; height: ${isVideo ? '90px' : '120px'}; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px;" id="webrtc-chat-log">
-          </div>
-          
-          <!-- チャット入力欄 -->
-          <div style="display: flex; gap: 6px;">
-            <input type="text" id="webrtc-chat-input" placeholder="メッセージを入力..." style="flex: 1; padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 12px;">
-            <button class="btn btn-primary" id="webrtc-btn-send-chat" style="padding: 6px 12px; font-size: 12px; min-width: auto; height: auto;">
-              <i class="fas fa-paper-plane"></i>
-            </button>
-          </div>
         </div>
         <div class="phone-dialog-footer" style="display: flex; gap: 12px; justify-content: center; padding: 8px 16px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
           <button class="btn btn-danger" id="webrtc-btn-hangup" style="flex: 1; padding: 8px; font-weight: bold;">
@@ -1176,9 +1141,6 @@ const CallPanel = {
       }, { once: true });
     }
 
-    // チャットのバインド
-    this.renderExistingChatMessages();
-    this.bindChatEvents();
   },
 
   async hangupCall() {
@@ -1201,8 +1163,6 @@ const CallPanel = {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-    this.chatMessages = []; // 通話終了時にチャット履歴をクリア
-
     if (this.localStream) {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
@@ -1237,7 +1197,11 @@ const CallPanel = {
       if (message) {
         const body = overlay.querySelector('.phone-dialog-body');
         if (body) {
-          body.innerHTML = `<div style="color: #dc2626; font-weight: bold; font-size: 15px; padding: 10px 0;">${message}</div>`;
+          body.replaceChildren();
+          const errorMessage = document.createElement('div');
+          errorMessage.style.cssText = 'color:#dc2626;font-weight:bold;font-size:15px;padding:10px 0';
+          errorMessage.textContent = String(message);
+          body.appendChild(errorMessage);
         }
         const footer = overlay.querySelector('.phone-dialog-footer');
         if (footer) footer.style.display = 'none';
@@ -1510,103 +1474,6 @@ const CallPanel = {
     }
   },
 
-  // ── 簡易チャット関連ヘルパー関数 ──
-  sendChatMessage() {
-    const input = document.getElementById('webrtc-chat-input');
-    if (!input) return;
-    const text = input.value.trim();
-    if (!text) return;
-
-    const myId = this.getMyId();
-    if (!myId || !this.targetId) return;
-
-    // チャットパケットをシグナリングで送信
-    API.webrtcSend({
-      from: myId,
-      to: this.targetId,
-      type: 'chat',
-      text: text
-    }).catch(err => {
-      console.error('[WebRTC Chat] Send Error:', err);
-    });
-
-    // 自分の履歴に追加してUIに反映
-    this.appendChatMessage('me', text);
-    input.value = '';
-  },
-
-  appendChatMessage(senderType, text) {
-    const name = senderType === 'me' ? '自分' : (senderType === 'system' ? 'システム' : this.getNameById(this.targetId));
-    this.chatMessages.push({ senderType, name, text, timestamp: Date.now() });
-
-    // UIへメッセージバブルを追加
-    const log = document.getElementById('webrtc-chat-log');
-    if (!log) return;
-
-    let bubble = '';
-    const eName = UI.escapeHTML(name);
-    const eText = UI.escapeHTML(text);
-    if (senderType === 'me') {
-      bubble = `<div style="align-self: flex-end; background: #dbeafe; color: #1e40af; padding: 6px 10px; border-radius: 12px 12px 0 12px; font-size: 11px; max-width: 80%; word-break: break-all; box-shadow: 0 1px 1px rgba(0,0,0,0.05); margin-bottom: 2px;">
-        <span style="font-size: 8px; opacity: 0.6; display: block; text-align: right; margin-bottom: 2px;">${eName}</span>
-        ${eText}
-      </div>`;
-    } else if (senderType === 'remote') {
-      bubble = `<div style="align-self: flex-start; background: #ffffff; border: 1px solid #e2e8f0; color: #334155; padding: 6px 10px; border-radius: 12px 12px 12px 0; font-size: 11px; max-width: 80%; word-break: break-all; box-shadow: 0 1px 1px rgba(0,0,0,0.05); margin-bottom: 2px;">
-        <span style="font-size: 8px; color: #64748b; display: block; margin-bottom: 2px;">${eName}</span>
-        ${eText}
-      </div>`;
-    } else {
-      bubble = `<div style="align-self: center; font-size: 9.5px; color: #94a3b8; margin: 4px 0; background: #f1f5f9; padding: 2px 8px; border-radius: 10px;">
-        ${eText}
-      </div>`;
-    }
-
-    log.innerHTML += bubble;
-    log.scrollTop = log.scrollHeight;
-  },
-
-  bindChatEvents() {
-    const sendBtn = document.getElementById('webrtc-btn-send-chat');
-    const input = document.getElementById('webrtc-chat-input');
-    if (sendBtn && input) {
-      sendBtn.onclick = () => this.sendChatMessage();
-      input.onkeydown = (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          this.sendChatMessage();
-        }
-      };
-    }
-  },
-
-  renderExistingChatMessages() {
-    const log = document.getElementById('webrtc-chat-log');
-    if (!log) return;
-    log.innerHTML = '';
-    this.chatMessages.forEach(msg => {
-      let bubble = '';
-      const eName = UI.escapeHTML(msg.name);
-      const eText = UI.escapeHTML(msg.text);
-      if (msg.senderType === 'me') {
-        bubble = `<div style="align-self: flex-end; background: #dbeafe; color: #1e40af; padding: 6px 10px; border-radius: 12px 12px 0 12px; font-size: 11px; max-width: 80%; word-break: break-all; box-shadow: 0 1px 1px rgba(0,0,0,0.05); margin-bottom: 2px;">
-          <span style="font-size: 8px; opacity: 0.6; display: block; text-align: right; margin-bottom: 2px;">${eName}</span>
-          ${eText}
-        </div>`;
-      } else if (msg.senderType === 'remote') {
-        bubble = `<div style="align-self: flex-start; background: #ffffff; border: 1px solid #e2e8f0; color: #334155; padding: 6px 10px; border-radius: 12px 12px 12px 0; font-size: 11px; max-width: 80%; word-break: break-all; box-shadow: 0 1px 1px rgba(0,0,0,0.05); margin-bottom: 2px;">
-          <span style="font-size: 8px; color: #64748b; display: block; margin-bottom: 2px;">${eName}</span>
-          ${eText}
-        </div>`;
-      } else {
-        bubble = `<div style="align-self: center; font-size: 9.5px; color: #94a3b8; margin: 4px 0; background: #f1f5f9; padding: 2px 8px; border-radius: 10px;">
-          ${eText}
-        </div>`;
-      }
-      log.innerHTML += bubble;
-    });
-    log.scrollTop = log.scrollHeight;
-  }
 };
 
 // ── 病棟電話ダイアログの代替（WebRTC通話開始へバイパス）──

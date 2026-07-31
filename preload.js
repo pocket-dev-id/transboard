@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('data-import-failed');
     ipcRenderer.on('data-import-failed', (event, value) => callback(value));
   },
+  completeDataImport: (payload) => ipcRenderer.invoke('complete-data-import', payload),
   onArchiveError: (callback) => {
     ipcRenderer.removeAllListeners('archive-error');
     ipcRenderer.on('archive-error', (event, value) => callback(value));
@@ -73,10 +74,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('card-scanned');
     ipcRenderer.on('card-scanned', (event, uid) => callback(uid));
   },
-  setNfcWatcher: (enabled) => ipcRenderer.invoke('set-nfc-watcher', enabled),
 
   // アプリバージョン取得
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  getPasscodeStatus: () => ipcRenderer.invoke('get-passcode-status'),
+  verifyAdminPasscode: (passcode) => ipcRenderer.invoke('verify-admin-passcode', passcode),
+  setAdminPasscode: (passcode) => ipcRenderer.invoke('set-admin-passcode', passcode),
+  getTerminalApiToken: () => ipcRenderer.invoke('get-terminal-api-token'),
+  setTerminalApiToken: (token) => ipcRenderer.invoke('set-terminal-api-token', token),
+  cleanupEventRetention: () => ipcRenderer.invoke('cleanup-event-retention'),
 
   // アプリ更新（自前アップデータ）
   checkForUpdate: (opts) => ipcRenderer.invoke('check-for-update', opts),
@@ -90,8 +96,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 開発/本番モード判定 (インフラ #4)
   isDevMode: () => ipcRenderer.invoke('is-dev-mode'),
 
-  // OSデスクトップ通知（メインプロセス経由）
-  showOsNotification: (title, body) => ipcRenderer.invoke('show-os-notification', { title, body }),
 
   // スタートアップ（Windows ログイン時自動起動）設定
   getStartupSetting: () => ipcRenderer.invoke('get-startup-setting'),

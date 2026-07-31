@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!-- Content Security Policy (セキュリティ #4)
        script-src 'self' のみ許可。style-src は既存インラインスタイルのため unsafe-inline を維持。
-       connect-src はローカルネットワーク親機への HTTP アクセスを許可。 -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' http://* https://* ws://* wss://*; media-src 'self';">
+       親機への通信はmainプロセスの許可リスト付きHTTPプロキシを経由する。 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self';">
   <title>TransBoard</title>
   <link rel="stylesheet" href="css/local-icons.css">
   <link rel="stylesheet" href="css/style.css">
@@ -248,9 +248,9 @@
         <h1><i class="fas fa-stream"></i> タイムライン</h1>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <div class="timeline-date" style="display:flex;align-items:center;gap:6px;">
-            <button id="tl-prev-day" class="btn btn-outline btn-sm" title="前日" style="padding:4px 10px;"><i class="fas fa-chevron-left"></i></button>
+            <button id="tl-prev-day" class="btn btn-outline btn-sm" title="前日" aria-label="前日を表示" style="padding:4px 10px;"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
             <input type="date" id="timeline-date">
-            <button id="tl-next-day" class="btn btn-outline btn-sm" title="翌日" style="padding:4px 10px;"><i class="fas fa-chevron-right"></i></button>
+            <button id="tl-next-day" class="btn btn-outline btn-sm" title="翌日" aria-label="翌日を表示" style="padding:4px 10px;"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
             <button id="tl-today-btn" class="btn btn-outline btn-sm" style="font-size:12px;padding:4px 12px;">今日</button>
           </div>
           <div style="display:flex;align-items:center;gap:6px;border-left:1px solid #e2e8f0;padding-left:10px;">
@@ -349,22 +349,22 @@
   <div id="call-panel" class="call-panel hidden">
     <div class="call-panel-header">
       <span><i class="fas fa-phone"></i> 電話番号一覧</span>
-      <button id="call-panel-close"><i class="fas fa-times"></i></button>
+      <button id="call-panel-close" aria-label="電話番号パネルを閉じる"><i class="fas fa-times" aria-hidden="true"></i></button>
     </div>
     <div class="call-panel-body" id="call-panel-body">
       <!-- JS で動的生成 -->
     </div>
   </div>
-  <button id="btn-call-toggle" class="call-fab" title="検査室電話番号">
-    <i class="fas fa-phone"></i>
+  <button id="btn-call-toggle" class="call-fab" title="検査室電話番号" aria-label="電話番号パネルを開く">
+    <i class="fas fa-phone" aria-hidden="true"></i>
   </button>
 
   <!-- ===== 移送開始・状態更新モーダル ===== -->
   <div id="bed-modal-overlay" class="modal-overlay hidden">
-    <div id="bed-modal" class="modal">
+    <div id="bed-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-header">
         <h2 id="modal-title">病床詳細</h2>
-        <button id="modal-close" class="modal-close-btn"><i class="fas fa-times"></i></button>
+        <button id="modal-close" class="modal-close-btn" aria-label="ダイアログを閉じる"><i class="fas fa-times" aria-hidden="true"></i></button>
       </div>
       <div class="modal-body" id="modal-body">
         <!-- JS で動的生成 -->
@@ -379,14 +379,14 @@
 
   <!-- ===== 管理者パスコード入力モーダル ===== -->
   <div id="passcode-modal-overlay" class="modal-overlay hidden" style="z-index: 9999;">
-    <div id="passcode-modal" class="modal" style="max-width: 400px;">
+    <div id="passcode-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="passcode-modal-title" style="max-width: 400px;">
       <div class="modal-header">
         <h2 id="passcode-modal-title"><i class="fas fa-lock"></i> 管理者ロック解除</h2>
-        <button id="passcode-modal-close" class="modal-close-btn"><i class="fas fa-times"></i></button>
+        <button id="passcode-modal-close" class="modal-close-btn" aria-label="パスコード入力を閉じる"><i class="fas fa-times" aria-hidden="true"></i></button>
       </div>
       <div class="modal-body" id="passcode-modal-body">
         <div class="form-row">
-          <label style="font-weight: 700; font-size: 13.5px; color: #475569;">設定変更を行うには管理者パスコードを入力してください。</label>
+          <label for="passcode-input" style="font-weight: 700; font-size: 13.5px; color: #475569;">設定変更を行うには管理者パスコードを入力してください。</label>
           <input type="password" id="passcode-input" placeholder="パスコードを入力" style="width:100%; padding:10px 12px; border:1px solid #cbd5e0; border-radius:8px; font-family:inherit; font-size:15px; font-weight:800; text-align:center; letter-spacing: 4px; margin-top:12px; outline:none;" autofocus>
           <div id="passcode-error-msg" style="color:#dc2626; font-size:11.5px; font-weight:700; margin-top:8px; text-align:center; display:none;">パスコードが正しくありません。</div>
         </div>

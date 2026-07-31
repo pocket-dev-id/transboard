@@ -81,8 +81,13 @@ const UI = {
   statusBadge(status, { icon = true } = {}) {
     const label = CONFIG.STATUS_LABEL[status] || status;
     const iconClass = icon && CONFIG.STATUS_ICON?.[status];
-    const iconHtml = iconClass ? `<i class="fas ${iconClass}" aria-hidden="true"></i> ` : '';
-    return `<span class="status-badge badge-${status}">${iconHtml}${this.escapeHTML(label)}</span>`;
+    const safeStatusClass = String(status || '').replace(/[^A-Za-z0-9_-]/g, '');
+    const safeIconClass = String(iconClass || '')
+      .split(/\s+/)
+      .filter(token => /^fa[srlbd]?$|^fa-[A-Za-z0-9-]+$/.test(token))
+      .join(' ');
+    const iconHtml = safeIconClass ? `<i class="fas ${safeIconClass}" aria-hidden="true"></i> ` : '';
+    return `<span class="status-badge badge-${safeStatusClass}">${iconHtml}${this.escapeHTML(label)}</span>`;
   },
 
   /* ---------- トースト通知 ---------- */
@@ -245,7 +250,8 @@ const UI = {
 
   /* ---------- 通知音量・ミュート状態の取得 ---------- */
   _getNotifVolume() {
-    const isChild = localStorage.getItem('cfg_share_mode') === 'client';
+    const shareMode = localStorage.getItem('cfg_share_mode');
+    const isChild = shareMode === 'client' || shareMode === 'child';
     const localVol = isChild ? localStorage.getItem('tbs_notification_volume') : null;
     if (localVol !== null && localVol !== undefined) return Math.min(1, Math.max(0, parseInt(localVol, 10) / 100));
     const rec = typeof AppState !== 'undefined'
@@ -254,7 +260,8 @@ const UI = {
   },
 
   _isNotifMuted() {
-    const isChild = localStorage.getItem('cfg_share_mode') === 'client';
+    const shareMode = localStorage.getItem('cfg_share_mode');
+    const isChild = shareMode === 'client' || shareMode === 'child';
     const localMute = isChild ? localStorage.getItem('tbs_notification_mute') : null;
     let muteCfg = null;
     if (localMute) {
@@ -346,28 +353,12 @@ const UI = {
     }
   },
 
-  /* ---------- OSネイティブ通知（Electron IPC経由） ---------- */
-  showOsNotification(title, body) {
-    const isChild = localStorage.getItem('cfg_share_mode') === 'client';
-    const localOs = isChild ? localStorage.getItem('tbs_notification_os') : null;
-    let osEnabled = false;
-    if (localOs !== null) {
-      osEnabled = localOs === 'true';
-    } else if (typeof AppState !== 'undefined') {
-      const rec = AppState.systemSettings?.find(s => s.id === 'notification_os');
-      osEnabled = rec?.value === 'true';
-    }
-    if (!osEnabled) return;
-    // Electron環境ではメインプロセス経由（Windows通知センターに確実に届く）
-    if (window.electronAPI?.showOsNotification) {
-      window.electronAPI.showOsNotification(title, body);
-    }
-  },
 
   /* ---------- スキャン音の再生 (合成音声) ---------- */
   playScanSound(success) {
     // スキャン音のON/OFF設定チェック
-    const isChild = localStorage.getItem('cfg_share_mode') === 'client';
+    const shareMode = localStorage.getItem('cfg_share_mode');
+    const isChild = shareMode === 'client' || shareMode === 'child';
     const localScan = isChild ? localStorage.getItem('tbs_notification_scan_sound') : null;
     let scanEnabled = true;
     if (localScan !== null) {

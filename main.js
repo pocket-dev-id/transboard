@@ -1,25 +1,37 @@
-﻿const { app, BrowserWindow, ipcMain, powerSaveBlocker, safeStorage, Notification: ElectronNotification, dialog } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, powerSaveBlocker, safeStorage, dialog } = require('electron');
 const path = require('path');
 const { Tray, Menu } = require('electron');
 const fs = require('fs');
 const chokidar = require('chokidar');
 const csv = require('csv-parser');
 const http = require('http');
+const https = require('https');
 const os = require('os');
 const crypto = require('crypto');
-const { execSync, execFileSync, spawn } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
+const { pathToFileURL } = require('url');
+const packageMetadata = require('./package.json');
 
 const { Readable } = require('stream');
-
-// Electron 41 (Chromium 146) が導入した Local Network Access (LNA) 制限を無効化する。
-// 子機(file://)から親機のプライベートIPへのfetchがパーミッション要求扱いになり、
-// 既定拒否のパーミッションハンドラにブロックされて親子間の同期が全断するため、
-// 院内LAN専用アプリとして従来通りの挙動に固定する。app.whenReady() より前に呼ぶ必要がある。
-// 【フォールバック】実機で本フラグだけではLNAブロックを回避できないケースが確認されたため、
-// 子機→親機のHTTP通信自体をレンダラーのfetch()からメインプロセス(Node httpモジュール)経由に
-// 変更し、ブラウザのネットワークサービス層を経由しないようにした（parent-http-request参照）。
-// このフラグはPNAプリフライト等の副次的な影響を避けるための保険として残す。
-app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks');
+const WINDOWS_SYSTEM_ROOT = process.env.SystemRoot || 'C:\\Windows';
+const POWERSHELL_EXE = path.join(
+  WINDOWS_SYSTEM_ROOT,
+  'System32',
+  'WindowsPowerShell',
+  'v1.0',
+  'powershell.exe'
+);
+const REG_EXE = path.join(WINDOWS_SYSTEM_ROOT, 'System32', 'reg.exe');
+const EXPECTED_UPDATE_PUBLISHER = String(
+  process.env.TRANSBOARD_UPDATE_PUBLISHER ||
+  packageMetadata.transboard?.updatePublisherName ||
+  ''
+).trim();
+const EXPECTED_UPDATE_PUBLISHER_THUMBPRINT = String(
+  process.env.TRANSBOARD_UPDATE_PUBLISHER_THUMBPRINT ||
+  packageMetadata.transboard?.updatePublisherThumbprint ||
+  ''
+).replace(/[^0-9a-f]/gi, '').toUpperCase();
 
 let mainWindow;
 let tray = null;
@@ -27,7 +39,38 @@ let isQuitting = false;
 let currentWatcher = null;
 let currentWatchDir = null;
 let nfcProcess = null;
+let nfcStdoutBuffer = '';
+let nfcRestartTimer = null;
+let nfcStopping = false;
 let powerSaveBlockerId = null;
+// CSV取り込みはrenderer側のDB更新完了後に初めて原本を整理する。
+// importIdで複数ファイルを同時処理しても取り違えないようにする。
+const pendingImportJobs = new Map();
+const IMPORT_JOB_TIMEOUT_MS = 10 * 60 * 1000;
+const TRUSTED_RENDERER_URL = pathToFileURL(path.join(__dirname, 'index.html')).href;
+
+function isTrustedRendererFrame(frame) {
+  if (!frame || !mainWindow || mainWindow.isDestroyed()) return false;
+  if (frame !== mainWindow.webContents.mainFrame) return false;
+  try {
+    const actual = new URL(frame.url);
+    actual.hash = '';
+    actual.search = '';
+    return actual.href === TRUSTED_RENDERER_URL;
+  } catch {
+    return false;
+  }
+}
+
+function handleTrusted(channel, listener) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedRendererFrame(event.senderFrame)) {
+      console.warn(`[Security] 信頼できないIPC送信元を拒否: channel=${channel}`);
+      throw new Error('IPC request was rejected');
+    }
+    return listener(event, ...args);
+  });
+}
 
 // chokidar v4 はglob文字列の ignored を廃止したため、監視除外を関数で判定する。
 // 「先頭がドットの隠しファイル・フォルダ」と「archiveフォルダ配下」を除外する
@@ -38,23 +81,37 @@ function isIgnoredWatchPath(p) {
 
 function startNfcWatcher() {
   if (nfcProcess) return;
+  nfcStopping = false;
   const scriptPath = app.isPackaged
     ? path.join(process.resourcesPath, 'app.asar.unpacked', 'nfc-reader.ps1')
     : path.join(__dirname, 'nfc-reader.ps1');
   if (!fs.existsSync(scriptPath)) return;
 
-  nfcProcess = spawn('powershell', ['-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+  nfcProcess = spawn(POWERSHELL_EXE, ['-NoProfile', '-NonInteractive', '-File', scriptPath], {
     stdio: ['ignore', 'pipe', 'ignore'],
     windowsHide: true,
   });
 
+  const scheduleNfcRestart = () => {
+    if (nfcStopping || isQuitting || nfcRestartTimer) return;
+    const enabled = getSettingRecord(readDB(), 'enable_patient_ic_association')?.value === 'true';
+    if (!enabled) return;
+    nfcRestartTimer = setTimeout(() => {
+      nfcRestartTimer = null;
+      startNfcWatcher();
+    }, 5000);
+  };
+
   nfcProcess.on('error', (err) => {
     console.error('[NFC] PowerShellプロセスの起動に失敗しました:', err.message);
     nfcProcess = null;
+    scheduleNfcRestart();
   });
 
   nfcProcess.stdout.on('data', (data) => {
-    const lines = data.toString().split('\n');
+    nfcStdoutBuffer += data.toString();
+    const lines = nfcStdoutBuffer.split(/\r?\n/);
+    nfcStdoutBuffer = lines.pop() || '';
     for (const line of lines) {
       const m = line.trim().match(/^UID:([0-9A-Fa-f]+)$/);
       if (m && mainWindow && !mainWindow.isDestroyed()) {
@@ -63,10 +120,23 @@ function startNfcWatcher() {
     }
   });
 
-  nfcProcess.on('exit', () => { nfcProcess = null; });
+  nfcProcess.on('exit', (code, signal) => {
+    nfcProcess = null;
+    nfcStdoutBuffer = '';
+    if (!nfcStopping) {
+      console.warn(`[NFC] リーダープロセスが終了しました code=${code ?? '-'} signal=${signal ?? '-'}`);
+      scheduleNfcRestart();
+    }
+  });
 }
 
 function stopNfcWatcher() {
+  nfcStopping = true;
+  if (nfcRestartTimer) {
+    clearTimeout(nfcRestartTimer);
+    nfcRestartTimer = null;
+  }
+  nfcStdoutBuffer = '';
   if (nfcProcess) { nfcProcess.kill(); nfcProcess = null; }
 }
 
@@ -283,7 +353,6 @@ const SEEDS = {
     { id: "default_zoom", value: "1.0" },
     { id: "font_style", value: "ud" },
     { id: "bed_card_size", value: "medium" },
-    { id: "theme_style", value: "light" },
     { id: "wizard_completed", value: "false" },
     { id: "show_sync_time", value: "true" },
     { id: "show_import_time", value: "true" },
@@ -298,7 +367,6 @@ const SEEDS = {
     { id: "notification_scan_sound", value: "true" },
     { id: "notification_mute", value: "{\"enabled\":false,\"start\":\"22:00\",\"end\":\"06:00\"}" },
     { id: "notification_import_toast", value: "true" },
-    { id: "notification_os", value: "false" },
     { id: "status_custom_labels", value: "{}" },
     { id: "nearly_done_minutes", value: "10" },
     { id: "soon_threshold_min", value: "15" },
@@ -357,6 +425,51 @@ function decryptSensitiveValue(value) {
     }
   }
   return ''; // 復号エラー時は空文字
+}
+
+function getTerminalSecretsPath() {
+  return path.join(app.getPath('userData'), 'terminal-secrets.json');
+}
+
+function getTerminalApiToken() {
+  const secretsPath = getTerminalSecretsPath();
+  if (!fs.existsSync(secretsPath)) return { success: true, token: '', secure: true };
+  try {
+    const stored = JSON.parse(fs.readFileSync(secretsPath, 'utf8'));
+    const encryptedToken = String(stored.encryptedApiToken || '');
+    if (!encryptedToken) return { success: true, token: '', secure: true };
+    if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+      return { success: false, token: '', secure: false, message: 'OSの資格情報保護機能を利用できません' };
+    }
+    const token = safeStorage.decryptString(Buffer.from(encryptedToken, 'base64'));
+    return { success: true, token, secure: true };
+  } catch (error) {
+    console.warn('[Security] 端末APIトークンの読み込みに失敗:', error.message);
+    return { success: false, token: '', secure: false, message: '端末APIトークンを読み込めませんでした' };
+  }
+}
+
+function setTerminalApiToken(rawToken) {
+  const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+  if (token.length > 256) {
+    return { success: false, secure: false, message: 'APIトークンが長すぎます' };
+  }
+  if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+    return { success: false, secure: false, message: 'OSの資格情報保護機能を利用できません' };
+  }
+  try {
+    const encryptedApiToken = token
+      ? safeStorage.encryptString(token).toString('base64')
+      : '';
+    safeWriteFile(
+      getTerminalSecretsPath(),
+      JSON.stringify({ version: 1, encryptedApiToken }, null, 2)
+    );
+    return { success: true, secure: true };
+  } catch (error) {
+    console.warn('[Security] 端末APIトークンの保存に失敗:', error.message);
+    return { success: false, secure: false, message: '端末APIトークンを安全に保存できませんでした' };
+  }
 }
 
 // db.jsonファイル全体の暗号化（セキュリティ B-1: 患者データを含む全内容を保護）
@@ -490,9 +603,6 @@ function migrateTransferWorkflow(db) {
   }
 
   if (migratedEventIds.length > 0) {
-    if (db.transfer_status_logs.length > 1000) {
-      db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
-    }
     appendAuditLog(db, 'DATA_MIGRATION', {
       targetType: 'transfer_events',
       actorType: 'system',
@@ -621,6 +731,18 @@ function readDB() {
 
     if (migrateTransferWorkflow(db)) {
       hasDuplicates = true;
+    }
+
+    // 既存DBへマスター更新時刻を後付けし、古い端末からの無条件上書きを検知できるようにする。
+    let revisionSeed = Date.now();
+    for (const table of MASTER_REVISION_TABLES) {
+      if (!Array.isArray(db[table])) continue;
+      for (const item of db[table]) {
+        if (item && item.id && !Number.isFinite(Number(item.updated_at))) {
+          item.updated_at = revisionSeed++;
+          hasDuplicates = true;
+        }
+      }
     }
     
     if (hasDuplicates || needsEncryptionRewrite) {
@@ -1020,6 +1142,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
+    minWidth: 1024,
+    minHeight: 700,
     title: 'TransBoard',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1028,32 +1152,49 @@ function createWindow() {
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
+      devTools: !app.isPackaged,
     }
   });
 
   mainWindow.setMenu(null); // Hide file menu on Windows/Linux
 
-  // Ctrl+Shift+I で開発者ツールを開く（デバッグ用）
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.control && input.shift && input.key === 'I') {
-      mainWindow.webContents.toggleDevTools();
-    }
-  });
+  if (!app.isPackaged) {
+    // 開発時だけ Ctrl+Shift+I で開発者ツールを開く
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.shift && input.key === 'I') {
+        mainWindow.webContents.toggleDevTools();
+      }
+    });
+  }
 
-  // マイク・カメラ・クリップボード書き込み・ローカルネットワークアクセスの
-  // パーミッション要求を明示的に許可する。
-  // - clipboard-sanitized-write/clipboard-read: APIトークン等の「コピー」ボタン用。
-  //   新しいChromiumでは navigator.clipboard.writeText() もこのハンドラ経由で判定される。
-  // - local-network-access: Electron 41 (Chromium 146) で導入されたLNA制限用の保険
-  //   （実際の無効化は app.commandLine.appendSwitch('disable-features', 'LocalNetworkAccessChecks')
-  //   で行っているが、将来そのフラグが廃止された場合に備えてここでも明示許可する）
-  // 注: setPermissionCheckHandler は設定しない。checkハンドラ未設定時の既定は「許可」
-  // であり、拒否デフォルトのcheckハンドラを設けると fullscreen 等これまで暗黙に
-  // 通っていた同期判定まで壊してしまうため（requestハンドラのみで制御する）。
+  // このウィンドウは同梱したindex.htmlだけを表示する。外部ページや子ウィンドウへ
+  // preload権限が引き継がれないよう、画面遷移とwindow.openを既定拒否する。
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    try {
+      const target = new URL(navigationUrl);
+      target.hash = '';
+      target.search = '';
+      if (target.href === TRUSTED_RENDERER_URL) return;
+    } catch {}
+    event.preventDefault();
+    console.warn('[Security] 予期しないナビゲーションを拒否しました');
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // マイク・カメラ・クリップボード等は、同梱rendererからの要求に限って許可する。
   const ALLOWED_PERMISSIONS = new Set(['media', 'clipboard-sanitized-write', 'clipboard-read', 'local-network-access']);
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(ALLOWED_PERMISSIONS.has(permission));
+    callback(
+      webContents === mainWindow?.webContents &&
+      isTrustedRendererFrame(webContents.mainFrame) &&
+      ALLOWED_PERMISSIONS.has(permission)
+    );
   });
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => (
+    webContents === mainWindow?.webContents &&
+    isTrustedRendererFrame(webContents.mainFrame) &&
+    ALLOWED_PERMISSIONS.has(permission)
+  ));
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
@@ -1195,7 +1336,7 @@ function scanAndImportFolder(watchPath) {
       try {
         if (fs.statSync(filePath).isFile() && path.extname(file).toLowerCase() === '.csv') {
           console.log(`[Scheduler] CSVファイルスキャン検出: ${filePath}`);
-          importCSV(filePath);
+          importCSV(filePath).catch(err => console.error(`[Scheduler] CSV取り込みエラー: ${filePath}`, err));
         }
       } catch (statErr) {
         console.warn(`[Scheduler] ファイル取得スキップ (削除済みの可能性): ${file}`);
@@ -1210,8 +1351,13 @@ function scanAndImportFolder(watchPath) {
 
 let scheduleFeedWatchers = [];
 let scheduleFeedTimers = [];
+let scheduleFeedRetryTimer = null;
 
 function setupScheduleFeedTriggers() {
+  if (scheduleFeedRetryTimer) {
+    clearTimeout(scheduleFeedRetryTimer);
+    scheduleFeedRetryTimer = null;
+  }
   // 既存の監視・タイマーをすべて停止
   scheduleFeedWatchers.forEach(w => { try { w.close(); } catch (e) {} });
   scheduleFeedWatchers = [];
@@ -1220,10 +1366,15 @@ function setupScheduleFeedTriggers() {
 
   const db = readDB();
   const feeds = (db.schedule_feeds || []).filter(f => f.is_active && f.watch_dir);
+  let retryRequired = false;
 
   feeds.forEach(feed => {
     const watchDir = feed.watch_dir.trim();
-    if (!fs.existsSync(watchDir)) return;
+    if (!fs.existsSync(watchDir)) {
+      retryRequired = true;
+      console.warn(`[ScheduleFeed] 監視フォルダが見つかりません。30秒後に再確認します: ${watchDir}`);
+      return;
+    }
 
     const schedule = feed.schedule || { mode: 'realtime' };
 
@@ -1260,6 +1411,12 @@ function setupScheduleFeedTriggers() {
   });
 
   console.log(`[ScheduleFeed] ${feeds.length}件のスケジュールフィード監視を設定しました`);
+  if (retryRequired) {
+    scheduleFeedRetryTimer = setTimeout(() => {
+      scheduleFeedRetryTimer = null;
+      setupScheduleFeedTriggers();
+    }, 30000);
+  }
 }
 
 function scanAndImportScheduleFolder(watchDir, feed) {
@@ -1304,8 +1461,20 @@ function parseScheduleDatetimeMs(dateStr, timeStr) {
   return null;
 }
 
+const MAX_CSV_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_CSV_ROWS = 100000;
+const MAX_BACKUP_FILE_BYTES = 100 * 1024 * 1024;
+
+function assertCsvFileSize(filePath) {
+  const size = fs.statSync(filePath).size;
+  if (size > MAX_CSV_FILE_BYTES) {
+    throw new Error(`CSVファイルが大きすぎます（上限${MAX_CSV_FILE_BYTES / 1024 / 1024}MB）`);
+  }
+}
+
 function importScheduleFeedCSV(filePath, feed) {
   try {
+    assertCsvFileSize(filePath);
     const buffer = fs.readFileSync(filePath);
     let encoding = 'shift-jis';
     if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
@@ -1317,9 +1486,16 @@ function importScheduleFeedCSV(filePath, feed) {
 
     const mapping = feed.mapping || {};
     const results = [];
+    const parser = csv();
+    parser.on('data', row => {
+      if (results.length >= MAX_CSV_ROWS) {
+        parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
+        return;
+      }
+      results.push(row);
+    });
     Readable.from([decodedText])
-      .pipe(csv())
-      .on('data', row => results.push(row))
+      .pipe(parser)
       .on('end', () => {
         const db = readDB();
         if (!db.schedule_items) db.schedule_items = [];
@@ -1422,10 +1598,47 @@ function isUtf8(buf) {
   return true;
 }
 
+function registerImportJob(filePath) {
+  for (const job of pendingImportJobs.values()) {
+    if (job.filePath === filePath) {
+      console.warn(`[Watcher] 同じCSVの取り込みが進行中のため重複実行を抑止しました: ${filePath}`);
+      return null;
+    }
+  }
+  const importId = `import-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+  const timer = setTimeout(() => {
+    if (!pendingImportJobs.has(importId)) return;
+    pendingImportJobs.delete(importId);
+    console.warn(`[Watcher] インポート完了応答がないため原本を残します: ${filePath}`);
+  }, IMPORT_JOB_TIMEOUT_MS);
+  pendingImportJobs.set(importId, { filePath, timer, createdAt: Date.now() });
+  return importId;
+}
+
+// renderer側のDB更新結果を受けてから、CSV原本をアーカイブ／削除する。
+handleTrusted('complete-data-import', (event, payload = {}) => {
+  const importId = typeof payload.importId === 'string' ? payload.importId.trim() : '';
+  const success = payload.success === true;
+  if (!importId || importId.length > 160) return { success: false, message: '不正なインポートIDです。' };
+  const job = pendingImportJobs.get(importId);
+  if (!job) return { success: false, message: 'インポートジョブが見つからないか、期限切れです。' };
+  clearTimeout(job.timer);
+  pendingImportJobs.delete(importId);
+  if (!success) {
+    console.warn(`[Watcher] DB更新失敗のため原本を残します: ${job.filePath}`);
+    return { success: true, archived: false };
+  }
+  archiveFile(job.filePath);
+  return { success: true, archived: true };
+});
+
 // CSVファイルをパースしてレンダラーへ送信
-function importCSV(filePath) {
+async function importCSV(filePath) {
+  const importId = registerImportJob(filePath);
+  if (!importId) return;
   try {
-    const buffer = fs.readFileSync(filePath);
+    assertCsvFileSize(filePath);
+    const buffer = await fs.promises.readFile(filePath);
     
     // 文字コードの自動判定（BOM判定 または UTF-8バイナリ判定）
     let encoding = 'shift-jis'; // デフォルトは Shift-JIS
@@ -1451,23 +1664,31 @@ function importCSV(filePath) {
     const decodedText = decoder.decode(buffer);
 
     const results = [];
+    const parser = csv();
+    parser.on('data', data => {
+      if (results.length >= MAX_CSV_ROWS) {
+        parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
+        return;
+      }
+      results.push(data);
+    });
     Readable.from([decodedText])
-      .pipe(csv())
-      .on('data', (data) => results.push(data))
+      .pipe(parser)
       .on('end', () => {
         console.log(`[Watcher] パース完了 (${encoding}): ${results.length} 件`);
         if (mainWindow) {
           mainWindow.webContents.send('data-imported', {
+            importId,
             fileName: path.basename(filePath),
             rows: results
           });
         }
-        archiveFile(filePath);
       })
       .on('error', (err) => {
         console.error('[Watcher] パースエラー:', err);
         if (mainWindow) {
           mainWindow.webContents.send('data-import-failed', {
+            importId,
             fileName: path.basename(filePath),
             error: err.message
           });
@@ -1477,6 +1698,7 @@ function importCSV(filePath) {
     console.error('[Watcher] ファイル読み込みまたはデコードエラー:', err);
     if (mainWindow) {
       mainWindow.webContents.send('data-import-failed', {
+        importId,
         fileName: path.basename(filePath),
         error: err.message
       });
@@ -1638,7 +1860,7 @@ function archiveFile(filePath) {
 }
 
 // IPC通信で監視対象フォルダパスをフロントに返す
-ipcMain.handle('get-watch-directory', () => {
+handleTrusted('get-watch-directory', () => {
   return currentWatchDir;
 });
 
@@ -1661,7 +1883,7 @@ function updateWatchDirectoryOnParent(newPath) {
 }
 
 // IPC通信で監視対象フォルダを動的に切り替える
-ipcMain.handle('update-watch-directory', (event, newPath) => updateWatchDirectoryOnParent(newPath));
+handleTrusted('update-watch-directory', (event, newPath) => updateWatchDirectoryOnParent(newPath));
 
 async function triggerManualImportOnParent() {
   const watchPath = resolveWatchDir();
@@ -1689,7 +1911,7 @@ async function triggerManualImportOnParent() {
 }
 
 // IPC通信で手動でのフォルダスキャン・CSV取り込みを実行する
-ipcMain.handle('trigger-manual-import', () => triggerManualImportOnParent());
+handleTrusted('trigger-manual-import', () => triggerManualImportOnParent());
 
 // ODBC読み取り専用安全対策: SQLクエリバリデーション
 function validateReadOnlyQuery(sql) {
@@ -1789,8 +2011,19 @@ ${scriptBody}
 }`.trim();
 
   try {
-    const out = execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`,
-      { encoding: 'utf8', timeout: timeoutMs }).trim();
+    // cmd.exeを介さず固定実行ファイルへ引数配列で渡す。EncodedCommandにより、
+    // 接続文字列やSQL中の記号がコマンドラインとして再解釈されない。
+    const encodedCommand = Buffer.from(ps, 'utf16le').toString('base64');
+    const out = execFileSync(
+      POWERSHELL_EXE,
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+      {
+        encoding: 'utf8',
+        timeout: Math.min(Math.max(Number(timeoutMs) || 15000, 1000), 60000),
+        maxBuffer: 5 * 1024 * 1024,
+        windowsHide: true,
+      }
+    ).trim();
     if (!out || out.startsWith('ERROR:')) {
       return { success: false, error: out ? out.slice(6) : '接続に失敗しました' };
     }
@@ -1833,13 +2066,18 @@ async function getOdbcTablesOnParent({ connectionString }) {
 }
 
 // IPC通信でODBC接続経由でテーブル/ビュー一覧を取得する
-ipcMain.handle('get-odbc-tables', (event, config) => getOdbcTablesOnParent(config || {}));
+handleTrusted('get-odbc-tables', (event, config) => getOdbcTablesOnParent(config || {}));
 
 function getOdbcDsnsOnParent() {
   const result = { system: [], user: [], drivers: [] };
   const regQuery = (hive, subkey) => {
     try {
-      const out = execSync(`reg query "${hive}\\SOFTWARE\\ODBC\\ODBC.INI\\${subkey}"`, { encoding: 'utf8', timeout: 5000 });
+      const registryPath = `${hive}\\SOFTWARE\\ODBC\\ODBC.INI\\${subkey}`;
+      const out = execFileSync(REG_EXE, ['query', registryPath], {
+        encoding: 'utf8',
+        timeout: 5000,
+        windowsHide: true,
+      });
       return out.split('\r\n')
         .map(l => l.trim())
         .filter(l => l && !l.startsWith(hive) && !l.startsWith('HKEY'))
@@ -1849,7 +2087,12 @@ function getOdbcDsnsOnParent() {
   };
   const driverQuery = (hive) => {
     try {
-      const out = execSync(`reg query "${hive}\\SOFTWARE\\ODBC\\ODBCINST.INI\\ODBC Drivers"`, { encoding: 'utf8', timeout: 5000 });
+      const registryPath = `${hive}\\SOFTWARE\\ODBC\\ODBCINST.INI\\ODBC Drivers`;
+      const out = execFileSync(REG_EXE, ['query', registryPath], {
+        encoding: 'utf8',
+        timeout: 5000,
+        windowsHide: true,
+      });
       return out.split('\r\n')
         .map(l => l.trim())
         .filter(l => l && !l.startsWith(hive) && !l.startsWith('HKEY'))
@@ -1865,7 +2108,7 @@ function getOdbcDsnsOnParent() {
 }
 
 // IPC通信でWindowsレジストリからシステム/ユーザーDSN一覧を取得する
-ipcMain.handle('get-odbc-dsns', () => getOdbcDsnsOnParent());
+handleTrusted('get-odbc-dsns', () => getOdbcDsnsOnParent());
 
 async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
   // 接続文字列の検証 & 読み取り専用属性の付与
@@ -1893,7 +2136,7 @@ async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
 }
 
 // IPC通信でODBCデータベース接続テストを行う
-ipcMain.handle('test-odbc-connection', (event, config) => testOdbcConnectionOnParent(config || {}));
+handleTrusted('test-odbc-connection', (event, config) => testOdbcConnectionOnParent(config || {}));
 
 function buildOdbcRowFetchScript(sqlQuery, maxRows = null) {
   const safeQuery = String(sqlQuery).replace(/'/g, "''");
@@ -1973,7 +2216,7 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
 }
 
 // IPC通信でODBC直接同期を実行する
-ipcMain.handle('run-odbc-sync', (event, config) => runOdbcSyncOnParent(config || {}));
+handleTrusted('run-odbc-sync', (event, config) => runOdbcSyncOnParent(config || {}));
 
 async function previewOdbcQueryOnParent({ connectionString, sqlQuery } = {}) {
   const connResult = enforceReadOnlyConnectionString(connectionString);
@@ -2004,10 +2247,10 @@ async function previewOdbcQueryOnParent({ connectionString, sqlQuery } = {}) {
 }
 
 // IPC通信でODBCクエリのプレビューを取得する。本番データには書き込まない。
-ipcMain.handle('preview-odbc-query', (event, config) => previewOdbcQueryOnParent(config || {}));
+handleTrusted('preview-odbc-query', (event, config) => previewOdbcQueryOnParent(config || {}));
 
 // IPC通信で出棟中（進行中）の移送情報をリセットする
-ipcMain.handle('reset-database', () => {
+handleTrusted('reset-database', () => {
   const db = readDB();
   
   // 進行中のステータス一覧
@@ -2135,7 +2378,63 @@ const ALLOWED_TABLES = new Set([
   'audit_logs', 'handover_notes', 'bed_occupancy_log',
 ]);
 
-// 患者情報（氏名・ID）を含むテーブル。外部HTTPアクセス時はAPIトークン必須（セキュリティ: A-2）
+// 共有マスターは親機を唯一の書き込み元とし、更新時刻で子機同士の上書きを検知する。
+const MASTER_REVISION_TABLES = new Set([
+  'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
+]);
+
+function checkMasterRevision(table, existing, payload) {
+  if (!MASTER_REVISION_TABLES.has(table) || !payload || typeof payload !== 'object') return null;
+  const expected = Object.prototype.hasOwnProperty.call(payload, '_expectedUpdatedAt')
+    ? payload._expectedUpdatedAt
+    : undefined;
+  if (expected !== undefined && String(existing?.updated_at || '') !== String(expected || '')) {
+    return {
+      success: false,
+      conflict: true,
+      message: '他の端末でマスターが更新されています。最新データを取得してから再度保存してください。',
+    };
+  }
+  return null;
+}
+
+function applyMasterRevision(table, existing, payload) {
+  if (!MASTER_REVISION_TABLES.has(table) || !payload || typeof payload !== 'object') return null;
+  const conflict = checkMasterRevision(table, existing, payload);
+  if (conflict) return conflict;
+  delete payload._expectedUpdatedAt;
+  payload.updated_at = Math.max(Date.now(), Number(existing?.updated_at || 0) + 1);
+  return null;
+}
+
+function validateMasterReferences(db, table, existing, payload) {
+  if (table !== 'beds' || !payload || typeof payload !== 'object') return null;
+  if (Object.prototype.hasOwnProperty.call(payload, 'bed_number')) {
+    const bedNumber = String(payload.bed_number || '').trim();
+    if (!bedNumber) {
+      return { success: false, message: '病床番号は必須です。' };
+    }
+    const duplicate = (db.beds || []).find(bed =>
+      String(bed.id) !== String(existing?.id || '') &&
+      String(bed.bed_number || '').trim().toLowerCase() === bedNumber.toLowerCase()
+    );
+    if (duplicate) {
+      return { success: false, conflict: true, message: `病床番号が重複しています: ${bedNumber}` };
+    }
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'ward_id') || !payload.ward_id) return null;
+  const wardExists = (db.wards || []).some(ward => String(ward.id) === String(payload.ward_id));
+  if (!wardExists) {
+    return {
+      success: false,
+      conflict: true,
+      message: '指定された病棟が存在しないため、病床を保存できません。最新の病棟マスターを取得してください。',
+    };
+  }
+  return null;
+}
+
+// 患者情報（氏名・ID）を含むテーブル。追加のマスキング判断にも使用する。
 // 申し送りメモ(handover_notes)は本文に患者名等が入りうるため患者データ扱いとする
 // bed_occupancy_logは非マスクの氏名・IDを保持するため同様に患者データ扱いとする
 const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes', 'bed_occupancy_log']);
@@ -2371,6 +2670,38 @@ function pruneBedOccupancyLogFromDb(db, now = Date.now()) {
   return pruneBedOccupancyLog(db.bed_occupancy_log, days, BED_OCCUPANCY_LOG_MAX_ENTRIES, now);
 }
 
+function pruneExpiredTransferEventsFromDb(db, now = Date.now()) {
+  const days = getSystemSettingInt(db, 'event_retention_days', 0);
+  if (days <= 0 || !Array.isArray(db.transfer_events)) return 0;
+
+  const cutoff = now - days * 24 * 60 * 60 * 1000;
+  const completedStatuses = new Set(['RETURNED', 'CANCELLED']);
+  const staleIds = new Set(
+    db.transfer_events
+      .filter(event => (
+        event.id !== null &&
+        event.id !== undefined &&
+        completedStatuses.has(event.current_status) &&
+        Number(event.returned_at || event.cancelled_at || event.created_at || 0) < cutoff
+      ))
+      .map(event => String(event.id))
+  );
+  if (staleIds.size === 0) return 0;
+
+  db.transfer_events = db.transfer_events.filter(event => !staleIds.has(String(event.id)));
+  if (Array.isArray(db.transfer_status_logs)) {
+    db.transfer_status_logs = db.transfer_status_logs.filter(log => (
+      !staleIds.has(String(log.event_id || log.transfer_event_id || ''))
+    ));
+  }
+  appendAuditLog(db, 'EVENT_RETENTION_CLEANUP', {
+    targetType: 'transfer_events',
+    actorType: 'system',
+    details: { removedCount: staleIds.size, retentionDays: days },
+  });
+  return staleIds.size;
+}
+
 function statusMismatchConflictResponse(expectedStatus, current) {
   return {
     success: false,
@@ -2560,9 +2891,6 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     changed_at: now,
     note: '',
   });
-  if (db.transfer_status_logs.length > 1000) {
-    db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
-  }
   appendAuditLog(db, 'TRANSFER_START', {
     targetType: 'transfer_events',
     targetId: eventId,
@@ -2649,6 +2977,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     NEARLY_DONE: 'nearly_done_at',
     PICKUP_REQUIRED: 'pickup_ready_at',
     RETURNED: 'returned_at',
+    CANCELLED: 'cancelled_at',
   };
   const patch = { current_status: newStatus, ...extraFields };
   if (maintenanceComplete) {
@@ -2686,9 +3015,6 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     changed_at: now,
     note: '',
   });
-  if (db.transfer_status_logs.length > 1000) {
-    db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
-  }
   appendAuditLog(db, 'STATUS_CHANGE', {
     targetType: 'transfer_events',
     targetId: eventId,
@@ -2710,6 +3036,131 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
 
   console.log(`[Status] Updated: id=${eventId}, ${fromStatus} -> ${newStatus}, scope=${scope}${maintenanceComplete ? ', maintenance=true' : ''}`);
   return list[index];
+}
+
+function processStatusNoteRequest(method, bodyStr, isExternal = false, apiToken = null) {
+  if (method !== 'POST') {
+    return { success: false, message: 'Method Not Allowed' };
+  }
+  if (isExternal && !isValidApiToken(apiToken)) {
+    return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+
+  let payload;
+  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+    return { success: false, message: 'リクエストボディのJSONが不正です' };
+  }
+  const eventId = String(payload.eventId || '').trim();
+  const expectedStatus = payload.expectedStatus == null ? null : String(payload.expectedStatus);
+  const note = String(payload.note || '').trim().slice(0, 500);
+  if (!eventId || !note) {
+    return { success: false, message: 'eventId and note are required' };
+  }
+
+  const db = readDB();
+  const event = (db.transfer_events || []).find(item => String(item.id) === eventId);
+  if (!event) return { success: false, message: 'Not Found' };
+  if (expectedStatus && event.current_status !== expectedStatus) {
+    return statusMismatchConflictResponse(expectedStatus, event);
+  }
+
+  const now = Date.now();
+  db.transfer_status_logs = Array.isArray(db.transfer_status_logs) ? db.transfer_status_logs : [];
+  db.transfer_status_logs.push({
+    id: `log-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    transfer_event_id: event.id,
+    from_status: event.current_status,
+    to_status: event.current_status,
+    changed_by: isExternal ? '子機操作' : 'UI操作',
+    changed_at: now,
+    note,
+  });
+  appendAuditLog(db, 'STATUS_NOTE', {
+    targetType: 'transfer_events',
+    targetId: event.id,
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    details: { status: event.current_status },
+  });
+  if (!writeDB(db)) {
+    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+  return { success: true };
+}
+
+function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {}) {
+  const bulkTables = new Set(['wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs']);
+  if (!bulkTables.has(table)) {
+    return { success: false, message: 'このテーブルの一括マスター更新は許可されていません。' };
+  }
+  if (!Array.isArray(records) || records.length === 0 || records.length > 1000) {
+    return { success: false, message: '一括マスター更新の件数が不正です。' };
+  }
+
+  const list = db[table] || [];
+  const workingList = list.map(item => ({ ...item }));
+  const seenIds = new Set();
+  const operations = [];
+  for (const raw of records) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { success: false, message: 'マスターデータの形式が不正です。' };
+    }
+    const data = { ...raw };
+    if (!data.id) data.id = `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const key = String(data.id);
+    if (seenIds.has(key)) {
+      return { success: false, conflict: true, message: '同じIDのマスターが複数含まれています。' };
+    }
+    seenIds.add(key);
+    const index = workingList.findIndex(item => String(item.id) === key);
+    const before = index === -1 ? null : workingList[index];
+    const revisionError = applyMasterRevision(table, before, data);
+    if (revisionError) return revisionError;
+    const referenceError = validateMasterReferences(db, table, before, data);
+    if (referenceError) return referenceError;
+    const after = index === -1 ? data : { ...before, ...data };
+    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, 'bed_number')) {
+      const duplicate = workingList.find(item =>
+        String(item.id) !== key &&
+        String(item.bed_number || '').trim().toLowerCase() === String(data.bed_number || '').trim().toLowerCase()
+      );
+      if (duplicate) return { success: false, conflict: true, message: `病床番号が重複しています: ${data.bed_number}` };
+    }
+    if (index === -1) workingList.push(after);
+    else workingList[index] = after;
+    operations.push({ before: before ? JSON.parse(JSON.stringify(before)) : null, after });
+  }
+
+  const now = Date.now();
+  if (table === 'beds') {
+    db.bed_occupancy_log = db.bed_occupancy_log || [];
+    for (const operation of operations) {
+      applyBedOccupancyTransition(
+        db.bed_occupancy_log,
+        operation.after.id,
+        operation.after.ward_id,
+        operation.before,
+        operation.after,
+        operation.after,
+        now,
+        null,
+      );
+    }
+    pruneBedOccupancyLogFromDb(db, now);
+  }
+  db[table] = workingList;
+  appendAuditLog(db, 'DB_BULK_UPSERT', {
+    targetType: table,
+    targetId: 'bulk',
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    remoteIp: requestMeta.remoteIp || '',
+    before: operations.map(operation => operation.before ? summarizeAuditRecord(table, operation.before) : null),
+    after: operations.map(operation => summarizeAuditRecord(table, operation.after)),
+    details: { method: 'POST', count: operations.length },
+  });
+  if (!writeDB(db)) {
+    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+  return { success: true, count: operations.length, data: operations.map(operation => operation.after) };
 }
 
 // 共通のデータベース操作処理関数
@@ -2744,11 +3195,32 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     return { success: false, message: 'bed_occupancy_log is server-managed and cannot be written directly' };
   }
 
+  // 状態変更ログは status/update / status/note からmainプロセスだけが追加する。
+  // 汎用テーブルAPIを開けたままにすると、履歴の状態や操作者を任意に偽装できる。
+  if (table === 'transfer_status_logs' && method !== 'GET') {
+    return { success: false, message: 'transfer_status_logs is server-managed' };
+  }
+
+  // 管理者パスコードは専用IPCでのみ扱う。汎用DB APIからハッシュを取得・更新できると、
+  // renderer上のXSSがオフライン解析やロックの無効化に悪用できるため、ローカルでも拒否する。
+  if (table === 'system_settings') {
+    if (id === 'admin_passcode') {
+      return { success: false, message: 'Forbidden' };
+    }
+    if (method !== 'GET' && bodyStr) {
+      try {
+        const payload = JSON.parse(bodyStr);
+        const records = Array.isArray(payload) ? payload : [payload];
+        if (records.some(record => record?.id === 'admin_passcode')) {
+          return { success: false, message: 'Forbidden' };
+        }
+      } catch {}
+    }
+  }
+
   // 患者情報を含むテーブルへの外部アクセスはAPIトークンで保護する
   if (isExternal && PATIENT_DATA_TABLES.has(table)) {
-    const tokenSetting = (db.system_settings || []).find(s => s.id === 'api_token');
-    const expectedToken = tokenSetting?.value || '';
-    if (!expectedToken || apiToken !== expectedToken) {
+    if (!isValidApiToken(apiToken)) {
       console.warn(`[Security] APIトークン認証失敗: table=${table}`);
       return { success: false, message: 'Unauthorized', unauthorized: true };
     }
@@ -2756,9 +3228,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
 
   // 外部(HTTP)からのアクセスに対するセキュリティ制限（機密データの保護）
   if (isExternal && table === 'system_settings') {
-    // admin_passcode は子機の設定画面パスコード認証のため単体GETのみ許可する
-    // ODBC接続文字列・SMBパスワード・APIトークンは単体GETも禁止（APIトークンは親機画面から手動で子機に設定する運用）
-    const blockedSingleGet = ['odbc_connection_string', 'smb_password', 'api_token'];
+    // パスコードは検証APIで照合し、ハッシュ自体は子機へ返さない。
+    // ODBC接続文字列・SMBパスワード・APIトークンも単体GETを禁止する。
+    const blockedSingleGet = ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'];
     const blockedAll = ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'];
     // 稼働モード・親機IPは各端末ローカルの設定。外部（子機）からの書き換えを許すと
     // 親機のDBの share_mode が'client'に上書きされ、再起動後に共有サーバーが
@@ -2830,6 +3302,28 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       }
       return item;
     } else {
+      if (table === 'transfer_events') {
+        const wardId = searchParams.get('ward_id');
+        const bedId = searchParams.get('bed_id');
+        const completedOnly = searchParams.get('completed_only') === 'true';
+        const completedStatuses = new Set(['RETURNED', 'CANCELLED']);
+        const filtered = list.filter(event => (
+          (!wardId || String(event.ward_id) === String(wardId)) &&
+          (!bedId || String(event.bed_id) === String(bedId)) &&
+          (!completedOnly || completedStatuses.has(event.current_status))
+        ));
+        return { data: filtered };
+      }
+      if (table === 'transfer_status_logs') {
+        const wardId = searchParams.get('ward_id');
+        const eventId = searchParams.get('transfer_event_id');
+        const eventWardById = new Map((db.transfer_events || []).map(event => [String(event.id), String(event.ward_id || '')]));
+        const filtered = list.filter(log => (
+          (!wardId || eventWardById.get(String(log.transfer_event_id)) === String(wardId)) &&
+          (!eventId || String(log.transfer_event_id) === String(eventId))
+        ));
+        return { data: filtered };
+      }
       // 在室ログは全件だと最大2万件になりうるため、病床指定時はサーバー側で絞る
       // （病床履歴パネルは1病床分しか使わない。子機では転送量にも効く）
       if (table === 'bed_occupancy_log') {
@@ -2837,6 +3331,15 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         if (bedId) {
           return { data: list.filter(o => String(o.bed_id) === String(bedId)) };
         }
+      }
+      if (table === 'system_settings') {
+        return {
+          data: list.map(setting => (
+            setting.id === 'admin_passcode'
+              ? { ...setting, value: '********' }
+              : setting
+          )),
+        };
       }
       return { data: list };
     }
@@ -2846,6 +3349,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     let data;
     try { data = JSON.parse(bodyStr); } catch {
       return { success: false, message: 'リクエストボディのJSONが不正です' };
+    }
+    if (id === 'bulk') {
+      return processMasterBulkUpsert(table, data, db, isExternal, requestMeta);
     }
     // _occupancySourceは在室ログ用の内部ヒントであり、他のテーブルにも誤って
     // 送られた場合にレコード本体へ紛れ込まないよう、テーブルを問わず必ず除去する
@@ -2889,6 +3395,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     const index = list.findIndex(x => String(x.id) === String(data.id));
     const beforeItem = index !== -1 ? JSON.parse(JSON.stringify(list[index])) : null;
+    const masterRevisionError = applyMasterRevision(table, beforeItem, data);
+    if (masterRevisionError) return masterRevisionError;
+    const referenceError = validateMasterReferences(db, table, beforeItem, data);
+    if (referenceError) return referenceError;
     if (index !== -1) {
       if (
         isExternal &&
@@ -2934,9 +3444,6 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           changed_at: changedAt,
           note: '旧端末の出棟登録を移動中へ統合',
         });
-        if (db.transfer_status_logs.length > 1000) {
-          db.transfer_status_logs.splice(0, db.transfer_status_logs.length - 1000);
-        }
       }
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
     }
@@ -2994,6 +3501,23 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       if (!Array.isArray(bulkData)) {
         return { success: false, message: 'Body must be an array for bulk updates' };
       }
+      const bulkTargetIds = new Set();
+      for (const patchItem of bulkData) {
+        const targetId = patchItem?.id;
+        if (targetId == null) continue;
+        const targetKey = String(targetId);
+        if (bulkTargetIds.has(targetKey)) {
+          return { success: false, conflict: true, message: '同じマスターを複数回更新する要求は処理できません。' };
+        }
+        bulkTargetIds.add(targetKey);
+        const existing = list.find(item => String(item.id) === targetKey);
+        if (existing) {
+          const revisionError = checkMasterRevision(table, existing, patchItem);
+          if (revisionError) return revisionError;
+          const referenceError = validateMasterReferences(db, table, existing, patchItem);
+          if (referenceError) return referenceError;
+        }
+      }
       if (table === 'transfer_events') {
         if (isExternal && bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))) {
           return { success: false, message: 'Use status/update for status changes' };
@@ -3030,10 +3554,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         if (Object.prototype.hasOwnProperty.call(patchItem, '_occupancySource')) {
           delete patchItem._occupancySource;
         }
-        const index = list.findIndex(x => String(x.id) === String(targetId));
-        if (index !== -1) {
-          const beforeSnap = JSON.parse(JSON.stringify(list[index]));
-          beforeItems.push(beforeSnap);
+         const index = list.findIndex(x => String(x.id) === String(targetId));
+         if (index !== -1) {
+           const beforeSnap = JSON.parse(JSON.stringify(list[index]));
+           const revisionError = applyMasterRevision(table, list[index], patchItem);
+           if (revisionError) return revisionError;
+           const referenceError = validateMasterReferences(db, table, beforeSnap, patchItem);
+           if (referenceError) return referenceError;
+           beforeItems.push(beforeSnap);
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
           if (table === 'beds') {
@@ -3069,6 +3597,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       console.warn(`[DB] PATCH Not Found: table=${table}, id=${id}`);
       return { success: false, message: 'Not Found' };
     }
+    const masterRevisionError = applyMasterRevision(table, list[index], data);
+    if (masterRevisionError) return masterRevisionError;
+    const referenceError = validateMasterReferences(db, table, list[index], data);
+    if (referenceError) return referenceError;
     if (
       isExternal &&
       table === 'transfer_events' &&
@@ -3137,6 +3669,18 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       console.warn(`[DB] DELETE Not Found: table=${table}, id=${id}`);
       return { success: false, message: 'Not Found' };
     }
+    // 病棟は病床が残った状態で削除しない。renderer側の確認だけでは、
+    // 別の子機が直前に病床を追加した競合を防げないため、親機DBで再確認する。
+    if (table === 'wards') {
+      const linkedBeds = (db.beds || []).filter(bed => String(bed.ward_id) === String(id));
+      if (linkedBeds.length > 0) {
+        return {
+          success: false,
+          conflict: true,
+          message: `この病棟には${linkedBeds.length}件の病床が登録されています。病床を先に削除してください。`,
+        };
+      }
+    }
     const removed = list.splice(index, 1)[0];
     if (table === 'beds') {
       const occupancyNow = Date.now();
@@ -3162,7 +3706,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
 }
 
 // IPC通信でフロントからのREST-likeなデータベース操作を仲介する（ローカル処理のため isExternal = false）
-ipcMain.handle('db-request', async (event, { url, options }) => {
+handleTrusted('db-request', async (event, { url, options }) => {
   // デバイス管理エンドポイント（DBを使わず親機メモリで処理）
   if (url === 'device/list') return { success: true, devices: getActiveDevices() };
   if (url === 'device/disconnect') {
@@ -3178,6 +3722,9 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
   if (url === 'status/update') {
     return processStatusUpdateRequest(method, options.body || '', false);
   }
+  if (url === 'status/note') {
+    return processStatusNoteRequest(method, options.body || '', false);
+  }
   if (url === 'transfer/start') {
     return processTransferStartRequest(method, options.body || '', false);
   }
@@ -3187,16 +3734,108 @@ ipcMain.handle('db-request', async (event, { url, options }) => {
 });
 
 // IPC通信でフロントからのWebRTCシグナリング操作を仲介する
-ipcMain.handle('webrtc-request', async (event, { url, options }) => {
+handleTrusted('webrtc-request', async (event, { url, options }) => {
   const method = (options.method || 'GET').toUpperCase();
   return processWebrtcRequest(method, url, options.body || '');
 });
 
-// 子機(レンダラーのfile://ページ)からの親機へのHTTPリクエストをメインプロセス経由で中継する。
-// ChromiumのLocal Network Access(LNA)はレンダラーのfetch()をサブリソースとしてブロックし得るが、
-// メインプロセス(Node.js)のhttpモジュールはブラウザのネットワークサービス層を経由しないためLNAの対象外。
-// disable-featuresフラグだけでは環境によりLNAを完全に無効化できない実機報告があったための恒久対策。
-function parentHttpRequest({ url, method = 'GET', headers = {}, body, timeoutMs = 8000 }) {
+// 子機から親機へのHTTPリクエストはmainプロセスで中継する。ただしrendererが
+// 任意のLAN/ローカルサービスへ接続できないよう、設定済み親機のAPIだけに制限する。
+const ALLOWED_PARENT_HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const ALLOWED_PARENT_HTTP_HEADERS = new Set(['content-type', 'x-api-token']);
+const MAX_PARENT_REQUEST_BYTES = 1024 * 1024;
+const MAX_PARENT_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+function isPrivateOrLoopbackIpv4(hostname) {
+  const parts = String(hostname || '').split('.').map(part => Number(part));
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  return (
+    parts[0] === 10 ||
+    parts[0] === 127 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168)
+  );
+}
+
+function normalizeParentHttpRequest(opts) {
+  if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
+    throw new Error('INVALID_REQUEST');
+  }
+
+  const db = readDB();
+  const shareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
+  const configuredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '').trim();
+  const allowedHosts = new Set();
+  if (shareMode === 'parent') {
+    allowedHosts.add('127.0.0.1');
+    allowedHosts.add('localhost');
+  } else if (configuredParentIp) {
+    allowedHosts.add(configuredParentIp.toLowerCase());
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(String(opts.url || ''));
+  } catch {
+    throw new Error('INVALID_URL');
+  }
+  const isConnectionTest = opts.purpose === 'connection-test';
+  const isAllowedConnectionTest = (
+    isConnectionTest &&
+    isPrivateOrLoopbackIpv4(parsed.hostname) &&
+    (parsed.pathname === '/api/tables/wards' || parsed.pathname === '/api/tables/beds')
+  );
+  const isConfiguredEndpoint = (
+    allowedHosts.has(parsed.hostname.toLowerCase()) &&
+    (parsed.pathname.startsWith('/api/') || parsed.pathname.startsWith('/updates/'))
+  );
+  if (
+    parsed.protocol !== 'http:' ||
+    parsed.port !== '3005' ||
+    (!isConfiguredEndpoint && !isAllowedConnectionTest)
+  ) {
+    throw new Error('ENDPOINT_NOT_ALLOWED');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('ENDPOINT_NOT_ALLOWED');
+  }
+
+  const method = String(opts.method || 'GET').toUpperCase();
+  if (!ALLOWED_PARENT_HTTP_METHODS.has(method)) {
+    throw new Error('METHOD_NOT_ALLOWED');
+  }
+  if (isConnectionTest && method !== 'GET') {
+    throw new Error('METHOD_NOT_ALLOWED');
+  }
+
+  const body = typeof opts.body === 'string' ? opts.body : '';
+  if (Buffer.byteLength(body, 'utf8') > MAX_PARENT_REQUEST_BYTES) {
+    throw new Error('REQUEST_TOO_LARGE');
+  }
+
+  const headers = {};
+  if (opts.headers && typeof opts.headers === 'object' && !Array.isArray(opts.headers)) {
+    for (const [name, value] of Object.entries(opts.headers)) {
+      const normalizedName = String(name).toLowerCase();
+      if (!ALLOWED_PARENT_HTTP_HEADERS.has(normalizedName)) continue;
+      if (typeof value !== 'string' || value.length > 1024) {
+        throw new Error('INVALID_HEADER');
+      }
+      headers[normalizedName] = value;
+    }
+  }
+
+  const requestedTimeout = Number(opts.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout)
+    ? Math.min(Math.max(Math.trunc(requestedTimeout), 1000), 30000)
+    : 8000;
+
+  return { url: parsed, method, headers, body, timeoutMs };
+}
+
+function parentHttpRequest(opts) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result) => {
@@ -3205,11 +3844,31 @@ function parentHttpRequest({ url, method = 'GET', headers = {}, body, timeoutMs 
       resolve(result);
     };
 
+    let request;
+    try {
+      request = normalizeParentHttpRequest(opts);
+    } catch (e) {
+      finish({ ok: false, status: 0, error: e.message || 'INVALID_REQUEST' });
+      return;
+    }
+
     let req;
     try {
-      req = http.request(url, { method, headers, timeout: timeoutMs }, (res) => {
+      req = http.request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        timeout: request.timeoutMs,
+      }, (res) => {
         const chunks = [];
-        res.on('data', (chunk) => chunks.push(chunk));
+        let responseBytes = 0;
+        res.on('data', (chunk) => {
+          responseBytes += chunk.length;
+          if (responseBytes > MAX_PARENT_RESPONSE_BYTES) {
+            req.destroy(new Error('RESPONSE_TOO_LARGE'));
+            return;
+          }
+          chunks.push(chunk);
+        });
         res.on('end', () => {
           finish({
             ok: true,
@@ -3232,18 +3891,36 @@ function parentHttpRequest({ url, method = 'GET', headers = {}, body, timeoutMs 
       finish({ ok: false, status: 0, error: e.message || 'NETWORK_ERROR' });
     });
 
-    if (body) req.write(body);
+    if (request.body) req.write(request.body);
     req.end();
   });
 }
 
-ipcMain.handle('parent-http-request', async (event, opts) => {
+handleTrusted('parent-http-request', async (event, opts) => {
   return parentHttpRequest(opts);
 });
 
 // アプリバージョンを返す
-ipcMain.handle('get-app-version', () => app.getVersion());
-ipcMain.handle('get-hostname', () => os.hostname());
+handleTrusted('get-app-version', () => app.getVersion());
+handleTrusted('get-hostname', () => os.hostname());
+handleTrusted('get-passcode-status', () => getAdminPasscodeStatus());
+handleTrusted('verify-admin-passcode', (event, passcode) => (
+  verifyAdminPasscodeAttempt(passcode, 'local-renderer')
+));
+handleTrusted('set-admin-passcode', (event, passcode) => setAdminPasscode(passcode));
+handleTrusted('get-terminal-api-token', () => getTerminalApiToken());
+handleTrusted('set-terminal-api-token', (event, token) => setTerminalApiToken(token));
+handleTrusted('cleanup-event-retention', () => {
+  const db = readDB();
+  if (normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) !== 'parent') {
+    return { success: false, message: '親機でのみ実行できます' };
+  }
+  const removed = pruneExpiredTransferEventsFromDb(db);
+  if (removed > 0 && !writeDB(db)) {
+    return { success: false, message: 'クリーンアップ結果を保存できませんでした' };
+  }
+  return { success: true, removed };
+});
 
 // ── 診断用デバッグログ ──
 // パッケージ版（.exe）はターミナルが無くコンソール出力を確認できないため、
@@ -3253,7 +3930,7 @@ function getDebugLogPath() {
   return path.join(app.getPath('userData'), 'debug.log');
 }
 
-ipcMain.handle('append-debug-log', (event, line) => {
+handleTrusted('append-debug-log', (event, line) => {
   try {
     const logPath = getDebugLogPath();
     const timestamp = new Date().toISOString();
@@ -3272,7 +3949,7 @@ ipcMain.handle('append-debug-log', (event, line) => {
   }
 });
 
-ipcMain.handle('open-debug-log', () => {
+handleTrusted('open-debug-log', () => {
   const { shell } = require('electron');
   const logPath = getDebugLogPath();
   if (!fs.existsSync(logPath)) {
@@ -3283,7 +3960,7 @@ ipcMain.handle('open-debug-log', () => {
 });
 
 // フォルダ選択ダイアログ（スケジュール取り込みの監視フォルダ選択用）
-ipcMain.handle('select-folder', async () => {
+handleTrusted('select-folder', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
     title: '監視フォルダを選択',
@@ -3292,11 +3969,12 @@ ipcMain.handle('select-folder', async () => {
 });
 
 // CSVのヘッダ行を読み取る（スケジュール取り込みの列マッピング補助用）
-ipcMain.handle('read-csv-headers', async (event, folderPath) => {
+handleTrusted('read-csv-headers', async (event, folderPath) => {
   try {
     const files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.csv'));
     if (files.length === 0) return { ok: false, reason: 'no_csv' };
     const firstFile = path.join(folderPath, files[0]);
+    assertCsvFileSize(firstFile);
     const content = fs.readFileSync(firstFile, 'utf-8');
     const firstLine = content.split(/\r?\n/)[0] || '';
     // カンマ区切りとタブ区切りを自動判定
@@ -3309,21 +3987,12 @@ ipcMain.handle('read-csv-headers', async (event, folderPath) => {
 });
 
 // 開発/本番モード判定 (インフラ #4: 環境分離)
-ipcMain.handle('is-dev-mode', () => !app.isPackaged || process.env.NODE_ENV === 'development');
+handleTrusted('is-dev-mode', () => !app.isPackaged || process.env.NODE_ENV === 'development');
 
-// OSデスクトップ通知を表示（メインプロセス経由 — Windowsで確実に動作）
-ipcMain.handle('show-os-notification', (event, { title, body }) => {
-  if (!ElectronNotification.isSupported()) return;
-  const safeTitle = String(title || '').slice(0, 100);
-  const safeBody  = String(body  || '').slice(0, 300);
-  const iconPath = path.join(__dirname, 'build', 'icon.svg');
-  const n = new ElectronNotification({ title: safeTitle, body: safeBody, icon: iconPath, silent: false });
-  n.show();
-});
 
 
 // IPC通信でアプリの再起動を実行する
-ipcMain.handle('relaunch-app', () => {
+handleTrusted('relaunch-app', () => {
   app.relaunch();
   app.exit(0);
 });
@@ -3346,6 +4015,16 @@ function parseLatestYml(text) {
   return result;
 }
 
+function validateUpdateInfo(info) {
+  if (!info || typeof info !== 'object') return false;
+  if (!/^\d+\.\d+\.\d+$/.test(String(info.version || ''))) return false;
+  const fileName = String(info.path || '');
+  if (!fileName || fileName !== path.basename(fileName) || !fileName.toLowerCase().endsWith('.exe')) {
+    return false;
+  }
+  return /^[A-Za-z0-9+/]{80,}={0,2}$/.test(String(info.sha512 || ''));
+}
+
 // セマンティックバージョン比較: a > b なら正、a < b なら負、同じなら0
 function compareVersions(a, b) {
   const pa = String(a).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
@@ -3356,15 +4035,48 @@ function compareVersions(a, b) {
   return 0;
 }
 
-function httpGetText(url, timeoutMs = 15000) {
+function getUpdateApiToken() {
+  const db = readDB();
+  const shareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
+  if (shareMode === 'parent') return ensureApiToken();
+  const terminalToken = getTerminalApiToken();
+  if (!terminalToken.success || !terminalToken.token) {
+    throw new Error('更新用APIトークンを取得できません');
+  }
+  return terminalToken.token;
+}
+
+function getUpdateRequestHeaders() {
+  return { 'X-API-Token': getUpdateApiToken() };
+}
+
+function getUpdateRequestOptions(url, headers) {
+  const requestOptions = { headers };
+  if (String(url).startsWith('https:') && process.env.TRANSBOARD_UPDATE_CA_FILE) {
+    const caPath = path.resolve(process.env.TRANSBOARD_UPDATE_CA_FILE);
+    requestOptions.ca = fs.readFileSync(caPath);
+  }
+  return requestOptions;
+}
+
+function httpGetText(url, { timeoutMs = 15000, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, res => {
+    const transport = String(url).startsWith('https:') ? https : http;
+    const req = transport.get(url, getUpdateRequestOptions(url, headers), res => {
       if (res.statusCode !== 200) {
         res.resume();
         return reject(new Error(`HTTP ${res.statusCode}`));
       }
       const chunks = [];
-      res.on('data', c => chunks.push(c));
+      let totalBytes = 0;
+      res.on('data', c => {
+        totalBytes += c.length;
+        if (totalBytes > 128 * 1024) {
+          req.destroy(new Error('更新メタデータが大きすぎます'));
+          return;
+        }
+        chunks.push(c);
+      });
       res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
       res.on('error', reject);
     });
@@ -3374,22 +4086,36 @@ function httpGetText(url, timeoutMs = 15000) {
 }
 
 // URLからファイルへストリーム保存しつつsha512(base64)を計算して返す
-function downloadToFileWithHash(url, destPath, timeoutMs = 300000) {
+function downloadToFileWithHash(url, destPath, { timeoutMs = 300000, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, res => {
+    const fail = (error) => {
+      try { fs.unlinkSync(destPath); } catch {}
+      reject(error);
+    };
+    const transport = String(url).startsWith('https:') ? https : http;
+    const req = transport.get(url, getUpdateRequestOptions(url, headers), res => {
       if (res.statusCode !== 200) {
         res.resume();
         return reject(new Error(`HTTP ${res.statusCode}`));
       }
       const hash = crypto.createHash('sha512');
       const out = fs.createWriteStream(destPath);
-      res.on('data', c => hash.update(c));
+      let totalBytes = 0;
+      res.on('data', c => {
+        totalBytes += c.length;
+        if (totalBytes > 250 * 1024 * 1024) {
+          req.destroy(new Error('更新ファイルが許容サイズを超えています'));
+          out.destroy();
+          return;
+        }
+        hash.update(c);
+      });
       res.pipe(out);
       out.on('finish', () => resolve(hash.digest('base64')));
-      out.on('error', reject);
-      res.on('error', reject);
+      out.on('error', fail);
+      res.on('error', fail);
     });
-    req.on('error', reject);
+    req.on('error', fail);
     req.setTimeout(timeoutMs, () => req.destroy(new Error('ダウンロードがタイムアウトしました')));
   });
 }
@@ -3408,18 +4134,142 @@ function getUpdatesDir() {
   return path.join(app.getPath('userData'), 'updates');
 }
 
+function verifyWindowsCodeSignature(filePath) {
+  if (process.platform !== 'win32') {
+    return { success: false, message: '更新署名の検証はWindowsでのみ実行できます' };
+  }
+  if (!EXPECTED_UPDATE_PUBLISHER && !EXPECTED_UPDATE_PUBLISHER_THUMBPRINT) {
+    return {
+      success: false,
+      unsigned: true,
+      message: '更新署名の発行者または証明書フィンガープリントが未設定です。管理者に連絡してください',
+    };
+  }
+
+  const script = `
+$ErrorActionPreference = 'Stop'
+$path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TRANSBOARD_SIGNATURE_PATH_B64))
+$sig = Get-AuthenticodeSignature -LiteralPath $path
+$name = if ($sig.SignerCertificate) {
+  $sig.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+} else { '' }
+$thumbprint = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Thumbprint } else { '' }
+[PSCustomObject]@{ status = [string]$sig.Status; publisher = [string]$name; thumbprint = [string]$thumbprint } | ConvertTo-Json -Compress
+`.trim();
+
+  try {
+    const encodedCommand = Buffer.from(script, 'utf16le').toString('base64');
+    const output = execFileSync(
+      POWERSHELL_EXE,
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
+      {
+        encoding: 'utf8',
+        timeout: 15000,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          TRANSBOARD_SIGNATURE_PATH_B64: Buffer.from(filePath, 'utf8').toString('base64'),
+        },
+      }
+    ).trim();
+    const signature = JSON.parse(output);
+    const publisherConfigured = Boolean(EXPECTED_UPDATE_PUBLISHER);
+    const thumbprintConfigured = Boolean(EXPECTED_UPDATE_PUBLISHER_THUMBPRINT);
+    const publisherMatches = !publisherConfigured || String(signature.publisher || '').localeCompare(
+      EXPECTED_UPDATE_PUBLISHER,
+      undefined,
+      { sensitivity: 'accent' }
+    ) === 0;
+    const thumbprintMatches = !thumbprintConfigured ||
+      String(signature.thumbprint || '').replace(/[^0-9a-f]/gi, '').toUpperCase() === EXPECTED_UPDATE_PUBLISHER_THUMBPRINT;
+    if (signature.status !== 'Valid' || !publisherMatches || !thumbprintMatches) {
+      return { success: false, message: '更新ファイルのデジタル署名を確認できませんでした' };
+    }
+    return {
+      success: true,
+      publisher: signature.publisher,
+      thumbprint: signature.thumbprint,
+      matchedBy: thumbprintConfigured ? 'thumbprint' : 'publisher'
+    };
+  } catch (error) {
+    console.warn('[Updater] Authenticode検証に失敗:', error.message);
+    return { success: false, message: '更新ファイルのデジタル署名検証に失敗しました' };
+  }
+}
+
+function isUnsignedUpdateSourceAllowed(feedBase) {
+  if (!feedBase) return true;
+  try {
+    const source = new URL(feedBase);
+    return source.protocol === 'https:' ||
+      source.hostname === 'localhost' ||
+      isPrivateOrLoopbackIpv4(source.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function confirmUnsignedUpdate({ version, fileName, sha512, feedBase = null } = {}) {
+  if (!isUnsignedUpdateSourceAllowed(feedBase)) {
+    return {
+      accepted: false,
+      message: '署名なし更新は院内LANまたはHTTPSの更新元からのみ許可されます',
+    };
+  }
+
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: '署名なし更新の確認',
+    buttons: ['更新を中止', '署名なしで続行'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: `v${version || '?'} の更新ファイルにコード署名がありません`,
+    detail: [
+      feedBase
+        ? 'APIトークン認証とSHA-512整合性検証は実施済みです。'
+        : '選択したlatest.ymlとインストーラーのSHA-512整合性検証は実施済みです。',
+      '配布元とハッシュ値を管理者が確認した場合のみ続行してください。',
+      `ファイル: ${fileName || '?'}`,
+      `SHA-512: ${sha512 || '?'}`,
+    ].join('\n'),
+  });
+  return result.response === 1
+    ? { accepted: true }
+    : { accepted: false, message: '署名なし更新はキャンセルされました' };
+}
+
 // 更新フィードURLの組み立て。子機はparentIp指定、親機は自分自身(ループバック)を参照
 function buildUpdateFeedBase(parentIp) {
-  const host = (parentIp || '').trim() || '127.0.0.1';
+  const configuredBase = String(process.env.TRANSBOARD_UPDATE_BASE_URL || '').trim();
+  if (configuredBase) {
+    let parsed;
+    try { parsed = new URL(configuredBase); } catch { throw new Error('更新URLの形式が不正です'); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new Error('更新URLの形式が不正です');
+    }
+    return parsed.href.replace(/\/+$/, '');
+  }
+  const db = readDB();
+  const shareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
+  const configuredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '').trim();
+  const requestedHost = String(parentIp || '').trim();
+  const host = shareMode === 'parent' ? '127.0.0.1' : configuredParentIp;
+  if (!host || (requestedHost && requestedHost !== host)) {
+    throw new Error('更新元の親機アドレスが設定と一致しません');
+  }
   return `http://${host}:3005/updates`;
 }
 
 // 更新チェック: latest.yml を取得し現行バージョンと比較する
-ipcMain.handle('check-for-update', async (event, { parentIp } = {}) => {
+handleTrusted('check-for-update', async (event, { parentIp } = {}) => {
   try {
-    const ymlText = await httpGetText(`${buildUpdateFeedBase(parentIp)}/latest.yml`);
+    const ymlText = await httpGetText(`${buildUpdateFeedBase(parentIp)}/latest.yml`, {
+      headers: getUpdateRequestHeaders(),
+    });
     const info = parseLatestYml(ymlText);
-    if (!info.version || !info.path || !info.sha512) {
+    if (!validateUpdateInfo(info)) {
       return { success: false, message: 'latest.ymlの形式が不正です' };
     }
     const currentVersion = app.getVersion();
@@ -3436,12 +4286,14 @@ ipcMain.handle('check-for-update', async (event, { parentIp } = {}) => {
 });
 
 // 更新のダウンロード → sha512検証 → DB退避 → サイレントインストール起動
-ipcMain.handle('download-and-install-update', async (event, { parentIp } = {}) => {
+handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
     const feedBase = buildUpdateFeedBase(parentIp);
-    const ymlText = await httpGetText(`${feedBase}/latest.yml`);
+    const ymlText = await httpGetText(`${feedBase}/latest.yml`, {
+      headers: getUpdateRequestHeaders(),
+    });
     const info = parseLatestYml(ymlText);
-    if (!info.version || !info.path || !info.sha512) {
+    if (!validateUpdateInfo(info)) {
       return { success: false, message: 'latest.ymlの形式が不正です' };
     }
     if (compareVersions(info.version, app.getVersion()) <= 0) {
@@ -3452,11 +4304,33 @@ ipcMain.handle('download-and-install-update', async (event, { parentIp } = {}) =
     fs.mkdirSync(tmpDir, { recursive: true });
     const installerPath = path.join(tmpDir, path.basename(info.path));
     const actualSha512 = await downloadToFileWithHash(
-      `${feedBase}/${encodeURIComponent(path.basename(info.path))}`, installerPath);
+      `${feedBase}/${encodeURIComponent(path.basename(info.path))}`,
+      installerPath,
+      { headers: getUpdateRequestHeaders() }
+    );
 
     if (actualSha512 !== info.sha512) {
       try { fs.unlinkSync(installerPath); } catch {}
       return { success: false, message: 'ダウンロードファイルの検証(sha512)に失敗しました。ファイルが破損しているか、改ざんされている可能性があります' };
+    }
+
+    const signatureResult = verifyWindowsCodeSignature(installerPath);
+    if (!signatureResult.success) {
+      if (!signatureResult.unsigned) {
+        try { fs.unlinkSync(installerPath); } catch {}
+        return signatureResult;
+      }
+      const unsignedConfirmation = await confirmUnsignedUpdate({
+        version: info.version,
+        fileName: info.path,
+        sha512: info.sha512,
+        feedBase,
+      });
+      if (!unsignedConfirmation.accepted) {
+        try { fs.unlinkSync(installerPath); } catch {}
+        return { success: false, message: unsignedConfirmation.message };
+      }
+      console.warn(`[Updater] 署名なし更新を管理者確認により許可: v${info.version}`);
     }
 
     // 更新起因の万一の破損に備え、既存の.bakローリングとは別にDBを退避
@@ -3479,7 +4353,7 @@ ipcMain.handle('download-and-install-update', async (event, { parentIp } = {}) =
 // ── 親機の配信管理（取込・状況・ロールバック） ──
 
 // updatesフォルダ内の配信状況を返す
-ipcMain.handle('get-update-dist-info', () => {
+handleTrusted('get-update-dist-info', () => {
   try {
     const updatesDir = getUpdatesDir();
     const ymlPath = path.join(updatesDir, 'latest.yml');
@@ -3502,7 +4376,7 @@ ipcMain.handle('get-update-dist-info', () => {
 });
 
 // 更新ファイルの取込: latest.yml と .exe を選択させ、sha512整合を検証してから配信位置へコピー
-ipcMain.handle('import-update-files', async () => {
+handleTrusted('import-update-files', async () => {
   try {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: '更新ファイルを選択（latest.yml とインストーラ .exe の両方）',
@@ -3518,17 +4392,30 @@ ipcMain.handle('import-update-files', async () => {
     }
 
     const info = parseLatestYml(fs.readFileSync(ymlSrc, 'utf8'));
-    if (!info.version || !info.path || !info.sha512) {
+    if (!validateUpdateInfo(info)) {
       return { success: false, message: 'latest.ymlの形式が不正です（version/path/sha512が必要）' };
     }
-    if (!/^\d+\.\d+\.\d+$/.test(info.version)) {
-      return { success: false, message: `バージョン形式が不正です: ${info.version}` };
+    if (path.basename(exeSrc) !== info.path) {
+      return { success: false, message: 'latest.ymlに記載されたファイル名とインストーラ名が一致しません' };
     }
 
     // 壊れた・組み合わせ違いのファイルを配信しないよう、取込時点でsha512を照合
     const actualSha512 = await sha512OfFile(exeSrc);
     if (actualSha512 !== info.sha512) {
       return { success: false, message: 'インストーラとlatest.ymlのsha512が一致しません。ダウンロードし直すか、同じリリースの組み合わせか確認してください' };
+    }
+    const signatureResult = verifyWindowsCodeSignature(exeSrc);
+    if (!signatureResult.success) {
+      if (!signatureResult.unsigned) return signatureResult;
+      const unsignedConfirmation = await confirmUnsignedUpdate({
+        version: info.version,
+        fileName: info.path,
+        sha512: info.sha512,
+      });
+      if (!unsignedConfirmation.accepted) {
+        return { success: false, message: unsignedConfirmation.message };
+      }
+      console.warn(`[Updater] 署名なし配信を管理者確認により許可: v${info.version}`);
     }
 
     const updatesDir = getUpdatesDir();
@@ -3570,7 +4457,7 @@ ipcMain.handle('import-update-files', async () => {
 });
 
 // ロールバック: archive内の旧配信ファイルを配信位置へ戻す
-ipcMain.handle('rollback-update-dist', () => {
+handleTrusted('rollback-update-dist', () => {
   try {
     const updatesDir = getUpdatesDir();
     const archiveDir = path.join(updatesDir, 'archive');
@@ -3620,17 +4507,17 @@ function reloadScheduleFeedTriggersOnParent() {
 }
 
 // スケジュールフィードの手動取り込みとウォッチャー再起動
-ipcMain.handle('trigger-schedule-feed-import', (event, feedId) => triggerScheduleFeedImportOnParent(feedId));
+handleTrusted('trigger-schedule-feed-import', (event, feedId) => triggerScheduleFeedImportOnParent(feedId));
 
-ipcMain.handle('reload-schedule-feed-triggers', () => reloadScheduleFeedTriggersOnParent());
+handleTrusted('reload-schedule-feed-triggers', () => reloadScheduleFeedTriggersOnParent());
 
 // スタートアップ登録の取得・設定
-ipcMain.handle('get-startup-setting', () => {
+handleTrusted('get-startup-setting', () => {
   const settings = app.getLoginItemSettings();
   return { openAtLogin: settings.openAtLogin };
 });
 
-ipcMain.handle('set-startup-setting', (event, { openAtLogin }) => {
+handleTrusted('set-startup-setting', (event, { openAtLogin }) => {
   try {
     app.setLoginItemSettings({ openAtLogin: Boolean(openAtLogin) });
     return { success: true, openAtLogin: Boolean(openAtLogin) };
@@ -3640,13 +4527,8 @@ ipcMain.handle('set-startup-setting', (event, { openAtLogin }) => {
   }
 });
 
-ipcMain.handle('set-nfc-watcher', (event, enabled) => {
-  if (enabled) startNfcWatcher();
-  else stopNfcWatcher();
-});
-
 // IPC通信でフルスクリーン表示を切り替える
-ipcMain.handle('toggle-fullscreen', () => {
+handleTrusted('toggle-fullscreen', () => {
   if (mainWindow) {
     const isFS = mainWindow.isFullScreen();
     mainWindow.setFullScreen(!isFS);
@@ -3656,7 +4538,7 @@ ipcMain.handle('toggle-fullscreen', () => {
 });
 
 // スクリーンセイバー・ディスプレイスリープを抑制する
-ipcMain.handle('set-power-save', (event, prevent) => {
+handleTrusted('set-power-save', (event, prevent) => {
   if (prevent) {
     if (powerSaveBlockerId === null) {
       powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
@@ -3671,7 +4553,7 @@ ipcMain.handle('set-power-save', (event, prevent) => {
 });
 
 // ウィンドウを常に最前面に表示する
-ipcMain.handle('set-always-on-top', (event, value) => {
+handleTrusted('set-always-on-top', (event, value) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setAlwaysOnTop(value, 'floating');
   }
@@ -3750,7 +4632,7 @@ function redactCredentials(dbObj) {
 
 // IPC通信でデータベースをバックアップファイルとして保存する
 // mode: 'encrypted'（パスワード保護・患者情報含む・既定）| 'redacted'（平文だが患者情報・認証情報を除去）
-ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } = {}) => {
+handleTrusted('backup-db', async (event, { mode = 'encrypted', password = '' } = {}) => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
   if (mode === 'encrypted' && !password) {
     return { success: false, message: 'パスワードを入力してください' };
@@ -3795,7 +4677,7 @@ ipcMain.handle('backup-db', async (event, { mode = 'encrypted', password = '' } 
 });
 
 // IPC通信でデータベースバックアップファイルから復元（リストア）する
-ipcMain.handle('restore-db', async (event, { password = '' } = {}) => {
+handleTrusted('restore-db', async (event, { password = '' } = {}) => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
   const { dialog } = require('electron');
   const { filePaths } = await dialog.showOpenDialog(mainWindow, {
@@ -3806,6 +4688,9 @@ ipcMain.handle('restore-db', async (event, { password = '' } = {}) => {
   if (!filePaths || filePaths.length === 0) return { success: false, message: 'Cancelled' };
   const filePath = filePaths[0];
   try {
+    if (fs.statSync(filePath).size > MAX_BACKUP_FILE_BYTES) {
+      return { success: false, message: 'バックアップファイルが大きすぎます（上限100MB）' };
+    }
     const fileContent = fs.readFileSync(filePath, 'utf8');
     let plaintextJson;
     if (fileContent.startsWith(BACKUP_ENCRYPTION_MAGIC)) {
@@ -3860,7 +4745,7 @@ ipcMain.handle('restore-db', async (event, { password = '' } = {}) => {
 });
 
 // IPC通信で親機PC自身のローカルIPアドレス一覧を取得する
-ipcMain.handle('get-local-ips', () => {
+handleTrusted('get-local-ips', () => {
   const interfaces = os.networkInterfaces();
   const addresses = [];
   for (const name of Object.keys(interfaces)) {
@@ -3874,7 +4759,7 @@ ipcMain.handle('get-local-ips', () => {
 });
 
 // IPC通信でデータベースの保存先設定情報を取得する
-ipcMain.handle('get-database-storage-info', () => {
+handleTrusted('get-database-storage-info', () => {
   const currentMode = DB_FILE.includes(COMMON_DATA_DIR) ? 'common' : 'user';
   return {
     currentMode,
@@ -3886,7 +4771,7 @@ ipcMain.handle('get-database-storage-info', () => {
 });
 
 // IPC通信で取り込み元CSVのアーカイブフォルダの状況を返す（セキュリティ C-1: 平文残留の可視化）
-ipcMain.handle('get-archive-info', () => {
+handleTrusted('get-archive-info', () => {
   try {
     const watchDir = resolveWatchDir();
     if (!watchDir) return { exists: false, count: 0 };
@@ -3902,7 +4787,7 @@ ipcMain.handle('get-archive-info', () => {
 });
 
 // IPC通信で保守画面向けの概況情報を返す
-ipcMain.handle('get-db-info', () => {
+handleTrusted('get-db-info', () => {
   const db = readDB();
   let fileSizeBytes = 0;
   try { fileSizeBytes = fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0; } catch {}
@@ -3925,7 +4810,7 @@ ipcMain.handle('get-db-info', () => {
 });
 
 // IPC通信でトラブルシューティング用の診断情報を1ファイルに出力する
-ipcMain.handle('export-diagnostics-bundle', async () => {
+handleTrusted('export-diagnostics-bundle', async () => {
   if (!mainWindow) return { success: false, message: 'Window not found' };
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
     title: '診断情報の保存',
@@ -3980,7 +4865,7 @@ ipcMain.handle('export-diagnostics-bundle', async () => {
 });
 
 // IPC通信でDBファイル暗号化（safeStorage）の可用性を返す（セキュリティ B-3: 平文フォールバック時の警告表示用）
-ipcMain.handle('get-encryption-status', () => {
+handleTrusted('get-encryption-status', () => {
   const available = !!(safeStorage && safeStorage.isEncryptionAvailable());
   let dbIsEncrypted = false;
   try {
@@ -3996,7 +4881,7 @@ ipcMain.handle('get-encryption-status', () => {
 });
 
 // IPC通信でデータベースの保存先設定を変更する
-ipcMain.handle('change-database-storage-mode', async (event, mode) => {
+handleTrusted('change-database-storage-mode', async (event, mode) => {
   if (mode === 'common') {
     // 書き込み権限チェック
     try {
@@ -4109,7 +4994,165 @@ setInterval(() => {
   }
 }, 60000); // 60秒毎に実行
 
-// APIトークンの生成・確保（セキュリティ: 患者データを含むテーブルへの外部アクセス保護）
+const PASSCODE_SALT = 'transboard-passcode-v1';
+const PASSCODE_MAX_ATTEMPTS = 5;
+const PASSCODE_LOCKOUT_MS = 60 * 1000;
+const passcodeAttempts = new Map();
+
+function hashLegacyAdminPasscode(raw) {
+  return `SHA256:${crypto.createHash('sha256')
+    .update(`${String(raw)}${PASSCODE_SALT}`, 'utf8')
+    .digest('hex')}`;
+}
+
+function timingSafeStringEqual(left, right) {
+  const a = Buffer.from(String(left), 'utf8');
+  const b = Buffer.from(String(right), 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function getStoredAdminPasscode() {
+  const db = readDB();
+  return String(getSettingRecord(db, 'admin_passcode')?.value || '');
+}
+
+function isWeakAdminPasscode(raw) {
+  const value = String(raw || '').trim();
+  if (value.length < 6 || value.length > 128) return true;
+  if (/^(\d)\1+$/.test(value)) return true;
+  if (['000000', '111111', '123456', '654321', '12345678', 'password', 'passcode'].includes(value.toLowerCase())) {
+    return true;
+  }
+  const digits = value.split('').map(character => Number(character));
+  if (digits.every(number => Number.isInteger(number))) {
+    const ascending = digits.every((number, index) => (
+      index === 0 || number === digits[index - 1] + 1
+    ));
+    const descending = digits.every((number, index) => (
+      index === 0 || number === digits[index - 1] - 1
+    ));
+    if (ascending || descending) return true;
+  }
+  return false;
+}
+
+function hashAdminPasscode(raw) {
+  const salt = crypto.randomBytes(16);
+  const derivedKey = crypto.scryptSync(String(raw), salt, 64);
+  return `SCRYPT:${salt.toString('base64')}:${derivedKey.toString('base64')}`;
+}
+
+function verifyStoredAdminPasscode(rawPasscode, stored) {
+  if (stored.startsWith('SCRYPT:')) {
+    const [, saltBase64, hashBase64, ...extra] = stored.split(':');
+    if (!saltBase64 || !hashBase64 || extra.length > 0) return false;
+    try {
+      const salt = Buffer.from(saltBase64, 'base64');
+      const expected = Buffer.from(hashBase64, 'base64');
+      const actual = crypto.scryptSync(String(rawPasscode), salt, expected.length);
+      return expected.length > 0 &&
+        actual.length === expected.length &&
+        crypto.timingSafeEqual(actual, expected);
+    } catch {
+      return false;
+    }
+  }
+  const candidate = stored.startsWith('SHA256:')
+    ? hashLegacyAdminPasscode(rawPasscode)
+    : String(rawPasscode);
+  return timingSafeStringEqual(candidate, stored);
+}
+
+function getAdminPasscodeStatus() {
+  const stored = getStoredAdminPasscode();
+  const defaultHash = hashLegacyAdminPasscode('0000');
+  return {
+    success: true,
+    requiresSetup:
+      !stored ||
+      stored === '0000' ||
+      timingSafeStringEqual(stored, defaultHash) ||
+      (!stored.startsWith('SCRYPT:') && !stored.startsWith('SHA256:') && isWeakAdminPasscode(stored)),
+  };
+}
+
+function setAdminPasscode(rawPasscode) {
+  const passcode = typeof rawPasscode === 'string' ? rawPasscode.trim() : '';
+  if (isWeakAdminPasscode(passcode)) {
+    return {
+      success: false,
+      message: 'パスコードは6文字以上で、連番・同一数字のみ・推測されやすい値は避けてください',
+    };
+  }
+
+  const db = readDB();
+  if (normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) !== 'parent') {
+    return { success: false, message: '管理者パスコードは親機でのみ変更できます' };
+  }
+  const record = getSettingRecord(db, 'admin_passcode');
+  const newValue = hashAdminPasscode(passcode);
+  if (record) record.value = newValue;
+  else {
+    db.system_settings = db.system_settings || [];
+    db.system_settings.push({ id: 'admin_passcode', value: newValue });
+  }
+  appendAuditLog(db, 'UPDATE', {
+    targetType: 'system_settings',
+    targetId: 'admin_passcode',
+    actorType: 'local_ui',
+    before: { id: 'admin_passcode', value: '[changed]' },
+    after: { id: 'admin_passcode', value: '[changed]' },
+  });
+  if (!writeDB(db)) {
+    return { success: false, message: 'パスコードを保存できませんでした' };
+  }
+  passcodeAttempts.clear();
+  return { success: true };
+}
+
+function verifyAdminPasscodeAttempt(rawPasscode, rateKey) {
+  const passcode = typeof rawPasscode === 'string' ? rawPasscode : '';
+  if (passcode.length > 128) {
+    return { success: false, valid: false, message: 'Invalid passcode' };
+  }
+
+  const key = String(rateKey || 'unknown').slice(0, 160);
+  const now = Date.now();
+  const state = passcodeAttempts.get(key) || { attempts: 0, lockedUntil: 0 };
+  if (state.lockedUntil > now) {
+    return {
+      success: false,
+      valid: false,
+      locked: true,
+      retryAfterSeconds: Math.ceil((state.lockedUntil - now) / 1000),
+    };
+  }
+
+  const stored = getStoredAdminPasscode();
+  const valid = Boolean(stored && verifyStoredAdminPasscode(passcode, stored));
+
+  if (valid) {
+    passcodeAttempts.delete(key);
+    return { success: true, valid: true };
+  }
+
+  state.attempts += 1;
+  if (state.attempts >= PASSCODE_MAX_ATTEMPTS) {
+    state.attempts = 0;
+    state.lockedUntil = now + PASSCODE_LOCKOUT_MS;
+  }
+  passcodeAttempts.set(key, state);
+  return {
+    success: true,
+    valid: false,
+    locked: state.lockedUntil > now,
+    retryAfterSeconds: state.lockedUntil > now
+      ? Math.ceil((state.lockedUntil - now) / 1000)
+      : 0,
+  };
+}
+
+// APIトークンの生成・確保（外部HTTP API全体のアクセス保護）
 // 未設定の場合のみランダムトークンを生成して保存する（既存トークンは維持）
 function ensureApiToken() {
   const db = readDB();
@@ -4131,8 +5174,12 @@ function ensureApiToken() {
 function isValidApiToken(apiToken) {
   const db = readDB();
   const tokenSetting = (db.system_settings || []).find(s => s.id === 'api_token');
-  const expectedToken = tokenSetting?.value || '';
-  return Boolean(expectedToken && apiToken === expectedToken);
+  const expectedToken = String(tokenSetting?.value || '');
+  const receivedToken = typeof apiToken === 'string' ? apiToken : '';
+  if (!expectedToken || !receivedToken) return false;
+  const expected = Buffer.from(expectedToken, 'utf8');
+  const received = Buffer.from(receivedToken, 'utf8');
+  return expected.length === received.length && crypto.timingSafeEqual(expected, received);
 }
 
 async function processParentActionRequest(method, action, bodyStr, apiToken, requestMeta = {}) {
@@ -4218,7 +5265,7 @@ function startParentServer() {
   parentHttpServer = http.createServer((req, res) => {
     // CORSヘッダーを追加し、他のPC（子機）からの接続を許可
     // 子機はfile://から読み込まれ、Origin: null としてリクエストするためオリジン限定はできない。
-    // 実質的なアクセス制御は患者データを含むテーブルへのAPIトークン検証（PATIENT_DATA_TABLES）で行う
+    // 実質的なアクセス制御は、後段のAPIトークン検証で全/apiリクエストに対して行う。
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Token');
@@ -4239,7 +5286,20 @@ function startParentServer() {
 
     // 静的アップデートファイルの配信 (親機配信サーバー機能)
     if (req.url.startsWith('/updates/')) {
+      const updateToken = typeof req.headers['x-api-token'] === 'string'
+        ? req.headers['x-api-token']
+        : '';
+      if (!isValidApiToken(updateToken)) {
+        console.warn('[Security] 更新ファイル配信のAPIトークン認証失敗');
+        sendJson(res, 401, { success: false, message: 'Unauthorized', unauthorized: true });
+        return;
+      }
+
       const fileName = path.basename(req.url.split('?')[0]);
+      if (!/^(latest\.yml|.+\.(?:exe|blockmap))$/i.test(fileName)) {
+        sendJson(res, 404, { success: false, message: 'Update File Not Found' });
+        return;
+      }
       const updatesDir = path.join(app.getPath('userData'), 'updates');
       const filePath = path.join(updatesDir, fileName);
 
@@ -4253,7 +5313,10 @@ function startParentServer() {
         if (fileName.endsWith('.yml')) contentType = 'text/yaml; charset=utf-8';
         else if (fileName.endsWith('.json')) contentType = 'application/json; charset=utf-8';
 
-        res.writeHead(200, { 'Content-Type': contentType });
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Cache-Control': 'no-store',
+        });
         const readStream = fs.createReadStream(filePath);
         readStream.on('error', (err) => {
           console.error('[Parent Server] ファイル配信エラー:', err.message);
@@ -4278,6 +5341,17 @@ function startParentServer() {
     }
 
     const cleanUrl = req.url.replace(/^\/api\//, '');
+
+    // マスター、端末一覧、WebRTCを含む全APIを認証する。患者情報だけを保護すると、
+    // 未認証端末から業務設定や表示内容を改変できるため、例外は設けない。
+    const apiToken = typeof req.headers['x-api-token'] === 'string'
+      ? req.headers['x-api-token']
+      : '';
+    if (!isValidApiToken(apiToken)) {
+      console.warn(`[Security] APIトークン認証失敗: path=${cleanUrl.split('?')[0]}`);
+      sendJson(res, 401, { success: false, message: 'Unauthorized', unauthorized: true });
+      return;
+    }
     
     const contentLength = Number(req.headers['content-length'] || 0);
     if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
@@ -4304,10 +5378,15 @@ function startParentServer() {
       if (bodyTooLarge) return;
       try {
         let result;
-        if (cleanUrl.startsWith('webrtc/')) {
-          const wdb = readDB();
-          const expectedToken = (wdb.system_settings || []).find(s => s.id === 'api_token')?.value || '';
-          if (expectedToken && req.headers['x-api-token'] !== expectedToken) {
+        const remoteIp = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+        if (cleanUrl === 'auth/passcode-status' && req.method === 'GET') {
+          result = getAdminPasscodeStatus();
+        } else if (cleanUrl === 'auth/verify-passcode' && req.method === 'POST') {
+          let payload;
+          try { payload = JSON.parse(body || '{}'); } catch { payload = {}; }
+          result = verifyAdminPasscodeAttempt(payload.passcode, `remote:${remoteIp}`);
+        } else if (cleanUrl.startsWith('webrtc/')) {
+          if (!isValidApiToken(req.headers['x-api-token'])) {
             console.warn('[Security] WebRTCシグナリングのAPIトークン認証失敗');
             result = { success: false, message: 'Unauthorized', unauthorized: true };
           } else {
@@ -4315,18 +5394,20 @@ function startParentServer() {
           }
         } else if (cleanUrl === 'audit/write') {
           result = processAuditWriteRequest(req.method, body, true, req.headers['x-api-token'], {
-            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+            remoteIp,
           });
         } else if (cleanUrl === 'status/update') {
           result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token']);
+        } else if (cleanUrl === 'status/note') {
+          result = processStatusNoteRequest(req.method, body, true, req.headers['x-api-token']);
         } else if (cleanUrl === 'transfer/start') {
           result = await processTransferStartRequest(req.method, body, true, req.headers['x-api-token'], {
-            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+            remoteIp,
           });
         } else if (cleanUrl.startsWith('parent-actions/')) {
           const action = cleanUrl.replace(/^parent-actions\//, '').split('?')[0];
           result = await processParentActionRequest(req.method, action, body, req.headers['x-api-token'], {
-            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+            remoteIp,
           });
         } else if (cleanUrl.startsWith('device/')) {
           const action = cleanUrl.replace(/^device\//, '').split('?')[0];
@@ -4356,7 +5437,7 @@ function startParentServer() {
         } else {
           // 外部からのHTTP APIリクエストのため isExternal = true
           result = await processDbRequest(req.method, cleanUrl, body, true, req.headers['x-api-token'], {
-            remoteIp: (req.socket?.remoteAddress || '').replace(/^::ffff:/, ''),
+            remoteIp,
           });
         }
         res.writeHead(result && result.unauthorized ? 401 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -4364,7 +5445,7 @@ function startParentServer() {
       } catch (err) {
         console.error('[Parent Server Error]', err);
         res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ success: false, message: err.message }));
+        res.end(JSON.stringify({ success: false, message: 'Internal Server Error' }));
       }
     });
   });
@@ -4404,6 +5485,23 @@ if (!gotTheLock) {
 } else {
   app.on('before-quit', () => {
     isQuitting = true;
+    stopNfcWatcher();
+    if (currentWatcher) {
+      try { currentWatcher.close(); } catch {}
+      currentWatcher = null;
+    }
+    if (scheduleFeedRetryTimer) {
+      clearTimeout(scheduleFeedRetryTimer);
+      scheduleFeedRetryTimer = null;
+    }
+    if (parentHttpServer) {
+      try { parentHttpServer.close(); } catch {}
+      parentHttpServer = null;
+    }
+    if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+      powerSaveBlocker.stop(powerSaveBlockerId);
+      powerSaveBlockerId = null;
+    }
   });
 
   app.on('second-instance', () => {
@@ -4429,8 +5527,10 @@ app.whenReady().then(() => {
   // 病床の更新が長期間発生しない環境でも保持期間が守られるよう、起動時に1回掃除する。
   // 実際に削除が発生したときだけ書き込む
   const prunedOccupancy = pruneBedOccupancyLogFromDb(db);
-  if (prunedOccupancy > 0) {
+  const prunedEvents = shareMode === 'parent' ? pruneExpiredTransferEventsFromDb(db) : 0;
+  if (prunedOccupancy > 0 || prunedEvents > 0) {
     console.log(`[DB Cleaner] Pruned ${prunedOccupancy} expired bed_occupancy_log entries at startup.`);
+    console.log(`[DB Cleaner] Pruned ${prunedEvents} expired transfer_events entries at startup.`);
     writeDB(db);
   }
 

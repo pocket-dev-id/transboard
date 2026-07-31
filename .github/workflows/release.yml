@@ -23,8 +23,70 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run checks
+        run: npm run check
+
+      - name: Require signing configuration
+        id: signing-config
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          UPDATE_PUBLISHER_NAME: ${{ secrets.UPDATE_PUBLISHER_NAME }}
+          UPDATE_PUBLISHER_THUMBPRINT: ${{ secrets.UPDATE_PUBLISHER_THUMBPRINT }}
+          ALLOW_UNSIGNED_RELEASES: ${{ secrets.ALLOW_UNSIGNED_RELEASES }}
+        run: |
+          $hasSigning = [bool]($env:WIN_CSC_LINK -and $env:WIN_CSC_KEY_PASSWORD -and $env:UPDATE_PUBLISHER_NAME -and $env:UPDATE_PUBLISHER_THUMBPRINT)
+          $allowUnsigned = $env:ALLOW_UNSIGNED_RELEASES -eq 'true'
+          if (-not $hasSigning -and -not $allowUnsigned) {
+            throw '署名設定がない場合は、意図的な署名なし配布のため ALLOW_UNSIGNED_RELEASES=true が必要です'
+          }
+          $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
+          if ($hasSigning) {
+            $package.transboard.updatePublisherName = $env:UPDATE_PUBLISHER_NAME
+            $package.transboard.updatePublisherThumbprint = ($env:UPDATE_PUBLISHER_THUMBPRINT -replace '[^0-9a-fA-F]', '').ToUpperInvariant()
+            Write-Host 'コード署名ありでビルドします'
+          } else {
+            $package.transboard.updatePublisherName = ''
+            $package.transboard.updatePublisherThumbprint = ''
+            Write-Warning 'ALLOW_UNSIGNED_RELEASES=true により署名なし配布を明示的に許可します'
+          }
+          $package | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath package.json -Encoding utf8NoBOM
+          "enabled=$($hasSigning.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
       - name: Build installer
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npx electron-builder --publish never
+
+      - name: Verify Authenticode signatures
+        if: steps.signing-config.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          UPDATE_PUBLISHER_NAME: ${{ secrets.UPDATE_PUBLISHER_NAME }}
+          UPDATE_PUBLISHER_THUMBPRINT: ${{ secrets.UPDATE_PUBLISHER_THUMBPRINT }}
+        run: |
+          $files = @(
+            (Get-ChildItem -LiteralPath dist -Filter '*.exe' -File),
+            (Get-ChildItem -LiteralPath 'dist\win-unpacked' -Filter '*.exe' -File)
+          )
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            $publisher = if ($signature.SignerCertificate) {
+              $signature.SignerCertificate.GetNameInfo(
+                [Security.Cryptography.X509Certificates.X509NameType]::SimpleName,
+                $false
+              )
+            } else { '' }
+            $thumbprint = if ($signature.SignerCertificate) {
+              ($signature.SignerCertificate.Thumbprint -replace '[^0-9a-fA-F]', '').ToUpperInvariant()
+            } else { '' }
+            $expectedThumbprint = ($env:UPDATE_PUBLISHER_THUMBPRINT -replace '[^0-9a-fA-F]', '').ToUpperInvariant()
+            if ($signature.Status -ne 'Valid' -or $publisher -ne $env:UPDATE_PUBLISHER_NAME -or $thumbprint -ne $expectedThumbprint) {
+              throw "Invalid signature or publisher: $($file.FullName)"
+            }
+          }
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2

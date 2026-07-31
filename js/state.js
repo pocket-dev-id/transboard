@@ -15,6 +15,7 @@ const AppState = {
   examRooms: [],
   examTypes: [],
   staffs: [],
+  allStaffs: [],
   wards: [],
   stickyNotes: [],
   handoverNotes: [],

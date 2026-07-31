@@ -14,9 +14,6 @@ Object.assign(Settings, {
     const dbCardSize = AppState.systemSettings?.find(s => s.id === 'bed_card_size')?.value || 'medium';
     const bedCardSize = localStorage.getItem('cfg_bed_card_size') || dbCardSize;
 
-    const dbTheme = AppState.systemSettings?.find(s => s.id === 'theme_style')?.value || 'light';
-    const themeStyle = localStorage.getItem('cfg_theme_style') || dbTheme;
-
     const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
     const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
     const isElectron = !!window.electronAPI;
@@ -56,15 +53,6 @@ Object.assign(Settings, {
               <option value="large" ${bedCardSize === 'large' ? 'selected' : ''}>大きめ</option>
               <option value="medium" ${bedCardSize === 'medium' ? 'selected' : ''}>標準</option>
               <option value="small" ${bedCardSize === 'small' ? 'selected' : ''}>小さめ</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label style="font-size:12.5px; font-weight:700; color:#4a5568;">テーマ</label>
-            <select id="cfg-theme" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:6px; outline:none; cursor:pointer;">
-              <option value="light" ${themeStyle === 'light' ? 'selected' : ''}>ライト</option>
-              <option value="dark" ${themeStyle === 'dark' ? 'selected' : ''}>ダーク</option>
-              <option value="high-contrast" ${themeStyle === 'high-contrast' ? 'selected' : ''}>ハイコントラスト</option>
-              <option value="colorblind" ${themeStyle === 'colorblind' ? 'selected' : ''}>色覚サポート</option>
             </select>
           </div>
         </div>
@@ -113,18 +101,16 @@ Object.assign(Settings, {
       defaultZoomVal: body.querySelector('#cfg-default-zoom')?.value || '1.0',
       fontStyleVal: body.querySelector('#cfg-font-style')?.value || 'ud',
       bedCardSizeVal: body.querySelector('#cfg-bed-card-size')?.value || 'medium',
-      themeStyleVal: body.querySelector('#cfg-theme')?.value || 'light',
     });
     const saveLocalVisualValues = () => {
       const values = readVisualValues();
       localStorage.setItem('cfg_app_zoom', values.defaultZoomVal);
       localStorage.setItem('cfg_font_style', values.fontStyleVal);
       localStorage.setItem('cfg_bed_card_size', values.bedCardSizeVal);
-      localStorage.setItem('cfg_theme_style', values.themeStyleVal);
       return values;
     };
 
-    body.querySelectorAll('#cfg-default-zoom, #cfg-font-style, #cfg-bed-card-size, #cfg-theme').forEach(select => {
+    body.querySelectorAll('#cfg-default-zoom, #cfg-font-style, #cfg-bed-card-size').forEach(select => {
       select.addEventListener('change', () => {
         saveLocalVisualValues();
         applyVisuals();
@@ -133,18 +119,21 @@ Object.assign(Settings, {
 
     const saveBtn = body.querySelector('#btn-save-terminal-behavior');
     if (saveBtn) saveBtn.onclick = async () => {
-      const { defaultZoomVal, fontStyleVal, bedCardSizeVal, themeStyleVal } = saveLocalVisualValues();
-
-      const updates = [
-        API.patch('system_settings', 'default_zoom', { value: defaultZoomVal }),
-        API.patch('system_settings', 'font_style', { value: fontStyleVal }),
-        API.patch('system_settings', 'bed_card_size', { value: bedCardSizeVal }),
-        API.patch('system_settings', 'theme_style', { value: themeStyleVal }),
-      ];
+      const { defaultZoomVal, fontStyleVal, bedCardSizeVal } = saveLocalVisualValues();
 
       try {
-        const results = await Promise.allSettled(updates);
-        const failed = results.some(result => result.status === 'rejected');
+        const isChildMode = currentMode === 'client' || currentMode === 'child';
+        // 端末固有設定は子機から親機DBへ書き込まない。親機自身で設定した値だけを
+        // 新規端末向けのデフォルトとして共有し、子機はlocalStorageを優先する。
+        let failed = false;
+        if (!isChildMode) {
+          const results = await Promise.allSettled([
+            API.patch('system_settings', 'default_zoom', { value: defaultZoomVal }),
+            API.patch('system_settings', 'font_style', { value: fontStyleVal }),
+            API.patch('system_settings', 'bed_card_size', { value: bedCardSizeVal }),
+          ]);
+          failed = results.some(result => result.status === 'rejected');
+        }
         const updateSetting = (id, value) => {
           const obj = AppState.systemSettings?.find(s => s.id === id);
           if (obj) obj.value = value;
@@ -154,7 +143,6 @@ Object.assign(Settings, {
           updateSetting('default_zoom', defaultZoomVal);
           updateSetting('font_style', fontStyleVal);
           updateSetting('bed_card_size', bedCardSizeVal);
-          updateSetting('theme_style', themeStyleVal);
         }
         applyVisuals();
         UI.toast(failed ? 'この端末の表示は保存しました。共通デフォルトは親機へ反映できませんでした。' : '端末表示を保存しました', failed ? 'warning' : 'success');
@@ -263,13 +251,11 @@ Object.assign(Settings, {
       }
 
       try {
-        const hashed = typeof PasscodeHash !== 'undefined'
-          ? await PasscodeHash.hash(raw)
-          : raw;
-        await API.patch('system_settings', 'admin_passcode', { value: hashed });
+        const result = await API.setAdminPasscode(raw);
+        if (!result?.success) throw new Error(result?.message || 'パスコードを保存できませんでした');
         const obj = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
-        if (obj) obj.value = hashed;
-        else AppState.systemSettings.push({ id: 'admin_passcode', value: hashed });
+        if (obj) obj.value = '********';
+        else AppState.systemSettings.push({ id: 'admin_passcode', value: '********' });
         body.querySelector('#cfg-admin-passcode').value = '';
         UI.toast('管理者パスコードを保存しました', 'success');
       } catch (err) {

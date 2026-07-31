@@ -14,26 +14,11 @@ const WardDashboard = {
   },
 };
 
-// パスコード: SHA-256ハッシュユーティリティ (セキュリティ #3)
+// パスコードの強度確認とrenderer側の補助的な試行制限。
+// ハッシュ生成・保存・照合はmainプロセスだけで行う。
 const PasscodeHash = {
-  SALT: 'transboard-passcode-v1',
   LOCKOUT_MS: 60 * 1000,
   MAX_ATTEMPTS: 5,
-
-  async hash(raw) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(raw + this.SALT);
-    const buf = await crypto.subtle.digest('SHA-256', data);
-    return 'SHA256:' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  },
-
-  async verify(input, stored) {
-    if (!stored) return !input; // 空パスコード = 認証なし
-    if (stored.startsWith('SHA256:')) {
-      return (await this.hash(input)) === stored;
-    }
-    return input === stored; // レガシー平文の後方互換
-  },
 
   isWeakRaw(raw) {
     const value = String(raw || '').trim();
@@ -47,15 +32,6 @@ const PasscodeHash = {
       if (asc || desc) return true;
     }
     return false;
-  },
-
-  async requiresInitialSetup(stored) {
-    const value = String(stored || '').trim();
-    if (!value || value === '0000') return true;
-    if (value.startsWith('SHA256:')) {
-      return value === await this.hash('0000');
-    }
-    return this.isWeakRaw(value);
   },
 
   getRateState() {
@@ -96,8 +72,10 @@ const PasscodeModal = {
   SESSION_TIMEOUT_MS: 5 * 60 * 1000,
   _sessionTimer: null,
   _lastActivityAt: 0,
+  _previousFocus: null,
 
   open(onSuccess, { setup = false } = {}) {
+    this._previousFocus = document.activeElement;
     this._onSuccess = onSuccess;
     this._mode = setup ? 'setup' : 'verify';
 
@@ -140,6 +118,10 @@ const PasscodeModal = {
     if (overlay) overlay.classList.add('hidden');
     this._onSuccess = null;
     this._mode = 'verify';
+    if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
+      this._previousFocus.focus();
+    }
+    this._previousFocus = null;
   },
 
   unlock() {
@@ -185,29 +167,15 @@ const PasscodeModal = {
     }, this.SESSION_TIMEOUT_MS + 250);
   },
 
-  async getRequiredPasscode() {
+  async getPasscodeStatus() {
     try {
-      if (typeof API !== 'undefined' && API.getOne) {
-        const latest = await API.getOne('system_settings', 'admin_passcode');
-        if (latest && latest.value !== undefined && latest.value !== null) {
-          const cached = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
-          if (cached) cached.value = latest.value;
-          else {
-            if (!Array.isArray(AppState.systemSettings)) AppState.systemSettings = [];
-            AppState.systemSettings.push({ id: 'admin_passcode', value: latest.value });
-          }
-          return latest.value;
-        }
+      if (typeof API !== 'undefined' && API.getPasscodeStatus) {
+        return await API.getPasscodeStatus();
       }
     } catch (err) {
-      console.warn('[Passcode] Failed to fetch latest admin passcode:', err);
+      console.warn('[Passcode] Failed to fetch passcode status:', err);
     }
-
-    const passcodeSetting = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
-    if (passcodeSetting && passcodeSetting.value !== undefined && passcodeSetting.value !== null) {
-      return passcodeSetting.value;
-    }
-    return '0000';
+    return { success: false, requiresSetup: true };
   },
 
   async submit() {
@@ -228,9 +196,14 @@ const PasscodeModal = {
       await this.submitInitialSetup(inputVal);
       return;
     }
-    const requiredPasscode = await this.getRequiredPasscode();
-
-    const ok = await PasscodeHash.verify(inputVal, requiredPasscode);
+    let verification;
+    try {
+      verification = await API.verifyAdminPasscode(inputVal);
+    } catch (err) {
+      console.warn('[Passcode] Verification request failed:', err);
+      verification = { success: false, valid: false };
+    }
+    const ok = verification?.success === true && verification?.valid === true;
     if (ok) {
       PasscodeHash.recordAttempt(false);
       this.unlock();
@@ -241,6 +214,13 @@ const PasscodeModal = {
       PasscodeHash.recordAttempt(true);
       const errMsg = document.getElementById('passcode-error-msg');
       if (errMsg) {
+        if (verification?.locked) {
+          errMsg.textContent = `試行回数超過。あと${verification.retryAfterSeconds || 60}秒後に再試行できます`;
+          errMsg.style.display = 'block';
+          input.value = '';
+          input.focus();
+          return;
+        }
         const remaining = PasscodeHash.MAX_ATTEMPTS - (PasscodeHash.getRateState().attempts || 0);
         errMsg.textContent = remaining > 0
           ? `パスコードが違います（残り${remaining}回）`
@@ -262,13 +242,13 @@ const PasscodeModal = {
       return;
     }
     try {
-      const hashed = await PasscodeHash.hash(inputVal);
-      await API.patch('system_settings', 'admin_passcode', { value: hashed });
+      const result = await API.setAdminPasscode(inputVal);
+      if (!result?.success) throw new Error(result?.message || 'パスコードを保存できませんでした');
       const cached = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
-      if (cached) cached.value = hashed;
+      if (cached) cached.value = '********';
       else {
         if (!Array.isArray(AppState.systemSettings)) AppState.systemSettings = [];
-        AppState.systemSettings.push({ id: 'admin_passcode', value: hashed });
+        AppState.systemSettings.push({ id: 'admin_passcode', value: '********' });
       }
       PasscodeHash.recordAttempt(false);
       this.unlock();
@@ -300,6 +280,9 @@ const PasscodeModal = {
         if (e.key === 'Enter') {
           e.preventDefault();
           this.submit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          this.close();
         }
       };
     }
@@ -331,15 +314,16 @@ const AppEnv = {
 
 // 親機サーバー可用性チェック (インフラ #3: 高可用性／縮退モード)
 const ParentServerMonitor = {
-  _degraded: false,
   _interval: null,
   _failures: 0,
+  _wasUnavailable: false,
 
   init() {
     const mode = localStorage.getItem('cfg_share_mode');
     if (mode !== 'client' && mode !== 'child') return;
     if (this._interval) clearTimeout(this._interval);
     this._failures = 0;
+    this._wasUnavailable = false;
     this._schedule(1000 + Math.floor(Math.random() * 3000));
   },
 
@@ -361,36 +345,37 @@ const ParentServerMonitor = {
     const parentIp = localStorage.getItem('cfg_parent_ip');
     if (!parentIp) return true;
     try {
-      const res = await parentFetch(`http://${parentIp}:3005/api/tables/wards`, {}, 5000);
+      const apiToken = await API.getTerminalApiToken();
+      const res = await parentFetch(`http://${parentIp}:3005/api/tables/wards`, {
+        headers: apiToken ? { 'X-API-Token': apiToken } : {},
+      }, 5000);
       if (res.ok) {
-        if (this._degraded) this._setDegraded(false);
+        const recovered = this._wasUnavailable;
+        if (recovered) {
+          const mastersRefreshed = await App.loadMasters({ silent: true, loadHandover: false });
+          const refreshed = await App.refreshData({ force: true });
+          if (!mastersRefreshed || !refreshed) {
+            this._wasUnavailable = true;
+            App._setConnectionStatus(false, 'network');
+            return false;
+          }
+          if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+            CallPanel._renderCallPanel();
+          }
+          App.renderCurrentPageData();
+        }
+        this._wasUnavailable = false;
+        App._setConnectionStatus(true);
         return true;
       } else {
-        this._setDegraded(true);
+        this._wasUnavailable = true;
+        App._setConnectionStatus(false, res.status === 401 ? 'unauthorized' : 'network');
         return false;
       }
-    } catch {
-      this._setDegraded(true);
+    } catch (error) {
+      this._wasUnavailable = true;
+      App._setConnectionStatus(false, error?.unauthorized ? 'unauthorized' : 'network');
       return false;
-    }
-  },
-
-  _setDegraded(degraded) {
-    if (this._degraded === degraded) return;
-    this._degraded = degraded;
-    let banner = document.getElementById('degraded-mode-banner');
-    if (degraded) {
-      if (!banner) {
-        banner = document.createElement('div');
-        banner.id = 'degraded-mode-banner';
-        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#dc2626;color:#fff;text-align:center;padding:6px 16px;font-size:13px;font-weight:700;';
-        banner.textContent = '⚠ 親機サーバーに接続できません。表示データは最終取得時のキャッシュです。';
-        document.body.prepend(banner);
-      }
-      banner.style.display = '';
-    } else {
-      if (banner) banner.style.display = 'none';
-      UI.toast('親機サーバーへの接続が回復しました', 'success', 3000);
     }
   },
 
@@ -400,6 +385,9 @@ const ParentServerMonitor = {
 };
 
 const App = {
+  _masterSyncTimer: null,
+  _masterSyncInFlight: false,
+  _masterSyncIntervalMs: 30000,
 
   // 親機単独運用モード（この1台だけで完結する運用）。子機との共有はしない前提で
   // 接続端末表示・病棟間通話・検査室タブなど多端末前提のUIを隠す。share_mode の
@@ -503,9 +491,9 @@ const App = {
         
         if (targetPage === 'settings' && !PasscodeModal.isSessionValid()) {
           // パスコードによる設定画面全体の保護 (カスタムHTMLモーダルを使用)
-          const requiredPasscode = await PasscodeModal.getRequiredPasscode();
- 
-          if (await PasscodeHash.requiresInitialSetup(requiredPasscode)) {
+          const passcodeStatus = await PasscodeModal.getPasscodeStatus();
+
+          if (!passcodeStatus?.success || passcodeStatus.requiresSetup) {
             const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
             if (shareMode === 'client' || shareMode === 'child') {
               UI.toast('初回パスコード設定は親機で行ってください。設定後に子機から開けます。', 'warning', 7000);
@@ -518,15 +506,11 @@ const App = {
             return;
           }
 
-          if (requiredPasscode) {
-            PasscodeModal.open(() => {
-              UI.switchPage(targetPage);
-              PasscodeModal.markActivity();
-            });
-            return; // 認証完了するまでページ遷移を待機する
-          } else {
-            PasscodeModal.unlock();
-          }
+          PasscodeModal.open(() => {
+            UI.switchPage(targetPage);
+            PasscodeModal.markActivity();
+          });
+          return; // 認証完了するまでページ遷移を待機する
         }
         
         UI.switchPage(targetPage);
@@ -729,6 +713,8 @@ const App = {
 
     // ポーリング開始
     this.startPolling();
+    // 子機では親機側の病床マスター変更（追加・変更・削除）を定期的に反映する。
+    this.startMasterSync();
 
     // 初期設定ウィザードの自動起動チェック
     const wizardSetting = AppState.systemSettings?.find(s => s.id === 'wizard_completed');
@@ -747,13 +733,16 @@ const App = {
       console.log('[Electron] 患者・在床情報のインポートリスナーを設定しています...');
       
       // 成功時
-      window.electronAPI.onDataImported(async ({ fileName, rows }) => {
+      window.electronAPI.onDataImported(async ({ importId, fileName, rows }) => {
         console.log(`[Electron] インポートデータを受信 (${fileName}): ${rows.length}件`);
 
         // 在室管理モード確認
         const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
         if (admMode === 'manual') {
           UI.toast('在室管理モードが「手動登録」のためCSVインポートをスキップしました', 'warning', 5000);
+          if (importId && window.electronAPI.completeDataImport) {
+            await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
+          }
           return;
         }
 
@@ -792,6 +781,7 @@ const App = {
 
         const bulkUpdates = [];
         const listedBedIds = new Set();
+        const seenImportedBedIds = new Set();
         for (const row of rows) {
           try {
             // 1. Resolve the target bed from either a combined bed number or room/bed codes.
@@ -847,6 +837,22 @@ const App = {
               continue;
             }
 
+            // 同じ病床がCSVに複数行ある場合は、最後の行だけを暗黙に採用せず安全側に倒す。
+            if (seenImportedBedIds.has(bed.id)) {
+              console.warn(`[Import] 同一病床の重複行をスキップしました: ${bedNoVal}`);
+              skipCount++;
+              continue;
+            }
+
+            // ハイブリッド運用では、手動登録した病床の患者情報をCSVで上書きしない。
+            // 未掲載病床のクリア対象からも除外するため listed に記録する。
+            if (admMode === 'hybrid' && bed.manually_registered) {
+              listedBedIds.add(bed.id);
+              console.warn(`[Import] 手動登録病床をCSV更新から保護しました: ${bedNoVal}`);
+              skipCount++;
+              continue;
+            }
+
             // 2. Update patient information.
             const patientName = (row[mapPatName] || '').trim();
             const patientId = (row[mapPatId] || '').trim();
@@ -866,6 +872,7 @@ const App = {
               _occupancySource: 'csv_import'
             };
 
+            seenImportedBedIds.add(bed.id);
             listedBedIds.add(bed.id);
             bulkUpdates.push(patch);
             importedCount++;
@@ -881,6 +888,9 @@ const App = {
           if (rows.length === 0) {
             console.warn('[Import] clearUnlisted: CSVが0件のため空床化をスキップしました');
             UI.toast('CSVが空だったため、未掲載病床の空床化はスキップしました。', 'warning', 6000);
+          } else if (skipCount > 0 || importedCount === 0) {
+            console.warn('[Import] 未掲載病床の空床化をスキップしました（不明・重複・欠損行があります）');
+            UI.toast('CSVに確認できない行があるため、未掲載病床の空床化は安全のためスキップしました。', 'warning', 6000);
           } else {
             const activeBedIds = new Set(
               (AppState.activeEvents || [])
@@ -898,11 +908,45 @@ const App = {
           }
         }
 
+        let writeError = null;
         if (bulkUpdates.length > 0) {
           try {
-            await API.bulkPatch('beds', bulkUpdates);
+            const result = await API.bulkPatch('beds', bulkUpdates);
+            if (result?.success === false) {
+              throw new Error(result.message || '病床情報の更新に失敗しました');
+            }
           } catch (err) {
             console.error('[Import] バルクアップデートエラー:', err);
+            writeError = err;
+          }
+        }
+
+        if (writeError) {
+          if (importId && window.electronAPI.completeDataImport) {
+            await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
+          }
+          try {
+            await API.create('import_logs', {
+              id: `log-${Date.now()}`,
+              timestamp: Date.now(),
+              fileName,
+              status: 'failed',
+              message: '病床情報の更新に失敗しました。原本は監視フォルダに残しています。',
+              details: writeError.message
+            });
+          } catch (e) {
+            console.error('[Import] 失敗ログの書き込み失敗:', e);
+          }
+          UI.toast('CSVは読み込みましたが、病床情報の保存に失敗しました。原本を確認してください。', 'danger', 8000);
+          return;
+        }
+
+        // DB更新が成功した後だけ、mainへ原本の整理を依頼する。
+        if (importId && window.electronAPI.completeDataImport) {
+          const archiveResult = await window.electronAPI.completeDataImport({ importId, success: true }).catch(() => null);
+          if (archiveResult && archiveResult.success === false) {
+            console.warn('[Import] 原本の整理依頼に失敗しました:', archiveResult.message);
+            UI.toast('病床情報は保存されましたが、CSV原本を整理できませんでした。監視フォルダを確認してください。', 'warning', 8000);
           }
         }
 
@@ -952,8 +996,11 @@ const App = {
       });
 
       // 失敗時
-      window.electronAPI.onDataImportFailed(async ({ fileName, error }) => {
+      window.electronAPI.onDataImportFailed(async ({ importId, fileName, error }) => {
         console.error(`[Electron] インポート失敗 (${fileName}):`, error);
+        if (importId && window.electronAPI.completeDataImport) {
+          await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
+        }
         
         // 失敗ログ書き込み
         try {
@@ -1024,7 +1071,8 @@ const App = {
     }
 
     // タイマー更新 (30秒ごとに残り時間表示を更新)
-    setInterval(() => {
+    if (this._uiRefreshTimer) clearInterval(this._uiRefreshTimer);
+    this._uiRefreshTimer = setInterval(() => {
       BedMap.updateTimers();
       Priority.renderSummary();
       Priority.renderKpi();
@@ -1052,8 +1100,8 @@ const App = {
 
     // 起動時の設定サマリを診断ログへ記録（DevTools操作なしで状態確認できるように）
     if (window.electronAPI?.appendDebugLog) {
-      const token = localStorage.getItem('cfg_api_token') || '';
-      const tokenSummary = token ? `設定あり(${token.length}文字, 先頭${token.slice(0, 4)}…)` : '未設定';
+      const token = await API.getTerminalApiToken();
+      const tokenSummary = token ? '設定あり' : '未設定';
       window.electronAPI.appendDebugLog(
         `[App起動] version=${AppState.appVersion || '?'} cfg_share_mode=${shareMode} ` +
         `cfg_parent_ip=${localStorage.getItem('cfg_parent_ip') || '(未設定)'} cfg_api_token=${tokenSummary}`
@@ -1109,12 +1157,15 @@ const App = {
   },
 
   _connectionLost: false,
+  _syncPartial: false,
   _heartbeatTimer: null,
   _heartbeatInFlight: false,
   _heartbeatFailures: 0,
   _pollInFlight: false,
   _pollFailures: 0,
+  _uiRefreshTimer: null,
   _devicePresenceTimer: null,
+  _devicePresenceStartupTimer: null,
   _devicePresenceInFlight: false,
   _connectedDevicesSnapshot: [],
   _refreshPromise: null,
@@ -1308,10 +1359,14 @@ const App = {
 
   _startDevicePresenceMonitor() {
     if (this._devicePresenceTimer) clearInterval(this._devicePresenceTimer);
+    if (this._devicePresenceStartupTimer) clearTimeout(this._devicePresenceStartupTimer);
     // 単独運用モードでは接続端末チップを表示しないため、5秒ごとのポーリング自体を止める
     if (this.isStandalone()) return;
     const refresh = () => this._refreshDevicePresence().catch(() => {});
-    setTimeout(refresh, this._jitterDelay(1200, 0.5));
+    this._devicePresenceStartupTimer = setTimeout(() => {
+      this._devicePresenceStartupTimer = null;
+      refresh();
+    }, this._jitterDelay(1200, 0.5));
     this._devicePresenceTimer = setInterval(refresh, 5000);
   },
 
@@ -1467,9 +1522,12 @@ const App = {
       const savedWardId = localStorage.getItem('current_ward_id');
       const current = [savedWardId, AppState.currentWardId, select.value]
         .find(id => id && AppState.wards.some(w => w.id === id));
-      select.innerHTML = AppState.wards.map(w => 
-        `<option value="${w.id}">${w.name}</option>`
-      ).join('');
+      select.replaceChildren(...AppState.wards.map(ward => {
+        const option = document.createElement('option');
+        option.value = String(ward.id || '');
+        option.textContent = String(ward.name || '');
+        return option;
+      }));
       if (current) {
         select.value = current;
         AppState.currentWardId = current;
@@ -1481,9 +1539,9 @@ const App = {
     }
   },
 
-  async loadMasters() {
+  async loadMasters({ silent = false, loadHandover = true } = {}) {
     try {
-      const [wards, beds, bedTypes, examRooms, examTypes, staffs, systemSettings] = await Promise.all([
+      const [wards, beds, bedTypes, examRooms, examTypes, staffs, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
         API.getAllBeds(),
         API.getBedTypes().catch(() => [
@@ -1494,7 +1552,8 @@ const App = {
         API.getExamRooms(),
         API.getExamTypes(),
         API.getStaffs(),
-        API.getAll('system_settings').then(res => res.data).catch(() => [])
+        API.getAllStaffs().catch(() => null),
+        API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : []).catch(() => [])
       ]);
       AppState.wards = wards;
       AppState.beds = beds;
@@ -1505,23 +1564,47 @@ const App = {
       AppState.allExamTypes = examTypes;
       AppState.examTypes = examTypes.filter(t => t.is_active !== false);
       AppState.staffs = staffs;
+      AppState.allStaffs = Array.isArray(allStaffs) ? allStaffs : staffs;
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
 
       // 申し送りメモを読み込む（現在病棟）
-      if (typeof Handover !== 'undefined') await Handover.load().catch(() => {});
+      if (loadHandover && typeof Handover !== 'undefined') await Handover.load().catch(() => {});
+      return true;
 
-      // 保持期間設定に基づき古い完了済みイベントを削除（起動時に1回）
-      EventRetentionManager.run().catch(e => console.warn('[App] イベントクリーンアップ失敗:', e));
     } catch (e) {
       console.error('[App] マスタ読み込み失敗:', e);
-      if (e?.unauthorized) {
+      if (!silent && e?.unauthorized) {
         UI.toast('APIトークンが親機と一致しないため、患者データを取得できません。設定 → 共有・ネットワーク設定 でトークンを確認してください', 'danger', 8000);
-      } else {
+      } else if (!silent) {
         UI.toast('マスタデータの読み込みに失敗しました', 'danger');
       }
+      return false;
     }
+  },
+
+  startMasterSync() {
+    if (this._masterSyncTimer) clearInterval(this._masterSyncTimer);
+    this._masterSyncTimer = null;
+    const mode = localStorage.getItem('cfg_share_mode') || 'parent';
+    if (mode !== 'client' && mode !== 'child') return;
+    this._masterSyncTimer = setInterval(async () => {
+      if (this._masterSyncInFlight || this._refreshPromise) return;
+      this._masterSyncInFlight = true;
+      try {
+        const refreshed = await this.loadMasters({ silent: true, loadHandover: false });
+        if (refreshed) {
+          this.syncWardSelect();
+          if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+            CallPanel._renderCallPanel();
+          }
+          this.renderCurrentPageData();
+        }
+      } finally {
+        this._masterSyncInFlight = false;
+      }
+    }, this._masterSyncIntervalMs);
   },
 
   async refreshData({ force = false } = {}) {
@@ -1564,12 +1647,25 @@ const App = {
   async _refreshDataOnce(wardId, todayMs) {
     try {
       const dayEndMs = todayMs + 24 * 60 * 60 * 1000;
-      const [eventStatus, systemSettings, scheduleFeeds, scheduleItems] = await Promise.all([
+      const [eventResult, settingsResult, feedsResult, itemsResult] = await Promise.allSettled([
         API.getWardStatusEvents(wardId, todayMs),
-        API.getAll('system_settings').then(res => res.data).catch(() => []),
-        API.getScheduleFeeds().catch(() => AppState.scheduleFeeds || []),
-        API.getScheduleItemsForRange(todayMs, dayEndMs).catch(() => AppState.scheduleItems || [])
+        API.getAll('system_settings').then(res => res.data),
+        API.getScheduleFeeds(),
+        API.getScheduleItemsForRange(todayMs, dayEndMs)
       ]);
+      if (eventResult.status === 'rejected') throw eventResult.reason;
+      const eventStatus = eventResult.value;
+      const partialSync = [settingsResult, feedsResult, itemsResult]
+        .some(result => result.status === 'rejected');
+      const systemSettings = settingsResult.status === 'fulfilled'
+        ? settingsResult.value
+        : (AppState.systemSettings || []);
+      const scheduleFeeds = feedsResult.status === 'fulfilled'
+        ? feedsResult.value
+        : (AppState.scheduleFeeds || []);
+      const scheduleItems = itemsResult.status === 'fulfilled'
+        ? itemsResult.value
+        : (AppState.scheduleItems || []);
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
@@ -1580,7 +1676,15 @@ const App = {
       AppState.lastUpdated = Date.now();
 
       this._setConnectionStatus(true);
-      // 動的表示設定（フォント・ズーム・カードサイズ・テーマ）を即時反映
+      if (partialSync !== this._syncPartial) {
+        this._syncPartial = partialSync;
+        UI.toast(
+          partialSync ? '一部の設定・予定データを更新できません。前回のデータを表示しています。' : 'すべてのデータ同期が回復しました',
+          partialSync ? 'warning' : 'success',
+          5000
+        );
+      }
+      // 動的表示設定（フォント・ズーム・カードサイズ）を即時反映
       await this.applySystemVisualSettings();
       return true;
     } catch (e) {
@@ -1686,7 +1790,6 @@ const App = {
       if (localStorage.getItem('tbs_carryover_ack') === todayStr) return; // 本日は確認済み
       localStorage.setItem('tbs_carryover_ack', todayStr);
       UI.toast(`前日から未完了の出棟が ${list.length} 件あります。確認してください。`, 'warning', 8000);
-      UI.showOsNotification?.('TransBoard: 未完了の出棟', `前日から ${list.length} 件`);
       if (typeof CarryoverModal !== 'undefined') CarryoverModal.open(list);
     } catch (e) {
       console.error('[Carryover]', e);
@@ -1708,7 +1811,8 @@ const App = {
       RETURNED: { enabled: false, sound: 'ding' }
     };
     // 子機は端末固有の localStorage 値を優先
-    const _localSounds = localStorage.getItem('cfg_share_mode') === 'client'
+    const _shareMode = localStorage.getItem('cfg_share_mode');
+    const _localSounds = (_shareMode === 'client' || _shareMode === 'child')
       ? localStorage.getItem('tbs_notification_sounds') : null;
     if (_localSounds) {
       try {
@@ -1760,7 +1864,6 @@ const App = {
           };
           const toastType = toastTypes[e.current_status] || 'info';
           UI.toast(`${bedLabel}${patientName} → ${statusLabel}`, toastType, 5000);
-          UI.showOsNotification(`TransBoard:${statusLabel}`, `${bedLabel}${patientName}`);
         }
       }
 
@@ -1770,7 +1873,6 @@ const App = {
         const cfg = soundSettings['PICKUP_REQUIRED'];
         if (cfg?.toast !== false) {
           UI.toast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！`, 'danger', 6000);
-          UI.showOsNotification('TransBoard:迎えが必要', `${bed ? bed.bed_number + '号床' : ''}${bed?.patient_name ? '（' + UI.getPatientName(bed.patient_name) + '）' : ''}`);
         }
         this._prevNotified.add(`pickup-${e.id}`);
         if (lastStatus === undefined && cfg?.enabled) UI.playNotificationSound(cfg.sound);
@@ -1782,7 +1884,6 @@ const App = {
         const cfg = soundSettings['NEARLY_DONE'];
         if (cfg?.toast !== false) {
           UI.toast(`⏰ ${bed ? bed.bed_number + '号床' : ''} あと10分です`, 'warning', 5000);
-          UI.showOsNotification('TransBoard:あと10分', `${bed ? bed.bed_number + '号床' : ''}`);
         }
         this._prevNotified.add(`nearly-${e.id}`);
         if (lastStatus === undefined && cfg?.enabled) UI.playNotificationSound(cfg.sound);
@@ -1796,7 +1897,6 @@ const App = {
           const cfg = soundSettings['SOON'];
           if (cfg?.toast !== false) {
             UI.toast(`⚠️ ${bed ? bed.bed_number + '号床' : ''} 迎え目安まであと5分`, 'warning', 5000);
-            UI.showOsNotification('TransBoard:迎え5分前', `${bed ? bed.bed_number + '号床' : ''}`);
           }
           this._prevNotified.add(`soon-${e.id}`);
           if (cfg?.enabled) UI.playNotificationSound(cfg.sound);
@@ -1809,11 +1909,10 @@ const App = {
     console.log('[App] 画面表示・フォント・カードサイズ設定を適用中...');
     this._applyZoomAndFont();
     await this._applySyncTimeDisplay();
-    const themeStyle = this._applyTheme();
     this._applyPowerSettings();
     this._applyStatusLabels();
     const ndMin = this._applyThresholds();
-    this._applyStatusColors(themeStyle);
+    this._applyStatusColors();
     this._applyActionButtonLabels(ndMin);
   },
 
@@ -1846,7 +1945,11 @@ const App = {
       if (showSync) {
         const d = new Date(AppState.lastUpdated || Date.now());
         const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
-        syncDisp.innerHTML = `<i class="fas fa-sync-alt"></i> 最終同期: <strong style="font-family:'Roboto Mono', monospace;">${timeStr}</strong>`;
+        const partialLabel = this._syncPartial ? '（一部未同期）' : '';
+        syncDisp.innerHTML = `<i class="fas fa-sync-alt"></i> 最終同期: <strong style="font-family:'Roboto Mono', monospace;">${timeStr}</strong>${partialLabel}`;
+        syncDisp.title = this._syncPartial
+          ? '設定または予定データの一部を前回の取得結果から表示しています'
+          : '';
         syncDisp.style.display = 'inline-block';
       } else {
         syncDisp.style.display = 'none';
@@ -1880,15 +1983,6 @@ const App = {
         importDisp.style.display = 'none';
       }
     }
-  },
-
-  // カラーテーマの適用（端末個別設定を優先）。適用したテーマ名を返す
-  _applyTheme() {
-    const localTheme = localStorage.getItem('cfg_theme_style');
-    const themeStyle = localTheme || AppState.getSettingRaw('theme_style', 'light');
-    document.body.classList.remove('theme-light', 'theme-dark', 'theme-blue', 'theme-high-contrast', 'theme-cvd', 'theme-apple', 'theme-material', 'theme-fluent');
-    document.body.classList.add(`theme-${themeStyle}`);
-    return themeStyle;
   },
 
   // スクリーンセイバー抑制・最前面表示の適用（端末個別設定）
@@ -1925,10 +2019,8 @@ const App = {
     return ndMin;
   },
 
-  // ステータスカラーのカスタマイズ（#3）。高コントラスト・CVDテーマ有効時はテーマを優先する
-  _applyStatusColors(themeStyle) {
-    const isAccessibleTheme = ['high-contrast', 'cvd'].includes(themeStyle);
-    if (isAccessibleTheme) return;
+  // ステータスカラーのカスタマイズ（#3）
+  _applyStatusColors() {
 
     const STATUS_CSS_VARS = {
       IN_BED:           { card_bg: '--clr-in-bed',        card_border: '--clr-in-bed-border',      badge_bg: '--badge-in-bed-bg',        badge_text: '--badge-in-bed-text' },
@@ -2051,24 +2143,12 @@ const OfflineManager = {
 // 要件定義: event_retention_days 設定に基づき完了済みイベントを自動削除
 const EventRetentionManager = {
   async run() {
-    const setting = AppState.systemSettings?.find(s => s.id === 'event_retention_days');
-    const days = parseInt(setting?.value || '0', 10);
-    if (!days || days <= 0) return; // 0 = 無期限
-
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    const completedStatuses = ['RETURNED', 'CANCELLED'];
-
     try {
-      const res = await API.getAll('transfer_events');
-      const stale = (res.data || []).filter(e =>
-        completedStatuses.includes(e.current_status) &&
-        (e.created_at || 0) < cutoff
-      );
-
-      if (stale.length === 0) return;
-
-      await Promise.all(stale.map(e => API.remove('transfer_events', e.id)));
-      console.log(`[EventRetention] ${stale.length}件の古いイベントを削除しました（${days}日以前）`);
+      if (!window.electronAPI?.cleanupEventRetention) return;
+      const result = await window.electronAPI.cleanupEventRetention();
+      if (result?.success && result.removed > 0) {
+        console.log(`[EventRetention] ${result.removed}件の古いイベントを一括削除しました`);
+      }
     } catch (e) {
       console.warn('[EventRetention] クリーンアップに失敗しました:', e);
     }

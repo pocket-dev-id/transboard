@@ -19,6 +19,7 @@ Object.assign(Settings, {
 
     const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const currentParentIp = localStorage.getItem('cfg_parent_ip') || '';
+    const currentApiToken = await API.getTerminalApiToken();
     const isStandaloneMode = currentMode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true';
 
     // WebRTC音声通話の有効設定を取得
@@ -38,9 +39,6 @@ Object.assign(Settings, {
 
     const dbCardSize = AppState.systemSettings?.find(s => s.id === 'bed_card_size')?.value || 'medium';
     const bedCardSize = localStorage.getItem('cfg_bed_card_size') || dbCardSize;
-
-    const dbTheme = AppState.systemSettings?.find(s => s.id === 'theme_style')?.value || 'light';
-    const themeStyle = localStorage.getItem('cfg_theme_style') || dbTheme;
 
     const showSyncSetting = AppState.systemSettings?.find(s => s.id === 'show_sync_time') || { value: 'true' };
     const showSyncTime = showSyncSetting.value !== 'false';
@@ -204,7 +202,7 @@ Object.assign(Settings, {
             </div>
             <div class="form-row" style="margin-bottom:12px;">
               <label>APIトークン <span style="color:#dc2626">*</span></label>
-              <input type="text" id="cfg-api-token" placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力" style="width:100%; max-width:420px; padding:8px; border:1px solid #cbd5e0; border-radius:6px; font-family:monospace; font-size:12px;" value="${UI.escapeHTML(localStorage.getItem('cfg_api_token') || '')}">
+              <input type="password" id="cfg-api-token" autocomplete="off" placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力" style="width:100%; max-width:420px; padding:8px; border:1px solid #cbd5e0; border-radius:6px; font-family:monospace; font-size:12px;" value="${UI.escapeHTML(currentApiToken)}">
               <p style="font-size:11px; color:#718096; margin:4px 0 0 0;">患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</p>
             </div>
             <div style="display:flex; gap:8px;">
@@ -379,19 +377,6 @@ Object.assign(Settings, {
                   <option value="large" ${bedCardSize === 'large' ? 'selected' : ''}>大 (高さ 70px / 文字 17px)</option>
                   <option value="medium" ${bedCardSize === 'medium' ? 'selected' : ''}>中 (高さ 55px / 文字 14px - 標準)</option>
                   <option value="small" ${bedCardSize === 'small' ? 'selected' : ''}>小 (高さ 46px / 文字 12px)</option>
-                </select>
-              </div>
-              <div class="form-row" style="grid-column: span 2;">
-                <label>表示カラーテーマ (このPCの設定)</label>
-                <select id="cfg-theme" style="width:100%; max-width:200px; padding:6px; border:1px solid #cbd5e0; border-radius:6px; outline:none; cursor:pointer;">
-                  <option value="light" ${themeStyle === 'light' ? 'selected' : ''}>標準ライトテーマ</option>
-                  <option value="dark" ${themeStyle === 'dark' ? 'selected' : ''}>ダークテーマ (Sleek Dark)</option>
-                  <option value="blue" ${themeStyle === 'blue' ? 'selected' : ''}>メディカルブルーテーマ</option>
-                  <option value="apple" ${themeStyle === 'apple' ? 'selected' : ''}>Apple (Human Interface)</option>
-                  <option value="material" ${themeStyle === 'material' ? 'selected' : ''}>Google (Material Design)</option>
-                  <option value="fluent" ${themeStyle === 'fluent' ? 'selected' : ''}>Microsoft (Fluent 2)</option>
-                  <option value="high-contrast" ${themeStyle === 'high-contrast' ? 'selected' : ''}>高コントラスト (白黒・黄)</option>
-                  <option value="cvd" ${themeStyle === 'cvd' ? 'selected' : ''}>色覚サポートテーマ (CVD対応)</option>
                 </select>
               </div>
             </div>
@@ -787,6 +772,7 @@ Object.assign(Settings, {
         testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 接続テスト中...';
 
         const url = `http://${parentIp}:3005/api/tables/wards`;
+        const token = document.getElementById('cfg-api-token')?.value.trim() || '';
         const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
         const logLines = [
           `[設定画面接続テスト] appVersion=${appVer} url=${url}`,
@@ -794,7 +780,10 @@ Object.assign(Settings, {
         ];
         try {
           // テストフェッチ（親機側のwardsマスタを取得してみる）
-          const res = await parentFetch(url, {}, 4000);
+          const res = await parentFetch(url, {
+            headers: token ? { 'X-API-Token': token } : {},
+            purpose: 'connection-test',
+          }, 4000);
 
           if (res.ok) {
             const data = await res.json();
@@ -803,11 +792,11 @@ Object.assign(Settings, {
             // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
             // 患者データ（beds等）はトークン必須。ここで検証しないと
             // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
-            const token = document.getElementById('cfg-api-token')?.value.trim() || '';
             if (token) {
               try {
                 const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
-                  headers: { 'X-API-Token': token }
+                  headers: { 'X-API-Token': token },
+                  purpose: 'connection-test',
                 }, 4000);
                 if (res2.ok) {
                   logLines.push(`  トークン検証: 成功 status=${res2.status}`);
@@ -893,10 +882,15 @@ Object.assign(Settings, {
         return;
       }
 
+      const tokenSave = await API.setTerminalApiToken(apiToken);
+      if (!tokenSave?.success) {
+        UI.toast(tokenSave?.message || 'APIトークンを安全に保存できませんでした', 'danger');
+        return;
+      }
+
       // localStorageへ保存（起動時の同期ロード用）
       localStorage.setItem('cfg_share_mode', mode);
       localStorage.setItem('cfg_parent_ip', parentIp);
-      localStorage.setItem('cfg_api_token', apiToken);
 
       // マスタDB側にも設定値（互換性保存）を反映
       try {

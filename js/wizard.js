@@ -7,8 +7,9 @@ const Wizard = {
   totalSteps: 4,
   config: {},
 
-  open() {
+  async open() {
     const gs = id => AppState.systemSettings?.find(s => s.id === id)?.value;
+    const terminalApiToken = await API.getTerminalApiToken();
     this.config = {
       // 稼働モード・親機IPはこの端末自身のローカル設定。子機では AppState.systemSettings が
       // 親機からリモート取得した値（＝常に'parent'）になるため、gs()を使うとウィザードを
@@ -17,7 +18,7 @@ const Wizard = {
       share_mode:                   localStorage.getItem('cfg_share_mode') || gs('share_mode') || 'parent',
       standalone:                   localStorage.getItem('cfg_standalone_mode') === 'true',
       parent_ip:                    localStorage.getItem('cfg_parent_ip')  || gs('parent_ip')  || '',
-      api_token:                    localStorage.getItem('cfg_api_token') || '',
+      api_token:                    terminalApiToken,
       import_connection_type:       gs('import_connection_type')       || 'csv',
       import_directory:             gs('import_directory')             || '',
       odbc_connection_string:       gs('odbc_connection_string')       || '',
@@ -26,7 +27,6 @@ const Wizard = {
       smb_username:                 gs('smb_username')                 || '',
       smb_password:                 gs('smb_password')                 || '',
       admission_mode:               gs('admission_mode')               || 'csv',
-      theme_style:                  gs('theme_style')                  || 'light',
       font_style:                   gs('font_style')                   || 'ud',
       default_zoom:                 gs('default_zoom')                 || '1.0',
       enable_patient_ic_association: gs('enable_patient_ic_association') || 'false',
@@ -132,11 +132,11 @@ const Wizard = {
       </div>
       <div id="parent-ip-container" class="wiz-sub-panel" style="display:${sel('client') ? 'block' : 'none'};">
         <label class="wiz-label">親機のIPアドレス <span style="color:#dc2626">*</span></label>
-        <input type="text" id="wizard-parent-ip" value="${this.config.parent_ip}"
+        <input type="text" id="wizard-parent-ip" value="${UI.escapeHTML(this.config.parent_ip)}"
           placeholder="例: 192.168.1.100"
           class="wiz-input" style="font-family:monospace;">
         <label class="wiz-label" style="margin-top:10px;">APIトークン <span style="color:#dc2626">*</span></label>
-        <input type="text" id="wizard-api-token" value="${UI.escapeHTML(this.config.api_token)}"
+        <input type="password" id="wizard-api-token" autocomplete="off" value="${UI.escapeHTML(this.config.api_token)}"
           placeholder="親機の「共有・ネットワーク設定」画面に表示されている値を入力"
           class="wiz-input" style="font-family:monospace; font-size:11px;">
         <div class="wiz-hint"><i class="fas fa-shield-alt"></i> 患者情報を含むデータの取得にはこのトークンが必須です。親機の管理者に確認してください。</div>
@@ -184,7 +184,7 @@ const Wizard = {
       <!-- CSV: フォルダパス + SMB認証 -->
       <div id="csv-dir-container" class="wiz-sub-panel" style="display:${sel('csv') ? 'block' : 'none'};">
         <label class="wiz-label">CSV出力先フォルダの絶対パス</label>
-        <input type="text" id="wizard-csv-dir" value="${this.config.import_directory}"
+        <input type="text" id="wizard-csv-dir" value="${UI.escapeHTML(this.config.import_directory)}"
           placeholder="例: C:\\EMR_Export  または  \\\\fileserver\\share\\emr" class="wiz-input">
         <div class="wiz-hint"><i class="fas fa-network-wired"></i> ネットワーク共有（SMB）パスを使う場合は下の認証設定を入力してください。</div>
         <div style="margin-top:10px;">
@@ -204,11 +204,11 @@ const Wizard = {
           <div id="smb-cred-fields" style="display:${this.config.smb_auth_mode === 'credential' ? 'grid' : 'none'}; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
             <div>
               <label class="wiz-label">ユーザー名</label>
-              <input type="text" id="wizard-smb-user" value="${this.config.smb_username}" class="wiz-input" placeholder="domain\\user">
+              <input type="text" id="wizard-smb-user" value="${UI.escapeHTML(this.config.smb_username)}" class="wiz-input" placeholder="domain\\user">
             </div>
             <div>
               <label class="wiz-label">パスワード</label>
-              <input type="password" id="wizard-smb-pass" value="${this.config.smb_password}" class="wiz-input" placeholder="••••••••">
+              <input type="password" id="wizard-smb-pass" value="${UI.escapeHTML(this.config.smb_password)}" class="wiz-input" placeholder="••••••••">
             </div>
           </div>
         </div>
@@ -279,20 +279,7 @@ const Wizard = {
       <h4 class="wiz-step-title">3. 表示・管理設定</h4>
       <p class="wiz-step-desc">画面の表示スタイルと在室管理の運用モードを設定します。あとから設定画面でいつでも変更できます。</p>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:16px;">
-        <div>
-          <label class="wiz-label">カラーテーマ</label>
-          <select id="wizard-theme" class="wiz-input">
-            <option value="light"         ${this.config.theme_style === 'light'         ? 'selected' : ''}>標準ライト</option>
-            <option value="dark"          ${this.config.theme_style === 'dark'          ? 'selected' : ''}>ダーク</option>
-            <option value="blue"          ${this.config.theme_style === 'blue'          ? 'selected' : ''}>メディカルブルー</option>
-            <option value="apple"         ${this.config.theme_style === 'apple'         ? 'selected' : ''}>Apple (Human Interface)</option>
-            <option value="material"      ${this.config.theme_style === 'material'      ? 'selected' : ''}>Google (Material Design)</option>
-            <option value="fluent"        ${this.config.theme_style === 'fluent'        ? 'selected' : ''}>Microsoft (Fluent 2)</option>
-            <option value="high-contrast" ${this.config.theme_style === 'high-contrast' ? 'selected' : ''}>高コントラスト</option>
-            <option value="cvd"           ${this.config.theme_style === 'cvd'           ? 'selected' : ''}>色覚サポート (CVD対応)</option>
-          </select>
-        </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
         <div>
           <label class="wiz-label">表示倍率</label>
           <select id="wizard-zoom" class="wiz-input">
@@ -343,7 +330,6 @@ const Wizard = {
       : (this.config.standalone ? '単独運用モード（この1台だけ）' : '親機モード（子機と共有）');
     const connLabels  = { csv: 'CSVファイル連携', odbc: 'ODBCデータベース連携', none: '手動入力' };
     const admLabels   = { csv: 'CSVインポート', manual: '手動登録', hybrid: 'ハイブリッド' };
-    const themeLabels = { light: '標準ライト', dark: 'ダーク', blue: 'メディカルブルー', apple: 'Apple (Human Interface)', material: 'Google (Material Design)', fluent: 'Microsoft (Fluent 2)', 'high-contrast': '高コントラスト', cvd: '色覚サポート' };
 
     const rows = [
       ['稼働モード',     modeLabel],
@@ -353,7 +339,6 @@ const Wizard = {
       this.config.import_connection_type === 'odbc' ? ['ODBC接続文字列', this.config.odbc_connection_string ? '✅ 設定済み' : '⚠ 未設定'] : null,
       this.config.import_connection_type === 'odbc' ? ['SQLクエリ',       this.config.odbc_sql_query ? '✅ 設定済み' : '⚠ 未設定'] : null,
       ['在室管理モード', admLabels[this.config.admission_mode]],
-      ['カラーテーマ',   themeLabels[this.config.theme_style]],
       ['表示倍率',       parseFloat(this.config.default_zoom) * 100 + '%'],
       ['フォント',       this.config.font_style === 'ud' ? 'UDフォント' : '標準ゴシック'],
       ['ICカード連携',   this.config.enable_patient_ic_association === 'true' ? '有効' : '無効'],
@@ -474,13 +459,17 @@ const Wizard = {
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> テスト中...';
       if (result) result.innerHTML = '';
       const url = `http://${parentIp}:3005/api/tables/wards`;
+      const token = document.getElementById('wizard-api-token')?.value.trim() || '';
       const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
       const logLines = [
         `[Wizard接続テスト] appVersion=${appVer} url=${url}`,
         `  navigator.onLine=${navigator.onLine}`,
       ];
       try {
-        const res = await parentFetch(url, {}, 4000);
+        const res = await parentFetch(url, {
+          headers: token ? { 'X-API-Token': token } : {},
+          purpose: 'connection-test',
+        }, 4000);
         if (res.ok) {
           const data = await res.json();
           logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
@@ -488,11 +477,11 @@ const Wizard = {
           // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
           // 患者データ（beds等）はトークン必須。ここで検証しないと
           // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
-          const token = document.getElementById('wizard-api-token')?.value.trim() || '';
           if (token) {
             try {
               const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
-                headers: { 'X-API-Token': token }
+                headers: { 'X-API-Token': token },
+                purpose: 'connection-test',
               }, 4000);
               if (res2.ok) {
                 logLines.push(`  トークン検証: 成功 status=${res2.status}`);
@@ -657,8 +646,6 @@ const Wizard = {
       if (query) this.config.odbc_sql_query = query.value.trim();
     }
     if (this.currentStep === 3) {
-      const theme = document.getElementById('wizard-theme');
-      if (theme) this.config.theme_style = theme.value;
       const zoom  = document.getElementById('wizard-zoom');
       if (zoom)  this.config.default_zoom = zoom.value;
       const font  = document.getElementById('wizard-font');
@@ -700,7 +687,10 @@ const Wizard = {
       // （子機が誤って"親機自身の"稼働モードを上書きしてしまう事故になるため）。
       localStorage.setItem('cfg_share_mode', this.config.share_mode);
       localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
-      localStorage.setItem('cfg_api_token', this.config.api_token || '');
+      const tokenSave = await API.setTerminalApiToken(this.config.api_token || '');
+      if (!tokenSave?.success) {
+        throw new Error(tokenSave?.message || 'APIトークンを安全に保存できませんでした');
+      }
       // 単独運用モードは親機のときのみ有効な端末ローカルの表示フラグ
       localStorage.setItem('cfg_standalone_mode',
         (this.config.share_mode === 'parent' && this.config.standalone) ? 'true' : 'false');
@@ -721,7 +711,6 @@ const Wizard = {
 
       // 表示設定など、親機・子機を問わず共有DBへ反映してよい項目
       const sharedPatches = [
-        API.patch('system_settings', 'theme_style',                   { value: this.config.theme_style }),
         API.patch('system_settings', 'default_zoom',                  { value: this.config.default_zoom }),
         API.patch('system_settings', 'font_style',                    { value: this.config.font_style }),
         API.patch('system_settings', 'enable_patient_ic_association', { value: this.config.enable_patient_ic_association }),

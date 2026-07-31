@@ -4,7 +4,7 @@
   "description": "TransBoard - Hospital Ward Transfer Management Dashboard",
   "main": "main.js",
   "scripts": {
-    "check": "node scripts/check-js-syntax.js && node scripts/check-device-presence.js",
+    "check": "node scripts/check-js-syntax.js && node scripts/check-device-presence.js && node scripts/check-security-regressions.js",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
@@ -15,6 +15,18 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "js/**/*",
+      "css/**/*",
+      "build/icon.ico",
+      "build/icon.png",
+      "nfc-reader.ps1",
+      "package.json",
+      "LICENSE"
+    ],
     "asarUnpack": [
       "nfc-reader.ps1"
     ],
@@ -50,6 +62,10 @@
   ],
   "author": "pocket-dev-id",
   "license": "MIT",
+  "transboard": {
+    "updatePublisherName": "",
+    "updatePublisherThumbprint": ""
+  },
   "homepage": "https://pocket-dev-id.github.io/transboard",
   "repository": {
     "type": "git",
@@ -60,7 +76,7 @@
     "csv-parser": "^3.2.0"
   },
   "devDependencies": {
-    "electron": "^41.0.2",
+    "electron": "^41.10.3",
     "electron-builder": "^26.0.0"
   }
 }

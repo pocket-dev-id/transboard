@@ -8,9 +8,12 @@ const BedModal = {
   currentEventStatus: null,
   _pendingTransferEventId: null,
   _pendingFlash: false,
+  _previousFocus: null,
+  _historyRequestId: 0,
 
   open(bedId) {
     if (this.currentBedId !== bedId) {
+      this._historyRequestId += 1;
       this._pendingTransferEventId = null;
       this._historyCache = null;
       this._historyVisibleCount = 5;
@@ -28,8 +31,15 @@ const BedModal = {
     const body = document.getElementById('modal-body');
     const footer = document.getElementById('modal-footer');
 
+    this._previousFocus = document.activeElement;
     title.innerHTML = `${UI.formatBedName(bed)}号床`;
     overlay.classList.remove('hidden');
+    overlay.onkeydown = event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.close();
+      }
+    };
 
     // 在室管理モード判定
     const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
@@ -69,6 +79,7 @@ const BedModal = {
     }
 
     this._bindEvents(event);
+    document.getElementById('modal-close')?.focus();
 
     // 手動モード用ボタンイベント
     if (isManual) {
@@ -138,11 +149,16 @@ const BedModal = {
   },
 
   close() {
+    this._historyRequestId += 1;
     document.getElementById('bed-modal-overlay').classList.add('hidden');
     this.currentBedId = null;
     this.currentEventId = null;
     this.currentEventStatus = null;
     this._pendingTransferEventId = null;
+    if (this._previousFocus && typeof this._previousFocus.focus === 'function') {
+      this._previousFocus.focus();
+    }
+    this._previousFocus = null;
   },
 
   _getModalEventExpectedStatus(event) {
@@ -329,12 +345,14 @@ const BedModal = {
     if (!bodyEl) return;
 
     if (!this._historyCache || this._historyCache.bedId !== bedId) {
+      const requestId = ++this._historyRequestId;
       bodyEl.innerHTML = '<div class="bed-history-empty"><i class="fas fa-spinner fa-spin"></i> 読み込み中...</div>';
       try {
         const [events, occupancy] = await Promise.all([
-          API.getPastEventsForBed(bedId, AppState.currentWardId, this.currentEventId),
+          API.getPastEventsForBed(bedId, null, this.currentEventId),
           API.getOccupancyHistoryForBed(bedId),
         ]);
+        if (requestId !== this._historyRequestId || String(this.currentBedId) !== String(bedId)) return;
         this._historyCache = { bedId, items: this._mergeBedHistory(events, occupancy) };
       } catch (err) {
         console.error('[BedHistory]', err);
@@ -363,8 +381,7 @@ const BedModal = {
         nested.sort((a, b) => (b.departed_at || b.created_at || 0) - (a.departed_at || a.created_at || 0));
         const time = occ.ended_at != null ? occ.ended_at : Number.MAX_SAFE_INTEGER;
         return { type: 'occupancy', time, occupancy: occ, nestedEvents: nested };
-      })
-      .filter(item => item.occupancy.ended_at != null || item.nestedEvents.length > 0);
+      });
     const standaloneItems = events
       .filter(e => !claimedEventIds.has(e.id))
       .map(e => ({ type: 'event', time: e.returned_at || e.created_at, event: e }));
