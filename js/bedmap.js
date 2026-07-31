@@ -295,7 +295,9 @@ const BedMap = {
     }
 
     const cardTitle = `${bed.bed_number}号床 - ${statusLabel}${event && event.patient_ic_tag_id ? ' (ICカード登録済)' : ''}`;
-    const safeDisplayNo = UI.escapeHTML(displayNo);
+    // formatBedName は内部で各値をエスケープ済みの表示用HTMLを返す。
+    // ここで再度エスケープすると <span> タグそのものが病床名として表示される。
+    const safeDisplayNo = displayNo;
     const safeStatusLabel = UI.escapeHTML(statusLabel);
 
     return `
