@@ -43,12 +43,12 @@ const BedModal = {
 
     // 在室管理モード判定
     const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
-    const isManual = admMode === 'manual' || admMode === 'hybrid';
+    const allowsManualAdmission = admMode === 'hybrid';
 
     const modal = document.getElementById('bed-modal');
     if (event) {
       body.innerHTML = this._renderEventDetail(bed, event) + this._renderBedHistorySection(bedId);
-      footer.innerHTML = this._renderActionButtons(event, isManual);
+      footer.innerHTML = this._renderActionButtons(event, allowsManualAdmission);
       // 迎え要ステータスのとき警戒色を付与
       if (event.current_status === 'PICKUP_REQUIRED') {
         modal.classList.add('status-urgent');
@@ -57,13 +57,13 @@ const BedModal = {
       }
     } else {
       modal.classList.remove('status-urgent');
-      // 手動/ハイブリッドモードでは在室登録バナーを先頭に追加
-      body.innerHTML = (isManual ? this._renderManualPatientBanner(bed) : '') + this._renderDepartForm(bed) + this._renderBedHistorySection(bedId);
+      // ハイブリッドモードでは在室登録バナーを先頭に追加
+      body.innerHTML = (allowsManualAdmission ? this._renderPatientAdmissionBanner(bed) : '') + this._renderDepartForm(bed) + this._renderBedHistorySection(bedId);
       footer.innerHTML = `
         <button class="btn btn-primary btn-lg" id="btn-transfer-start" ${!bed.patient_name ? 'disabled' : ''}>
           <i class="fas fa-walking"></i> 移送を開始
         </button>
-        ${isManual ? `
+        ${allowsManualAdmission ? `
           <button class="btn btn-success" id="btn-patient-register" style="${bed.patient_name ? 'display:none;' : ''}">
             <i class="fas fa-user-plus"></i> 在室登録
           </button>
@@ -81,8 +81,8 @@ const BedModal = {
     this._bindEvents(event);
     document.getElementById('modal-close')?.focus();
 
-    // 手動モード用ボタンイベント
-    if (isManual) {
+    // ハイブリッドモード用の在室登録ボタン
+    if (allowsManualAdmission) {
       document.getElementById('btn-patient-register')?.addEventListener('click', () => {
         this.close();
         PatientRegModal.open(bedId);
@@ -173,8 +173,8 @@ const BedModal = {
     return false;
   },
 
-  // 手動モード用: 患者情報バナー（在室登録/編集導線）
-  _renderManualPatientBanner(bed) {
+  // ハイブリッドモード用: 患者情報バナー（在室登録/編集導線）
+  _renderPatientAdmissionBanner(bed) {
     if (!bed.patient_name) {
       return `
         <div style="background:#f0fdf4;border:2px dashed #86efac;border-radius:8px;
@@ -215,15 +215,16 @@ const BedModal = {
     ).join('');
     const examTypeCards = AppState.examTypes.map((t, idx) => `
       <button type="button" class="option-card ${idx === 0 ? 'selected' : ''}" data-select-target="f-exam-type" data-value="${UI.escapeHTML(t.id)}" ${disabledAttr}>
+        ${UI.examImage(t, 'type')}
         <span class="option-card-title">${UI.escapeHTML(t.name)}</span>
         <span class="option-card-sub">標準 ${UI.escapeHTML(t.standard_duration_min)}分</span>
       </button>
     `).join('');
     const examRoomCards = AppState.examRooms.map((r, idx) => {
-      const roomIcon = UI.normalizeExamRoomIcon(r.icon);
       return `
         <button type="button" class="option-card ${idx === 0 ? 'selected' : ''}" data-select-target="f-exam-room" data-value="${UI.escapeHTML(r.id)}" ${disabledAttr}>
-          <span class="option-card-title"><i class="fas ${UI.escapeHTML(roomIcon)}"></i> ${UI.escapeHTML(r.name)}</span>
+          ${UI.examImage(r, 'room')}
+          <span class="option-card-title">${UI.escapeHTML(r.name)}</span>
           <span class="option-card-sub">${UI.escapeHTML(r.floor || 'フロア未設定')}</span>
         </button>
       `;
@@ -325,7 +326,7 @@ const BedModal = {
       <div class="bed-history-row" data-history-index="${index}">
         <div class="bed-history-row-main">
           <span class="bed-history-patient">${patientName ? UI.escapeHTML(patientName) : '患者名なし'}</span>
-          <span class="bed-history-exam">${examType ? UI.escapeHTML(examType.name) : '--'}${examRoom ? ' / ' + UI.escapeHTML(examRoom.name) : ''}</span>
+          <span class="bed-history-exam">${examType ? UI.examImage(examType, 'type', 'history-exam-image') + UI.escapeHTML(examType.name) : '--'}${examRoom ? ' / ' + UI.examImage(examRoom, 'room', 'history-exam-image') + UI.escapeHTML(examRoom.name) : ''}</span>
           ${UI.statusBadge(event.current_status)}
           <span class="bed-history-time"><i class="fas fa-clock"></i> ${UI.formatDateTime(startTime)} → ${event.returned_at ? UI.formatDateTime(event.returned_at) : '--'}</span>
           ${durationHtml}
@@ -542,11 +543,11 @@ const BedModal = {
         <div class="modal-info-grid">
           <div class="modal-info-item">
             <div class="label">検査種別</div>
-            <div class="value">${examType ? UI.escapeHTML(examType.name) : '--'}</div>
+            <div class="value">${examType ? UI.examImage(examType, 'type', 'history-exam-image') + UI.escapeHTML(examType.name) : '--'}</div>
           </div>
           <div class="modal-info-item">
             <div class="label">行き先検査室</div>
-            <div class="value">${examRoom ? UI.escapeHTML(examRoom.name) : '--'}</div>
+            <div class="value">${examRoom ? UI.examImage(examRoom, 'room', 'history-exam-image') + UI.escapeHTML(examRoom.name) : '--'}</div>
           </div>
           <div class="modal-info-item">
             <div class="label">付き添い看護師</div>
@@ -587,7 +588,7 @@ const BedModal = {
     `;
   },
 
-  _renderActionButtons(event, isManual = false) {
+  _renderActionButtons(event, allowsManualAdmission = false) {
     const status = event.current_status;
     const actions = CONFIG.getAllowedActions(status, CONFIG.STATUS_SCOPE.WARD);
 
@@ -610,7 +611,7 @@ const BedModal = {
     primaryActions.forEach(action => {
       rightHtml += `<button class="btn ${action.cls}" data-action-status="${action.toStatus}">${UI.escapeHTML(action.label)}</button>`;
     });
-    if (isManual) {
+    if (allowsManualAdmission) {
       rightHtml += `<button class="btn btn-outline btn-sm" id="btn-patient-edit-inline">
         <i class="fas fa-user-edit"></i> 患者情報を編集
       </button>`;
@@ -1066,6 +1067,10 @@ const BedModal = {
       if (!ok) {
         return;
       }
+    }
+    if (newStatus === 'RETURNED' && event.current_status === 'IN_EXAM') {
+      const ok = confirm('「迎え要」を省略して帰棟完了にします。患者が病床へ戻っていることを確認してください。');
+      if (!ok) return;
     }
 
     const btn = document.querySelector(`[data-action-status="${newStatus}"]`);

@@ -4,7 +4,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const ENTRY_FILES = ['main.js', 'preload.js'];
-const JS_DIRS = ['js'];
+const JS_DIRS = ['js', 'main-modules'];
 
 function walk(dir, out = []) {
   if (!fs.existsSync(dir)) return out;

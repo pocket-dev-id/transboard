@@ -74,7 +74,7 @@ const CONFIG = {
     DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
     MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
     ARRIVED: ['IN_EXAM', 'CANCELLED'],
-    IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'CANCELLED'],
+    IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED', 'CANCELLED'],
     NEARLY_DONE: ['PICKUP_REQUIRED', 'CANCELLED'],
     PICKUP_REQUIRED: ['RETURNED', 'CANCELLED'],
     RETURNED: [],
@@ -90,6 +90,9 @@ const CONFIG = {
   // 付き添いスタッフが実際に患者と一緒に病棟を離れて移動している状態（それ以外はDEPART_STATUSESでも
   // 検査中等で病棟へ戻り手離れしている「待機」扱い）
   ESCORT_ACTIVE_STATUSES: ['MOVING', 'PICKUP_REQUIRED'],
+
+  // 検査室から病棟へ伝わる通知のうち、病棟側で受領確認する状態
+  WARD_ACK_STATUSES: ['ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
 
   // 迎え要件のしきい値 (分)
   SOON_THRESHOLD_MIN: 15,
@@ -113,6 +116,7 @@ const CONFIG = {
     IN_EXAM: [
       { label: 'あと10分', toStatus: 'NEARLY_DONE', cls: 'btn-orange' },
       { label: '迎え要', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
+      { label: '帰棟完了', toStatus: 'RETURNED', cls: 'btn-success' },
       { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
     ],
     NEARLY_DONE: [

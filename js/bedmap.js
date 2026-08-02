@@ -7,6 +7,11 @@ const BedMap = {
 
   _activeFilter: 'all',
 
+  _scheduleBadgeIcons: new Set([
+    'calendar-check', 'calendar-alt', 'clock', 'clipboard-list',
+    'stethoscope', 'x-ray', 'flask', 'heartbeat', 'radiation', 'file-medical-alt',
+  ]),
+
   render() {
     const grid = document.getElementById('bed-map-grid');
     if (!grid) return;
@@ -144,28 +149,51 @@ const BedMap = {
     this.applyFilter();
   },
 
-  _hasTodayScheduleForBed(bed) {
+  _getTodaySchedulesForBed(bed) {
     const patientId = String(bed?.patient_id || '').trim();
-    if (!patientId) return false;
+    if (!patientId) return [];
 
     const wardId = AppState.currentWardId;
     const feedsById = new Map(
       (AppState.scheduleFeeds || []).map(feed => [String(feed.id), feed])
     );
+    const seenFeedIds = new Set();
 
-    return (AppState.scheduleItems || []).some(item => {
-      if (String(item?.identifier || '').trim() !== patientId) return false;
+    return (AppState.scheduleItems || []).reduce((schedules, item) => {
+      if (String(item?.identifier || '').trim() !== patientId) return schedules;
 
       const feedId = item?.feed_id == null ? '' : String(item.feed_id);
       const feed = feedId ? feedsById.get(feedId) : null;
-      if (feedId && !feed) return false;
-      if (feed?.show_on_bed_map === false) return false;
+      if (feedId && !feed) return schedules;
+      if (feed?.show_on_bed_map === false) return schedules;
 
       const wardIds = Array.isArray(feed?.ward_ids)
         ? feed.ward_ids
         : (Array.isArray(item?.ward_ids) ? item.ward_ids : []);
-      return wardIds.length === 0 || !wardId || wardIds.includes(wardId);
-    });
+      if (wardIds.length > 0 && wardId && !wardIds.includes(wardId)) return schedules;
+
+      // 同じフィード内に予定が複数あっても、病床マップ上は1つの表示にまとめる。
+      const key = feedId || String(item?.id || 'legacy-schedule');
+      if (seenFeedIds.has(key)) return schedules;
+      seenFeedIds.add(key);
+      schedules.push({ item, feed });
+      return schedules;
+    }, []);
+  },
+
+  _renderTodayScheduleBadges(bed) {
+    return this._getTodaySchedulesForBed(bed).map(({ item, feed }) => {
+      const configuredIcon = String(feed?.bed_map_icon || 'calendar-check');
+      const icon = this._scheduleBadgeIcons.has(configuredIcon) ? configuredIcon : 'calendar-check';
+      const colorValue = String(feed?.color || item?.color || '#7c3aed');
+      const color = /^#[0-9a-f]{6}$/i.test(colorValue) ? colorValue : '#7c3aed';
+      const abbreviation = String(feed?.bed_map_abbreviation || '').trim().slice(0, 10);
+      const bold = feed?.bed_map_bold === true;
+      const feedName = String(feed?.name || item?.feed_name || '本日スケジュール');
+      const title = abbreviation ? `${feedName}（${abbreviation}）` : feedName;
+      const abbreviationHtml = abbreviation ? `<span>${UI.escapeHTML(abbreviation)}</span>` : '';
+      return `<div class="bed-schedule-badge" style="background:#fff;color:${color};padding:2px 5px;border-radius:4px;font-size:9px;font-weight:${bold ? '800' : '600'};display:inline-flex;align-items:center;gap:2px;border:1px solid ${color};margin-bottom:2px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${UI.escapeHTML(title)}"><i class="fas fa-${icon}"></i>${abbreviationHtml}</div>`;
+    }).join('');
   },
 
   _renderBedCard(bed) {
@@ -217,8 +245,8 @@ const BedMap = {
     let examInfoHtml = '';
     if (event && examType) {
       examInfoHtml = `<div class="bed-exam-info">
-        ${UI.escapeHTML(examType.code)}
-        ${examRoom ? '→' + UI.escapeHTML(examRoom.name) : ''}
+        ${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.code)}
+        ${examRoom ? '→' + UI.examImage(examRoom, 'room', 'history-exam-image') + UI.escapeHTML(examRoom.name) : ''}
         ${event.departed_at ? '<br>' + UI.formatTime(event.departed_at) + '出棟' : ''}
       </div>`;
     }
@@ -251,9 +279,7 @@ const BedMap = {
       }
     }
 
-    const scheduleBadgeHtml = this._hasTodayScheduleForBed(bed)
-      ? '<div class="bed-schedule-badge" style="background:#f5f3ff; color:#6d28d9; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border:1px solid #ddd6fe; margin-bottom:2px;" title="本日スケジュールあり"><i class="fas fa-calendar-check"></i></div>'
-      : '';
+    const scheduleBadgeHtml = this._renderTodayScheduleBadges(bed);
 
     // 患者情報の表示部分の作成 (マスク適用時は直接 "＊＊＊＊" に置き換え)
     const nameChk = document.getElementById('chk-show-patient-names');

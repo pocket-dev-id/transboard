@@ -245,3 +245,97 @@ const StaffStatus = {
     return { cls: 'standby', label: '病棟待機', icon: 'fa-hourglass-half' };
   },
 };
+
+const NotificationHistory = {
+  render() {
+    const list = document.getElementById('notification-history-list');
+    if (!list) return;
+
+    const unconfirmedOnly = document.getElementById('notification-history-unconfirmed-only');
+    if (unconfirmedOnly && !unconfirmedOnly.dataset.listenerBound) {
+      unconfirmedOnly.checked = localStorage.getItem('cfg_notification_history_unconfirmed_only') === 'true';
+      unconfirmedOnly.dataset.listenerBound = 'true';
+      unconfirmedOnly.addEventListener('change', () => {
+        localStorage.setItem('cfg_notification_history_unconfirmed_only', unconfirmedOnly.checked ? 'true' : 'false');
+        this.render();
+      });
+    }
+
+    const eventById = new Map(
+      (AppState.todayEvents || []).map(event => [String(event.id), event])
+    );
+    const logs = (AppState.recentStatusLogs || [])
+      .filter(log => log.from_status !== log.to_status)
+      .filter(log => !unconfirmedOnly?.checked || (
+        CONFIG.WARD_ACK_STATUSES.includes(String(log.to_status || '')) && !log.acknowledged_at
+      ))
+      .slice(0, 20);
+
+    if (logs.length === 0) {
+      const emptyLabel = unconfirmedOnly?.checked ? '未確認の通知はありません' : '通知履歴はありません';
+      list.innerHTML = `<div class="empty-state"><i class="fas fa-bell-slash"></i><p>${emptyLabel}</p></div>`;
+      return;
+    }
+
+    list.innerHTML = logs.map(log => {
+      const event = eventById.get(String(log.transfer_event_id));
+      const bed = AppState.getBedById(event?.bed_id || log.bed_id);
+      const status = String(log.to_status || '');
+      const statusLabel = CONFIG.STATUS_LABEL[status] || status || '状態変更';
+      const statusIcon = CONFIG.STATUS_ICON[status] || 'fa-info-circle';
+      const changedDate = new Date(Number(log.changed_at || 0));
+      const nowDate = new Date();
+      const isToday = changedDate.getFullYear() === nowDate.getFullYear() &&
+        changedDate.getMonth() === nowDate.getMonth() &&
+        changedDate.getDate() === nowDate.getDate();
+      const timeLabel = isToday
+        ? UI.formatTime(log.changed_at)
+        : `${changedDate.getMonth() + 1}/${changedDate.getDate()} ${UI.formatTime(log.changed_at)}`;
+      const bedLabel = bed ? `${UI.formatBedNamePlain(bed)}号床` : '病床不明';
+      const examRoom = AppState.getExamRoomById(event?.exam_room_id || log.exam_room_id);
+      const patientName = String(event?.patient_name || log.patient_name || bed?.patient_name || '').trim();
+      const patientLabel = patientName ? UI.getPatientName(patientName) : '';
+      const detailLabel = [patientLabel, examRoom?.name || ''].filter(Boolean).join(' / ');
+      const disabled = bed ? '' : ' disabled';
+      const needsWardAck = CONFIG.WARD_ACK_STATUSES.includes(status);
+      const ackHtml = !needsWardAck ? '' : log.acknowledged_at
+        ? `<span class="notification-history-ack is-acknowledged" title="${UI.escapeHTML(`${log.acknowledged_by || '病棟'} ${UI.formatTime(log.acknowledged_at)}確認`)}">
+            <i class="fas fa-check-circle"></i> ${UI.escapeHTML(log.acknowledged_by || '病棟')}確認済
+          </span>`
+        : `<button type="button" class="notification-history-ack-button" data-ack-log-id="${UI.escapeHTML(log.id)}">
+            確認しました
+          </button>`;
+
+      return `
+        <div class="notification-history-item status-${UI.escapeHTML(status)}">
+          <time>${UI.escapeHTML(timeLabel)}</time>
+          <span class="notification-history-icon"><i class="fas ${UI.escapeHTML(statusIcon)}"></i></span>
+          <button type="button" class="notification-history-open"
+            data-bed-id="${bed ? UI.escapeHTML(bed.id) : ''}"${disabled}
+            title="${UI.escapeHTML(`${bedLabel} ${statusLabel}${detailLabel ? ` ${detailLabel}` : ''}`)}">
+            <span class="notification-history-main">
+              <strong>${UI.escapeHTML(bedLabel)}</strong>
+              <small>${UI.escapeHTML(detailLabel)}</small>
+            </span>
+            <span class="notification-history-status">${UI.escapeHTML(statusLabel)}</span>
+          </button>
+          ${ackHtml ? `<span class="notification-history-ack-row">${ackHtml}</span>` : ''}
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('.notification-history-open[data-bed-id]:not(:disabled)').forEach(item => {
+      item.addEventListener('click', () => BedModal.open(item.dataset.bedId));
+    });
+    list.querySelectorAll('[data-ack-log-id]').forEach(button => {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = '送信中…';
+        const completed = await App.acknowledgeNotification(button.dataset.ackLogId);
+        if (!completed && button.isConnected) {
+          button.disabled = false;
+          button.textContent = '確認しました';
+        }
+      });
+    });
+  },
+};

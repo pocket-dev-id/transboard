@@ -8,9 +8,10 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const crypto = require('crypto');
-const { execFileSync, spawn } = require('child_process');
+const { execFileSync, execFile, spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const packageMetadata = require('./package.json');
+const { createWebrtcSignalingService } = require('./main-modules/webrtc-signaling');
 
 const { Readable } = require('stream');
 const WINDOWS_SYSTEM_ROOT = process.env.SystemRoot || 'C:\\Windows';
@@ -176,16 +177,54 @@ function getDBPath() {
   return path.join(targetDir, 'db.json');
 }
 
-// アトミック書き込みユーティリティ: tmpファイルに書いてからrenameする
-// これにより書き込み途中でプロセスが終了してもターゲットファイルが壊れない
+// アトミック書き込みユーティリティ: tmpファイルに書いてからrenameする。
+// 複数起動（親機＋管理端末など）で同じ保存先を使う場合も、同一ファイルへの
+// 書き込みが競合してtmpファイルを上書きしないよう、短時間のロックを取得する。
 function safeWriteFile(targetPath, content) {
+  const lockPath = targetPath + '.lock';
   const tmpPath = targetPath + '.tmp';
-  fs.writeFileSync(tmpPath, content, 'utf8');
+  const lockTimeoutMs = 5000;
+  const staleLockMs = 30000;
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const startedAt = Date.now();
+  let lockFd = null;
+  while (lockFd === null) {
+    try {
+      lockFd = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(lockFd, `${process.pid}\n`, 'utf8');
+    } catch (err) {
+      if (err.code !== 'EEXIST') {
+        if (lockFd !== null) {
+          try { fs.closeSync(lockFd); } catch {}
+          try { fs.unlinkSync(lockPath); } catch {}
+        }
+        throw err;
+      }
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > staleLockMs) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch (statErr) {
+        if (statErr.code !== 'ENOENT') throw statErr;
+      }
+      if (Date.now() - startedAt >= lockTimeoutMs) {
+        throw new Error(`ファイルロック取得がタイムアウトしました: ${targetPath}`);
+      }
+      Atomics.wait(waitBuffer, 0, 0, 25);
+    }
+  }
+
   try {
+    fs.writeFileSync(tmpPath, content, 'utf8');
     fs.renameSync(tmpPath, targetPath);
   } catch (renameErr) {
     try { fs.unlinkSync(tmpPath); } catch {}
     throw renameErr;
+  } finally {
+    try { fs.closeSync(lockFd); } catch {}
+    try { fs.unlinkSync(lockPath); } catch {}
   }
 }
 
@@ -249,36 +288,23 @@ function cleanupStaleTmpFiles() {
       console.error('[DB] 残留一時ファイルの削除に失敗しました:', err.message);
     }
   }
+  const lockPath = DB_FILE + '.lock';
+  if (fs.existsSync(lockPath)) {
+    try {
+      const stat = fs.statSync(lockPath);
+      if (Date.now() - stat.mtimeMs > 30000) {
+        fs.unlinkSync(lockPath);
+        console.warn('[DB] 前回の異常終了で残留したロックを削除しました:', lockPath);
+      }
+    } catch (err) {
+      console.error('[DB] 残留ロックの確認に失敗しました:', err.message);
+    }
+  }
 }
 cleanupStaleTmpFiles();
 
-// WebRTCシグナリング用のメモリ内一時キュー
-const webrtcSignalingQueue = Object.create(null);
-const SIGNALING_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
-const MAX_SIGNALING_ID_LENGTH = 128;
-
-function isSafeSignalingId(value) {
-  return typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= MAX_SIGNALING_ID_LENGTH &&
-    SIGNALING_ID_PATTERN.test(value);
-}
-
-// WebRTCシグナリングキューの定期クリーンアップ（古い未取得メッセージの自動破棄）
-setInterval(() => {
-  const now = Date.now();
-  const EXPIRATION_MS = 30000; // 30秒有効
-  for (const clientId in webrtcSignalingQueue) {
-    if (Array.isArray(webrtcSignalingQueue[clientId])) {
-      webrtcSignalingQueue[clientId] = webrtcSignalingQueue[clientId].filter(
-        item => (now - item.timestamp) < EXPIRATION_MS
-      );
-      if (webrtcSignalingQueue[clientId].length === 0) {
-        delete webrtcSignalingQueue[clientId];
-      }
-    }
-  }
-}, 60000); // 60秒毎に実行
+// WebRTCシグナリングは独立サービスに分離し、キューの上限・入力検証を一箇所で管理する。
+const webrtcSignaling = createWebrtcSignalingService();
 
 // データベースの初期シードデータ（マスタデータ）
 const SEEDS = {
@@ -341,9 +367,9 @@ const SEEDS = {
     { id: "import_schedule", value: "{\"mode\":\"realtime\",\"intervalMin\":\"10\",\"times\":[]}" },
     { id: "import_retention_policy", value: "{\"action\":\"archive\",\"retentionDays\":\"30\",\"clearUnlisted\":false}" },
     { id: "import_connection_type", value: "csv" },
-    { id: "odbc_connection_string", value: "DSN=EMR_DB;UID=admin;PWD=admin_pass;" },
+    { id: "odbc_connection_string", value: "" },
     { id: "odbc_sql_query", value: "SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS" },
-    { id: "notification_sounds", value: "{\"PICKUP_REQUIRED\":{\"enabled\":true,\"sound\":\"alarm\"},\"NEARLY_DONE\":{\"enabled\":true,\"sound\":\"chime\"},\"SOON\":{\"enabled\":true,\"sound\":\"chime\"},\"MOVING\":{\"enabled\":false,\"sound\":\"ding\"},\"ARRIVED\":{\"enabled\":false,\"sound\":\"ding\"},\"RETURNED\":{\"enabled\":false,\"sound\":\"ding\"}}" },
+    { id: "notification_sounds", value: "{\"PICKUP_REQUIRED\":{\"enabled\":true,\"sound\":\"alarm\"},\"NEARLY_DONE\":{\"enabled\":true,\"sound\":\"chime\"},\"SOON\":{\"enabled\":true,\"sound\":\"chime\"},\"MOVING\":{\"enabled\":false,\"sound\":\"ding\"},\"ARRIVED\":{\"enabled\":false,\"sound\":\"ding\"},\"IN_EXAM\":{\"enabled\":false,\"sound\":\"ding\"},\"RETURNED\":{\"enabled\":false,\"sound\":\"ding\"}}" },
     { id: "incoming_ring_sound", value: "ring" },
     { id: "share_mode", value: "parent" },
     { id: "parent_ip", value: "" },
@@ -365,6 +391,7 @@ const SEEDS = {
     { id: "admission_mode", value: "csv" },
     { id: "notification_volume", value: "80" },
     { id: "notification_scan_sound", value: "true" },
+    { id: "notification_auto_speech", value: "true" },
     { id: "notification_mute", value: "{\"enabled\":false,\"start\":\"22:00\",\"end\":\"06:00\"}" },
     { id: "notification_import_toast", value: "true" },
     { id: "status_custom_labels", value: "{}" },
@@ -373,6 +400,7 @@ const SEEDS = {
     { id: "status_colors", value: "{}" },
     { id: "action_button_labels", value: "{}" },
     { id: "hidden_statuses", value: "[]" },
+    { id: "event_retention_days", value: "0" },
     { id: "bed_occupancy_retention_days", value: "7" }
   ],
   transfer_events: [],
@@ -395,6 +423,27 @@ const AUDIT_LOG_MAX_ENTRIES = 5000;
 // 通常運用では作動しない安全弁で、最長90日設定でも現実的な回転率に対し十分な余裕がある。
 const BED_OCCUPANCY_LOG_MAX_ENTRIES = 20000;
 const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
+// 申し送りは未確認の情報を優先して保持し、確認済みの古いメモだけを安全弁として整理する。
+// 上限を超えても未確認メモは削除しないため、業務上の確認漏れを防ぐ。
+const HANDOVER_NOTE_MAX_ENTRIES = 1000;
+
+function pruneHandoverNotes(db) {
+  const notes = Array.isArray(db.handover_notes) ? db.handover_notes : [];
+  if (notes.length <= HANDOVER_NOTE_MAX_ENTRIES) return 0;
+
+  const removeCount = notes.length - HANDOVER_NOTE_MAX_ENTRIES;
+  const resolved = notes
+    .filter(note => note && (note.is_resolved === true || note.is_resolved === 1 || note.is_resolved === '1'))
+    .sort((a, b) => {
+      const aTime = Number(a.updated_at || a.resolved_at || a.created_at || 0);
+      const bTime = Number(b.updated_at || b.resolved_at || b.created_at || 0);
+      return aTime - bTime;
+    });
+  const removableIds = new Set(resolved.slice(0, removeCount).map(note => String(note.id)));
+  if (removableIds.size === 0) return 0;
+  db.handover_notes = notes.filter(note => !removableIds.has(String(note.id)));
+  return removableIds.size;
+}
 
 function encryptSensitiveValue(value) {
   if (!value) return value;
@@ -504,10 +553,41 @@ function decryptDbFileContent(raw) {
   }
 }
 
-// ローカルデータベースのメモリキャッシュ（コード#6: 毎リクエストごとのディスク読み込み・JSON.parseを回避）
-// Node.jsはシングルスレッドのためIPC/HTTPリクエストはイベントループ上で直列化され、
-// キャッシュと実ファイルがズレるような競合は発生しない
+// ローカルデータベースのメモリキャッシュ（毎リクエストごとのディスク読み込み・JSON.parseを回避）。
+// 親機・子機や複数端末が同じ共有DBを使う場合は別プロセスから更新されるため、
+// ファイルサイズと更新時刻を署名として確認し、外部更新時にはキャッシュを破棄する。
 let dbCache = null;
+let dbCacheSignature = null;
+
+function getDbFileSignature() {
+  try {
+    const stat = fs.statSync(DB_FILE);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+// ユーザーがフォルダ選択ダイアログで明示的に選択したCSVフォルダ。
+// read-csv-headersはこの一覧または保存済みフィードのフォルダだけを読めるようにする。
+const approvedCsvHeaderFolders = new Set();
+
+function normalizeLocalFolderPath(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return path.resolve(raw).replace(/[\\/]+$/, '').toLowerCase();
+}
+
+function isApprovedCsvHeaderFolder(folderPath) {
+  const requested = normalizeLocalFolderPath(folderPath);
+  if (!requested) return false;
+  if (approvedCsvHeaderFolders.has(requested)) return true;
+  const db = readDB();
+  const configured = [
+    getSettingRecord(db, 'import_directory')?.value,
+    ...(db.schedule_feeds || []).map(feed => feed.watch_dir),
+  ].map(normalizeLocalFolderPath).filter(Boolean);
+  return configured.includes(requested);
+}
 
 function getLegacyDepartureTimestamp(event, statusLogs, migrationTime) {
   const directCandidates = [
@@ -585,10 +665,12 @@ function migrateTransferWorkflow(db) {
     } catch {}
   }
 
-  const notificationSetting = (db.system_settings || []).find(s => s.id === 'notification_sounds');
+  const systemSettings = db.system_settings || (db.system_settings = []);
+  const notificationSetting = systemSettings.find(s => s.id === 'notification_sounds');
   if (notificationSetting?.value) {
     try {
       const settings = JSON.parse(notificationSetting.value);
+      let notificationSettingsChanged = false;
       if (
         settings &&
         typeof settings === 'object' &&
@@ -596,11 +678,40 @@ function migrateTransferWorkflow(db) {
         !Object.prototype.hasOwnProperty.call(settings, 'MOVING')
       ) {
         settings.MOVING = { ...settings.DEPART_REGISTERED };
+        notificationSettingsChanged = true;
+      }
+      if (
+        settings &&
+        typeof settings === 'object' &&
+        !Object.prototype.hasOwnProperty.call(settings, 'IN_EXAM')
+      ) {
+        settings.IN_EXAM = { enabled: false, sound: 'ding', toast: true };
+        notificationSettingsChanged = true;
+      }
+      if (notificationSettingsChanged) {
         notificationSetting.value = JSON.stringify(settings);
         changed = true;
       }
     } catch {}
   }
+
+  if (!systemSettings.some(s => s.id === 'notification_auto_speech')) {
+    systemSettings.push({ id: 'notification_auto_speech', value: 'true' });
+    changed = true;
+  }
+
+  // 旧バージョンのDBには履歴保持期間が存在しない。設定画面はPATCHで保存するため、
+  // 読み込み時に不足レコードを追加して「Not Found」で保存できない状態を修復する。
+  const retentionSettingDefaults = {
+    event_retention_days: '0',
+    bed_occupancy_retention_days: '7',
+  };
+  Object.entries(retentionSettingDefaults).forEach(([id, value]) => {
+    if (!systemSettings.some(setting => setting.id === id)) {
+      systemSettings.push({ id, value });
+      changed = true;
+    }
+  });
 
   if (migratedEventIds.length > 0) {
     appendAuditLog(db, 'DATA_MIGRATION', {
@@ -620,14 +731,21 @@ function migrateTransferWorkflow(db) {
 
 // ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）
 function readDB() {
-  if (dbCache) {
+  const currentSignature = getDbFileSignature();
+  if (dbCache && dbCacheSignature === currentSignature) {
     return JSON.parse(JSON.stringify(dbCache));
+  }
+  if (dbCache && dbCacheSignature !== currentSignature) {
+    console.info('[DB] 外部プロセスによる更新を検知したため、キャッシュを再読み込みします。');
+    dbCache = null;
+    dbCacheSignature = null;
   }
   try {
     if (!fs.existsSync(DB_FILE)) {
       console.log(`[DB] データベースが存在しないため初期データを書き込みます: ${DB_FILE}`);
       safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(SEEDS, null, 2)));
       dbCache = JSON.parse(JSON.stringify(SEEDS));
+      dbCacheSignature = getDbFileSignature();
       return JSON.parse(JSON.stringify(SEEDS));
     }
     const rawFileContent = fs.readFileSync(DB_FILE, 'utf8');
@@ -751,6 +869,7 @@ function readDB() {
     }
 
     dbCache = JSON.parse(JSON.stringify(db));
+    dbCacheSignature = getDbFileSignature();
     return db;
   } catch (err) {
     console.error('[DB] データベースの読み込み失敗:', err);
@@ -763,8 +882,10 @@ function readDB() {
         const bakData = decryptDbFileContent(bakRaw);
         const recovered = JSON.parse(bakData);
         console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
-        dbCache = JSON.parse(JSON.stringify(recovered));
-        return recovered;
+        if (!writeDB(recovered)) {
+          throw new Error('バックアップデータの復旧保存に失敗しました');
+        }
+        return JSON.parse(JSON.stringify(recovered));
       } catch (bakErr) {
         console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
       }
@@ -779,9 +900,10 @@ function readDB() {
       } catch {}
     }
 
-    console.error('[DB] データを復旧できませんでした。初期データで再構築します。');
-    dbCache = JSON.parse(JSON.stringify(SEEDS));
-    return JSON.parse(JSON.stringify(SEEDS));
+    console.error('[DB] データを復旧できませんでした。破損したDBを初期データで上書きせず、起動を停止します。');
+    dbCache = null;
+    dbCacheSignature = null;
+    throw new Error('データベースを読み込めませんでした。*.corrupt と *.bak を保全したため、管理者が復旧状態を確認してください。', { cause: err });
   }
 }
 
@@ -789,6 +911,18 @@ function readDB() {
 // 成功時は true、失敗時は false を返す（呼び出し元がハンドリング可能）
 function writeDB(data) {
   try {
+    // 読み込み後に別プロセスが更新していた場合、古いスナップショットで
+    // 上書きしてしまわないよう保存を拒否する。呼び出し側はfalseを受けて
+    // 再読み込み・再試行できる。
+    if (dbCache && dbCacheSignature) {
+      const currentSignature = getDbFileSignature();
+      if (currentSignature !== dbCacheSignature) {
+        console.warn('[DB] 保存前に外部更新を検知したため、古いデータの上書きを中止しました。');
+        dbCache = null;
+        dbCacheSignature = null;
+        return false;
+      }
+    }
     // インメモリの元のデータを破壊しないようディープコピーを作成
     const dbClone = JSON.parse(JSON.stringify(data));
 
@@ -809,6 +943,7 @@ function writeDB(data) {
 
     // メモリキャッシュを最新の状態（復号化された形）に更新する
     dbCache = JSON.parse(JSON.stringify(data));
+    dbCacheSignature = getDbFileSignature();
 
     return true;
   } catch (err) {
@@ -1122,7 +1257,8 @@ function resolveWatchDir() {
   const setting = db.system_settings?.find(s => s.id === 'import_directory');
   let watchPath = setting && setting.value ? setting.value.trim() : '';
   if (!watchPath) {
-    watchPath = path.join(__dirname, 'import_folder');
+    // パッケージ後のASARは読み取り専用のため、既定の監視先はuserData配下に置く。
+    watchPath = path.join(app.getPath('userData'), 'import_folder');
   }
 
   // UNCパスの場合のみSMBネットワーク共有フォルダの認証を実行
@@ -1199,7 +1335,14 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
   mainWindow.on('close', (event) => {
-    const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+    let shareMode = 'client';
+    try {
+      shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+    } catch (err) {
+      // DB障害時にcloseイベント自体を失敗させず、安全に終了させる。
+      console.error('[App] 終了時の設定読み込みに失敗しました:', err);
+      isQuitting = true;
+    }
     if (!isQuitting && shareMode === 'parent') {
       event.preventDefault();
       mainWindow.hide();
@@ -1472,17 +1615,64 @@ function assertCsvFileSize(filePath) {
   }
 }
 
+const SCHEDULE_CSV_ENCODINGS = new Set([
+  'auto',
+  'utf-8',
+  'shift-jis',
+  'utf-16le',
+  'utf-16be',
+  'euc-jp',
+]);
+
+function normalizeScheduleCsvEncoding(value) {
+  const normalized = String(value || 'auto').trim().toLowerCase();
+  return SCHEDULE_CSV_ENCODINGS.has(normalized) ? normalized : 'auto';
+}
+
+function decodeScheduleCsvBuffer(buffer, requestedEncoding = 'auto') {
+  let encoding = normalizeScheduleCsvEncoding(requestedEncoding);
+  if (encoding === 'auto') {
+    if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+      encoding = 'utf-8';
+    } else if (buffer[0] === 0xff && buffer[1] === 0xfe) {
+      encoding = 'utf-16le';
+    } else if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+      encoding = 'utf-16be';
+    } else if (isUtf8(buffer)) {
+      encoding = 'utf-8';
+    } else {
+      encoding = 'shift-jis';
+    }
+  }
+
+  let text = new TextDecoder(encoding).decode(buffer);
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  return { text, encoding };
+}
+
+function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto') {
+  try {
+    const files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.csv'));
+    if (files.length === 0) return { success: false, ok: false, reason: 'no_csv' };
+    const firstFile = path.join(folderPath, files[0]);
+    assertCsvFileSize(firstFile);
+    const buffer = fs.readFileSync(firstFile);
+    const { text, encoding } = decodeScheduleCsvBuffer(buffer, requestedEncoding);
+    const firstLine = text.split(/\r?\n/)[0] || '';
+    // カンマ区切りとタブ区切りを自動判定
+    const sep = firstLine.includes('\t') ? '\t' : ',';
+    const headers = firstLine.split(sep).map(h => h.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
+    return { success: true, ok: true, headers, filename: files[0], encoding };
+  } catch (e) {
+    return { success: false, ok: false, reason: e.message };
+  }
+}
+
 function importScheduleFeedCSV(filePath, feed) {
   try {
     assertCsvFileSize(filePath);
     const buffer = fs.readFileSync(filePath);
-    let encoding = 'shift-jis';
-    if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
-      encoding = 'utf-8';
-    } else if (isUtf8(buffer)) {
-      encoding = 'utf-8';
-    }
-    const decodedText = new TextDecoder(encoding).decode(buffer);
+    const { text: decodedText, encoding } = decodeScheduleCsvBuffer(buffer, feed.encoding);
 
     const mapping = feed.mapping || {};
     const results = [];
@@ -1532,15 +1722,33 @@ function importScheduleFeedCSV(filePath, feed) {
           count++;
         });
 
-        writeDB(db);
-        console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${count}件 (${path.basename(filePath)})`);
+        const saved = writeDB(db);
+        if (!saved) {
+          const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
+          console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('schedule-imported', {
+              success: false,
+              feedId: feed.id,
+              feedName: feed.name,
+              fileName: path.basename(filePath),
+              count: 0,
+              encoding,
+              message,
+            });
+          }
+          return;
+        }
+        console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${count}件 (${path.basename(filePath)}, ${encoding})`);
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('schedule-imported', {
+            success: true,
             feedId: feed.id,
             feedName: feed.name,
             fileName: path.basename(filePath),
-            count
+            count,
+            encoding
           });
         }
 
@@ -1864,8 +2072,10 @@ handleTrusted('get-watch-directory', () => {
   return currentWatchDir;
 });
 
-function updateWatchDirectoryOnParent(newPath) {
-  const resolved = newPath && newPath.trim() ? newPath.trim() : path.join(__dirname, 'import_folder');
+function validateWatchDirectoryOnParent(newPath) {
+  const resolved = newPath && newPath.trim()
+    ? newPath.trim()
+    : path.join(app.getPath('userData'), 'import_folder');
   
   // UNCパスの場合のみSMBネットワーク共有フォルダの認証を実行
   authenticateSMBSync(resolved);
@@ -1875,11 +2085,32 @@ function updateWatchDirectoryOnParent(newPath) {
       fs.mkdirSync(resolved, { recursive: true });
     } catch (err) {
       console.error(`[Watcher] フォルダの自動作成失敗:`, err);
+      return { success: false, message: `監視フォルダを作成できません: ${err.message}` };
     }
   }
+
+  try {
+    if (!fs.statSync(resolved).isDirectory()) {
+      return { success: false, message: '指定された監視先はフォルダではありません。' };
+    }
+    // 保存時点で一覧を取得できることまで確認し、「保存成功後に手動スキャンだけ失敗」
+    // する状態を防ぐ。UNC切断・権限不足もここで利用者へ返す。
+    fs.readdirSync(resolved);
+    approvedCsvHeaderFolders.add(normalizeLocalFolderPath(resolved));
+  } catch (err) {
+    console.error('[Watcher] 監視フォルダを開けません:', err);
+    return { success: false, message: `監視フォルダを開けません: ${err.message}` };
+  }
+
+  return { success: true, path: resolved };
+}
+
+function updateWatchDirectoryOnParent(newPath) {
+  const validation = validateWatchDirectoryOnParent(newPath);
+  if (!validation.success) return validation;
   setupImportTrigger();
   setupScheduleFeedTriggers();
-  return { success: true, path: resolved };
+  return validation;
 }
 
 // IPC通信で監視対象フォルダを動的に切り替える
@@ -1996,6 +2227,12 @@ function enforceReadOnlyConnectionString(connStr) {
   return { valid: true, connectionString: finalConnStr };
 }
 
+function sanitizeOdbcError(message, connectionString = '') {
+  return String(message || 'ODBC処理に失敗しました')
+    .replaceAll(String(connectionString || ''), '[接続文字列]')
+    .replace(/((?:PWD|Password)\s*=\s*)[^;\s]*/ig, '$1***');
+}
+
 function execOdbcPowerShell(connectionString, scriptBody, timeoutMs = 15000) {
   const safe = String(connectionString).slice(0, 500).replace(/'/g, "''");
   const ps = `
@@ -2010,33 +2247,33 @@ ${scriptBody}
   Write-Output "ERROR:$($_.Exception.Message)"
 }`.trim();
 
-  try {
-    // cmd.exeを介さず固定実行ファイルへ引数配列で渡す。EncodedCommandにより、
-    // 接続文字列やSQL中の記号がコマンドラインとして再解釈されない。
-    const encodedCommand = Buffer.from(ps, 'utf16le').toString('base64');
-    const out = execFileSync(
+  // cmd.exeを介さず固定実行ファイルへ引数配列で渡す。EncodedCommandにより、
+  // 接続文字列やSQL中の記号がコマンドラインとして再解釈されない。
+  const encodedCommand = Buffer.from(ps, 'utf16le').toString('base64');
+  const timeout = Math.min(Math.max(Number(timeoutMs) || 15000, 1000), 60000);
+  return new Promise(resolve => {
+    execFile(
       POWERSHELL_EXE,
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
-      {
-        encoding: 'utf8',
-        timeout: Math.min(Math.max(Number(timeoutMs) || 15000, 1000), 60000),
-        maxBuffer: 5 * 1024 * 1024,
-        windowsHide: true,
+      { encoding: 'utf8', timeout, maxBuffer: 5 * 1024 * 1024, windowsHide: true },
+      (error, stdout) => {
+        const out = String(stdout || '').trim();
+        if (error && (error.killed || error.signal === 'SIGTERM' || error.code === 'ETIMEDOUT')) {
+          resolve({ success: false, error: `処理がタイムアウトしました（${Math.round(timeout / 1000)}秒）。データベースの応答が遅いか、ネットワーク/権限の問題が考えられます。` });
+          return;
+        }
+        if (error) {
+          resolve({ success: false, error: sanitizeOdbcError(error.message, connectionString) });
+          return;
+        }
+        if (!out || out.startsWith('ERROR:')) {
+          resolve({ success: false, error: sanitizeOdbcError(out ? out.slice(6) : '接続に失敗しました', connectionString) });
+          return;
+        }
+        resolve({ success: true, output: out });
       }
-    ).trim();
-    if (!out || out.startsWith('ERROR:')) {
-      return { success: false, error: out ? out.slice(6) : '接続に失敗しました' };
-    }
-    return { success: true, output: out };
-  } catch (e) {
-    if (e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {
-      return {
-        success: false,
-        error: `処理がタイムアウトしました（${Math.round(timeoutMs / 1000)}秒）。データベースの応答が遅いか、ネットワーク/権限の問題が考えられます。`
-      };
-    }
-    return { success: false, error: e.message };
-  }
+    );
+  });
 }
 
 async function getOdbcTablesOnParent({ connectionString }) {
@@ -2046,7 +2283,7 @@ async function getOdbcTablesOnParent({ connectionString }) {
     return { success: false, error: connResult.message, tables: [] };
   }
 
-  const result = execOdbcPowerShell(connResult.connectionString, `
+  const result = await execOdbcPowerShell(connResult.connectionString, `
   $schema = $conn.GetSchema('Tables')
   $items = @($schema | Where-Object { $_.TABLE_TYPE -in @('TABLE','VIEW','SYSTEM TABLE') } |
     Select-Object @{N='name';E={$_.TABLE_NAME}}, @{N='type';E={$_.TABLE_TYPE}} |
@@ -2128,7 +2365,7 @@ async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。例: DSN=EMR_DB;UID=admin;PWD=pass;' };
   }
 
-  const result = execOdbcPowerShell(finalConnStr, "  Write-Output 'OK'", 15000);
+  const result = await execOdbcPowerShell(finalConnStr, "  Write-Output 'OK'", 15000);
   if (!result.success) {
     return { success: false, message: 'ODBCデータベース接続テストに失敗しました: ' + result.error };
   }
@@ -2193,7 +2430,7 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
   }
 
-  const result = execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, null), 30000);
+  const result = await execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, null), 30000);
   if (!result.success) {
     return { success: false, message: 'ODBC同期に失敗しました: ' + result.error };
   }
@@ -2234,7 +2471,7 @@ async function previewOdbcQueryOnParent({ connectionString, sqlQuery } = {}) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
   }
 
-  const result = execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, 15), 20000);
+  const result = await execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, 15), 20000);
   if (!result.success) {
     return { success: false, message: 'プレビューの取得に失敗しました: ' + result.error };
   }
@@ -2287,88 +2524,9 @@ handleTrusted('reset-database', () => {
   return { success: true };
 });
 
-// WebRTCシグナリング処理関数
+// WebRTCシグナリング処理は、入力検証とキュー上限を含む専用サービスへ委譲する。
 function processWebrtcRequest(method, urlPath, bodyStr) {
-  const cleanUrl = urlPath.replace(/^\//, '');
-  const [pathname, search] = cleanUrl.split('?');
-  const action = pathname.replace(/^webrtc\//, ''); // 'send' や 'poll'
-  const searchParams = new URLSearchParams(search || '');
-
-  // ブロードキャスト型（offer/speech/answered）: 全端末受信・消費しない
-  // ユニキャスト型（answer/ice/hangup/busy）: 1台受信・消費する
-  const BROADCAST_TYPES = new Set(['offer', 'speech', 'answered']);
-
-  if (action === 'send') {
-    if (method !== 'POST') return { success: false, message: 'Method Not Allowed' };
-    try {
-      const msg = JSON.parse(bodyStr);
-      const to = msg.to;
-      const from = msg.from;
-      if (!isSafeSignalingId(to)) return { success: false, message: 'Missing or invalid "to" field' };
-      if (from !== undefined && !isSafeSignalingId(from)) return { success: false, message: 'Invalid "from" field' };
-
-      const msgId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const entry = { msg: { ...msg, msgId }, timestamp: Date.now(), ackedBy: Object.create(null) };
-
-      if (BROADCAST_TYPES.has(msg.type)) {
-        // ブロードキャストキュー（消費しない）
-        if (!webrtcSignalingQueue[`bc:${to}`]) webrtcSignalingQueue[`bc:${to}`] = [];
-        const MAX_BC = 100;
-        if (webrtcSignalingQueue[`bc:${to}`].length >= MAX_BC) {
-          webrtcSignalingQueue[`bc:${to}`].shift();
-        }
-        webrtcSignalingQueue[`bc:${to}`].push(entry);
-      } else {
-        // ユニキャストキュー（消費する）
-        if (!webrtcSignalingQueue[to]) webrtcSignalingQueue[to] = [];
-        const MAX_UC = 50;
-        if (webrtcSignalingQueue[to].length >= MAX_UC) {
-          webrtcSignalingQueue[to].shift();
-        }
-        webrtcSignalingQueue[to].push(entry);
-      }
-      console.log(`[WebRTC Signaling] Sent ${msg.type} from ${msg.from} to ${to}`);
-      return { success: true };
-    } catch (e) {
-      return { success: false, message: e.message };
-    }
-  }
-
-  if (action === 'poll') {
-    if (method !== 'GET') return { success: false, message: 'Method Not Allowed' };
-    const id = searchParams.get('id');
-    const client = searchParams.get('client') || id;
-    if (!isSafeSignalingId(id)) return { success: false, message: 'Missing or invalid "id" parameter' };
-    if (!isSafeSignalingId(client)) return { success: false, message: 'Missing or invalid "client" parameter' };
-
-    const now = Date.now();
-    const EXPIRATION_MS = 30000;
-
-    // ブロードキャストキュー：期限切れ除去のみ（消費しない）
-    const bcKey = `bc:${id}`;
-    if (webrtcSignalingQueue[bcKey]) {
-      webrtcSignalingQueue[bcKey] = webrtcSignalingQueue[bcKey].filter(
-        item => (now - item.timestamp) < EXPIRATION_MS
-      );
-    }
-    const bcItems = (webrtcSignalingQueue[bcKey] || []).filter(item => {
-      if (!item.ackedBy) item.ackedBy = Object.create(null);
-      return !item.ackedBy[client];
-    });
-    bcItems.forEach(item => { item.ackedBy[client] = now; });
-    const bcMessages = bcItems.map(item => item.msg);
-
-    // ユニキャストキュー：取得して消費する
-    const ucItems = webrtcSignalingQueue[id] || [];
-    webrtcSignalingQueue[id] = [];
-    const ucMessages = ucItems
-      .filter(item => (now - item.timestamp) < EXPIRATION_MS)
-      .map(item => item.msg);
-
-    return { success: true, messages: [...bcMessages, ...ucMessages] };
-  }
-  
-  return { success: false, message: 'Not Found' };
+  return webrtcSignaling.handle(method, urlPath, bodyStr);
 }
 
 const ALLOWED_TABLES = new Set([
@@ -2447,11 +2605,12 @@ const ACTIVE_TRANSFER_STATUSES = new Set([
   'PICKUP_REQUIRED',
 ]);
 const HIDEABLE_TRANSFER_STATUSES = new Set(['ARRIVED', 'NEARLY_DONE']);
+const WARD_ACKNOWLEDGEMENT_STATUSES = new Set(['ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED']);
 const WARD_STATUS_ACTIONS = {
   DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
   MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
   ARRIVED: ['IN_EXAM', 'CANCELLED'],
-  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'CANCELLED'],
+  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED', 'CANCELLED'],
   NEARLY_DONE: ['PICKUP_REQUIRED', 'CANCELLED'],
   PICKUP_REQUIRED: ['RETURNED', 'CANCELLED'],
   RETURNED: [],
@@ -2732,7 +2891,14 @@ function sanitizeStatusExtraFields(extraFields) {
 
 function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirectExamStart) {
   const bed = (db.beds || []).find(b => b.id === event.bed_id);
-  const bedName = bed ? `${bed.bed_number}号床` : '患者';
+  // Windowsの日本語音声では「床」を「とこ」と読む場合があるため、
+  // 画面表記とは分けて、読み上げ文では明瞭な「号室」を使用する。
+  const spokenRoomName = bed
+    ? String(bed.bed_number || bed.room_number || '').trim()
+    : '';
+  const bedName = spokenRoomName
+    ? (/(?:号室|個室)$/.test(spokenRoomName) ? spokenRoomName : `${spokenRoomName}号室`)
+    : '患者';
   const includePatientName = String((db.system_settings || []).find(s => s.id === 'speech_include_patient_name')?.value || 'false') === 'true';
   const patientName = String(event.patient_name || bed?.patient_name || '').trim();
   const patientPrefix = includePatientName && patientName ? `${patientName}さん、` : '';
@@ -2746,6 +2912,7 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
       from: event.ward_id,
       to: event.exam_room_id,
       type: 'speech',
+      automatic: true,
       text: `${patientPrefix}${wardName}から、${bedName}が、${roomName}へ移動を開始しました。`,
     };
   }
@@ -2754,6 +2921,7 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
       from: event.exam_room_id,
       to: event.ward_id,
       type: 'speech',
+      automatic: true,
       text: `${patientPrefix}${roomName}に、${bedName}が到着しました。`,
     };
   }
@@ -2762,6 +2930,7 @@ function createStatusSpeechMessage(db, event, newStatus, filledArrivedAtForDirec
       from: event.exam_room_id,
       to: event.ward_id,
       type: 'speech',
+      automatic: true,
       text: `${patientPrefix}${roomName}から、${bedName}のお迎え要請です。`,
     };
   }
@@ -3087,6 +3256,60 @@ function processStatusNoteRequest(method, bodyStr, isExternal = false, apiToken 
   return { success: true };
 }
 
+function processStatusAcknowledgeRequest(method, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
+  if (method !== 'POST') {
+    return { success: false, message: 'Method Not Allowed' };
+  }
+  if (isExternal && !isValidApiToken(apiToken)) {
+    return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+
+  let payload;
+  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+    return { success: false, message: 'リクエストボディのJSONが不正です' };
+  }
+  const logId = String(payload.logId || '').trim().slice(0, 160);
+  const wardId = String(payload.wardId || '').trim().slice(0, 160);
+  if (!logId || !wardId) {
+    return { success: false, message: 'logId and wardId are required' };
+  }
+
+  const db = readDB();
+  const log = (db.transfer_status_logs || []).find(item => String(item.id) === logId);
+  if (!log) return { success: false, message: '通知履歴が見つかりません' };
+
+  const event = (db.transfer_events || []).find(item => String(item.id) === String(log.transfer_event_id));
+  if (!event || String(event.ward_id || '') !== wardId) {
+    return { success: false, message: 'この病棟では確認できない通知です' };
+  }
+  if (!WARD_ACKNOWLEDGEMENT_STATUSES.has(log.to_status) || log.from_status === log.to_status) {
+    return { success: false, message: '確認対象ではない通知です' };
+  }
+  if (log.acknowledged_at) {
+    return { success: true, idempotent: true, log };
+  }
+
+  const ward = (db.wards || []).find(item => String(item.id) === wardId);
+  log.acknowledged_at = Date.now();
+  log.acknowledged_by_ward_id = wardId;
+  log.acknowledged_by = String(ward?.name || '病棟').slice(0, 120);
+  appendAuditLog(db, 'STATUS_NOTIFICATION_ACKNOWLEDGED', {
+    targetType: 'transfer_status_logs',
+    targetId: log.id,
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    remoteIp: requestMeta.remoteIp || '',
+    details: {
+      transferEventId: event.id,
+      status: log.to_status,
+      wardId,
+    },
+  });
+  if (!writeDB(db)) {
+    throw new Error('確認状態の保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+  return { success: true, idempotent: false, log };
+}
+
 function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {}) {
   const bulkTables = new Set(['wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs']);
   if (!bulkTables.has(table)) {
@@ -3291,7 +3514,79 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         if (ACTIVE_TRANSFER_STATUSES.has(e.current_status)) return true;
         return Number.isFinite(todayMs) && todayMs > 0 && e.departed_at != null && e.departed_at >= todayMs;
       });
-      return { success: true, activeEvents, todayEvents };
+      const scopedEventById = new Map(scoped.map(event => [String(event.id), event]));
+      const recentStatusLogs = (db.transfer_status_logs || [])
+        .filter(log => {
+          const event = scopedEventById.get(String(log.transfer_event_id));
+          const changedToday = !Number.isFinite(todayMs) || todayMs <= 0 || Number(log.changed_at || 0) >= todayMs;
+          const isCurrentActiveStatus = event &&
+            ACTIVE_TRANSFER_STATUSES.has(event.current_status) &&
+            log.to_status === event.current_status;
+          return event && log.from_status !== log.to_status && (changedToday || isCurrentActiveStatus);
+        })
+        .sort((a, b) => Number(b.changed_at || 0) - Number(a.changed_at || 0))
+        .slice(0, 20)
+        .map(log => {
+          const event = scopedEventById.get(String(log.transfer_event_id));
+          return {
+            ...log,
+            bed_id: event?.bed_id || null,
+            exam_room_id: event?.exam_room_id || null,
+            patient_name: event?.patient_name || null,
+          };
+        });
+      return { success: true, activeEvents, todayEvents, recentStatusLogs };
+    }
+
+    if (table === 'transfer_events' && id === 'exam-room-status') {
+      const examRoomId = String(searchParams.get('exam_room_id') || '');
+      const todayMs = Number(searchParams.get('today_ms') || 0);
+      const scopedEvents = list.filter(event => String(event.exam_room_id || '') === examRoomId);
+      const activeEvents = scopedEvents.filter(event => ACTIVE_TRANSFER_STATUSES.has(event.current_status));
+      const scopedEventById = new Map(scopedEvents.map(event => [String(event.id), event]));
+      const eventById = new Map(activeEvents.map(event => [String(event.id), event]));
+      const latestLogByEventId = new Map();
+      const sortedLogs = [...(db.transfer_status_logs || [])]
+        .sort((a, b) => Number(b.changed_at || 0) - Number(a.changed_at || 0));
+      sortedLogs.forEach(log => {
+          const key = String(log.transfer_event_id);
+          const event = eventById.get(key);
+          if (
+            event &&
+            !latestLogByEventId.has(key) &&
+            log.from_status !== log.to_status &&
+            log.to_status === event.current_status
+          ) {
+            latestLogByEventId.set(key, log);
+          }
+        });
+      const recentStatusLogs = sortedLogs
+        .filter(log => {
+          const event = scopedEventById.get(String(log.transfer_event_id));
+          const changedToday = !Number.isFinite(todayMs) || todayMs <= 0 || Number(log.changed_at || 0) >= todayMs;
+          const isCurrentActiveStatus = event &&
+            ACTIVE_TRANSFER_STATUSES.has(event.current_status) &&
+            log.to_status === event.current_status;
+          return event && log.from_status !== log.to_status && (changedToday || isCurrentActiveStatus);
+        })
+        .slice(0, 20)
+        .map(log => {
+          const event = scopedEventById.get(String(log.transfer_event_id));
+          return {
+            ...log,
+            bed_id: event?.bed_id || null,
+            ward_id: event?.ward_id || null,
+            patient_name: event?.patient_name || null,
+          };
+        });
+      return {
+        success: true,
+        data: activeEvents.map(event => ({
+          ...event,
+          latest_status_log: latestLogByEventId.get(String(event.id)) || null,
+        })),
+        recentStatusLogs,
+      };
     }
 
     if (id) {
@@ -3469,6 +3764,12 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       list.splice(0, list.length - 500);
       console.log(`[DB Cleaner] Trimmed calls to 500 entries.`);
     }
+    if (table === 'handover_notes') {
+      const removedNotes = pruneHandoverNotes(db);
+      if (removedNotes > 0) {
+        console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
+      }
+    }
 
     appendAuditLog(db, index !== -1 ? 'DB_UPDATE' : 'DB_CREATE', {
       targetType: table,
@@ -3572,6 +3873,12 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       if (table === 'beds') {
         pruneBedOccupancyLogFromDb(db, bulkOccupancyNow);
       }
+      if (table === 'handover_notes') {
+        const removedNotes = pruneHandoverNotes(db);
+        if (removedNotes > 0) {
+          console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
+        }
+      }
       appendAuditLog(db, 'DB_BULK_UPDATE', {
         targetType: table,
         targetId: 'bulk',
@@ -3646,6 +3953,12 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       const occupancyNow = Date.now();
       applyBedOccupancyTransition(db.bed_occupancy_log, id, list[index].ward_id, beforeItem, list[index], data, occupancyNow, occupancySource);
       pruneBedOccupancyLogFromDb(db, occupancyNow);
+    }
+    if (table === 'handover_notes') {
+      const removedNotes = pruneHandoverNotes(db);
+      if (removedNotes > 0) {
+        console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
+      }
     }
     appendAuditLog(db, 'DB_UPDATE', {
       targetType: table,
@@ -3724,6 +4037,9 @@ handleTrusted('db-request', async (event, { url, options }) => {
   }
   if (url === 'status/note') {
     return processStatusNoteRequest(method, options.body || '', false);
+  }
+  if (url === 'status/ack') {
+    return processStatusAcknowledgeRequest(method, options.body || '', false);
   }
   if (url === 'transfer/start') {
     return processTransferStartRequest(method, options.body || '', false);
@@ -3965,25 +4281,25 @@ handleTrusted('select-folder', async () => {
     properties: ['openDirectory'],
     title: '監視フォルダを選択',
   });
-  return canceled ? null : filePaths[0];
+  if (canceled || !filePaths[0]) return null;
+  const selected = filePaths[0];
+  approvedCsvHeaderFolders.add(normalizeLocalFolderPath(selected));
+  return selected;
 });
 
 // CSVのヘッダ行を読み取る（スケジュール取り込みの列マッピング補助用）
-handleTrusted('read-csv-headers', async (event, folderPath) => {
-  try {
-    const files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.csv'));
-    if (files.length === 0) return { ok: false, reason: 'no_csv' };
-    const firstFile = path.join(folderPath, files[0]);
-    assertCsvFileSize(firstFile);
-    const content = fs.readFileSync(firstFile, 'utf-8');
-    const firstLine = content.split(/\r?\n/)[0] || '';
-    // カンマ区切りとタブ区切りを自動判定
-    const sep = firstLine.includes('\t') ? '\t' : ',';
-    const headers = firstLine.split(sep).map(h => h.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
-    return { ok: true, headers, filename: files[0] };
-  } catch (e) {
-    return { ok: false, reason: e.message };
+handleTrusted('read-csv-headers', async (event, request) => {
+  const folderPath = typeof request === 'string' ? request : request?.folderPath;
+  const encoding = typeof request === 'string' ? 'auto' : request?.encoding;
+  if (!isApprovedCsvHeaderFolder(folderPath)) {
+    return {
+      success: false,
+      ok: false,
+      reason: 'not_approved',
+      message: 'フォルダを選択ダイアログで選ぶか、スケジュール設定を保存してから読み込んでください。',
+    };
   }
+  return readScheduleCsvHeaders(folderPath, encoding);
 });
 
 // 開発/本番モード判定 (インフラ #4: 環境分離)
@@ -4727,6 +5043,7 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
     safeWriteFile(DB_FILE, encryptDbFileContent(plaintextJson));
     // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
     dbCache = null;
+    dbCacheSignature = null;
     {
       const db = readDB();
       appendAuditLog(db, 'BACKUP_RESTORE', {
@@ -4865,11 +5182,13 @@ handleTrusted('export-diagnostics-bundle', async () => {
 });
 
 // IPC通信でDBファイル暗号化（safeStorage）の可用性を返す（セキュリティ B-3: 平文フォールバック時の警告表示用）
-handleTrusted('get-encryption-status', () => {
-  const available = !!(safeStorage && safeStorage.isEncryptionAvailable());
-  let dbIsEncrypted = false;
-  try {
-    if (fs.existsSync(DB_FILE)) {
+  handleTrusted('get-encryption-status', () => {
+    const available = !!(safeStorage && safeStorage.isEncryptionAvailable());
+    let dbIsEncrypted = false;
+    let dbExists = false;
+    try {
+      dbExists = fs.existsSync(DB_FILE);
+      if (dbExists) {
       const head = Buffer.alloc(DB_ENCRYPTION_PREFIX.length);
       const fd = fs.openSync(DB_FILE, 'r');
       fs.readSync(fd, head, 0, head.length, 0);
@@ -4877,8 +5196,8 @@ handleTrusted('get-encryption-status', () => {
       dbIsEncrypted = head.toString('utf8') === DB_ENCRYPTION_PREFIX;
     }
   } catch {}
-  return { available, dbIsEncrypted };
-});
+    return { available, dbIsEncrypted, dbExists };
+  });
 
 // IPC通信でデータベースの保存先設定を変更する
 handleTrusted('change-database-storage-mode', async (event, mode) => {
@@ -5213,6 +5532,13 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
         'show_sync_time',
         'show_import_time',
       ]);
+      const hasImportDirectory = Object.prototype.hasOwnProperty.call(settings, 'import_directory');
+      // DBへ書き込む前に監視先を検証し、設定だけ保存されて監視が壊れる状態を防ぐ。
+      let watchValidation = null;
+      if (hasImportDirectory) {
+        watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''));
+        if (!watchValidation.success) return watchValidation;
+      }
       const db = readDB();
       db.system_settings = db.system_settings || [];
       for (const [id, value] of Object.entries(settings)) {
@@ -5229,8 +5555,13 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
         after: { settingIds: Object.keys(settings).filter(id => allowed.has(id)) },
         details: { action },
       });
-      writeDB(db);
-      updateWatchDirectoryOnParent(settings.import_directory || '');
+      if (!writeDB(db)) {
+        return { success: false, message: '連携設定を保存できませんでした。' };
+      }
+      if (hasImportDirectory && watchValidation) {
+        setupImportTrigger();
+        setupScheduleFeedTriggers();
+      }
       return { success: true };
     }
     case 'manual-import':
@@ -5249,6 +5580,18 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
       return appendParentActionAudit(action, await runOdbcSyncOnParent(payload), requestMeta);
     case 'schedule-feed-import':
       return appendParentActionAudit(action, await triggerScheduleFeedImportOnParent(payload.feedId), requestMeta);
+    case 'schedule-feed-headers': {
+      const requestedFolder = String(payload.folderPath || '').trim();
+      const configuredFolders = (readDB().schedule_feeds || [])
+        .map(feed => String(feed.watch_dir || '').trim())
+        .filter(Boolean)
+        .map(folder => path.resolve(folder).toLowerCase());
+      const requestedResolved = requestedFolder ? path.resolve(requestedFolder).toLowerCase() : '';
+      const result = configuredFolders.includes(requestedResolved)
+        ? readScheduleCsvHeaders(requestedFolder, payload.encoding)
+        : { success: false, ok: false, reason: 'not_configured', message: '子機では監視フォルダを保存してからヘッダを読み込んでください。' };
+      return appendParentActionAudit(action, result, requestMeta);
+    }
     case 'reload-schedule-feed-triggers':
       return appendParentActionAudit(action, reloadScheduleFeedTriggersOnParent(), requestMeta);
     default:
@@ -5360,7 +5703,7 @@ function startParentServer() {
     }
 
     // リクエストボディの受信
-    let body = '';
+    const bodyChunks = [];
     let bodyBytes = 0;
     let bodyTooLarge = false;
     req.on('data', chunk => {
@@ -5372,10 +5715,12 @@ function startParentServer() {
         req.destroy();
         return;
       }
-      body += chunk;
+      bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
     req.on('end', async () => {
       if (bodyTooLarge) return;
+      // Nodeのdataイベント境界はUTF-8文字境界を保証しないため、Bufferで結合してから一度だけ復号する。
+      const body = Buffer.concat(bodyChunks).toString('utf8');
       try {
         let result;
         const remoteIp = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
@@ -5400,6 +5745,10 @@ function startParentServer() {
           result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token']);
         } else if (cleanUrl === 'status/note') {
           result = processStatusNoteRequest(req.method, body, true, req.headers['x-api-token']);
+        } else if (cleanUrl === 'status/ack') {
+          result = processStatusAcknowledgeRequest(req.method, body, true, req.headers['x-api-token'], {
+            remoteIp,
+          });
         } else if (cleanUrl === 'transfer/start') {
           result = await processTransferStartRequest(req.method, body, true, req.headers['x-api-token'], {
             remoteIp,
@@ -5557,7 +5906,12 @@ app.whenReady().then(() => {
 } // end of gotTheLock else block
 
 app.on('window-all-closed', () => {
-  const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+  let shareMode = 'client';
+  try {
+    shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+  } catch (err) {
+    console.error('[App] 終了時の設定読み込みに失敗しました:', err);
+  }
   if (shareMode === 'parent') return;
   if (process.platform !== 'darwin') app.quit();
 });

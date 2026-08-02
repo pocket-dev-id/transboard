@@ -5,6 +5,8 @@
 const ExamRoom = {
 
   _pendingFlashEventId: null,
+  _wardAcknowledgementState: new Map(),
+  _notificationHistoryLogs: [],
 
   async render() {
     // 検査室セレクト初期化
@@ -180,7 +182,7 @@ const ExamRoom = {
       }
 
       const bed = AppState.getBedById(matchEvent.bed_id);
-      const bedName = bed ? `${UI.formatBedNamePlain(bed)}号床` : '患者';
+      const bedName = bed ? UI.formatExamBedLocationPlain(bed) : '患者';
       const action = actions.length === 1
         ? actions[0]
         : await this._selectScanAction(matchEvent, bedName, currentLabel, actions);
@@ -300,6 +302,8 @@ const ExamRoom = {
   async _renderQueue() {
     const container = document.getElementById('exam-room-queue');
     const summaryContainer = document.getElementById('exam-room-summary-container');
+    const historyArea = document.getElementById('exam-notification-history-area');
+    const historyList = document.getElementById('exam-notification-history-list');
     if (!container) return;
 
     const roomId = document.getElementById('exam-room-select')?.value;
@@ -308,6 +312,8 @@ const ExamRoom = {
     this._updateBackButton(!!roomId);
 
     if (!roomId) {
+      if (historyArea) historyArea.hidden = true;
+      if (historyList) historyList.innerHTML = '';
       container.classList.remove('exam-queue-list-mode');
       if (summaryContainer) summaryContainer.innerHTML = '';
       container.innerHTML = this._renderRoomGrid();
@@ -326,10 +332,14 @@ const ExamRoom = {
     }
 
     container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
+    if (historyArea) historyArea.hidden = false;
+    if (historyList) historyList.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
 
     try {
-      const events = await API.getEventsForExamRoom(roomId);
+      const { events, recentStatusLogs } = await API.getExamRoomStatus(roomId);
       const relevant = events.filter(e => CONFIG.ACTIVE_STATUSES.includes(e.current_status));
+      this._notifyWardAcknowledgementChanges(relevant);
+      this._renderNotificationHistory(recentStatusLogs);
 
       // 患者名表示のクラスを設定 (CSS側のフォールバック用)
       const nameChk = document.getElementById('chk-exam-show-patient-names');
@@ -538,6 +548,9 @@ const ExamRoom = {
     } catch (e) {
       console.error(e);
       container.innerHTML = '<div class="empty-state"><p>読み込みに失敗しました</p></div>';
+      if (historyList) {
+        historyList.innerHTML = '<div class="empty-state"><p>通知履歴を取得できませんでした</p></div>';
+      }
     }
   },
 
@@ -587,12 +600,13 @@ const ExamRoom = {
     if (event.patient_ic_tag_id) {
       icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; vertical-align:middle; margin-left:6px;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
+    const wardAckHtml = this._renderWardAcknowledgement(event);
 
     return `
       <div class="exam-queue-card status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
         <div class="exam-card-header" style="display:flex; justify-content:space-between; align-items:center;">
           <div style="display:flex; flex-direction:column; gap:2px;">
-            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatBedNamePlain(bed)) + '号床' : '?'} ${icHtml}</span>
+            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatExamBedLocationPlain(bed)) : '?'} ${icHtml}</span>
             ${patientNameText ? `
               <div class="exam-patient-name" style="font-weight:700; font-size:12px; color:#1e293b; display:block; position:relative; min-height:16px;">${patientNameText}</div>
               <div class="exam-patient-name" style="font-size:10px; color:#64748b; display:block; position:relative; min-height:12px; margin-top:2px;">${patientIdText}</div>
@@ -600,10 +614,11 @@ const ExamRoom = {
           </div>
           ${UI.statusBadge(event.current_status)}
         </div>
+        ${wardAckHtml}
         <div class="exam-card-info">
           <div class="exam-card-info-row">
             <span class="label">検査種別</span>
-            <span>${examType ? UI.escapeHTML(examType.name) : '--'}</span>
+            <span>${examType ? `${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.name)}` : '--'}</span>
           </div>
           <div class="exam-card-info-row">
             <span class="label">出棟時刻</span>
@@ -657,6 +672,108 @@ const ExamRoom = {
     }).join('');
   },
 
+  _renderWardAcknowledgement(event, { compact = false } = {}) {
+    if (!CONFIG.WARD_ACK_STATUSES.includes(event.current_status)) return '';
+    const log = event.latest_status_log;
+    if (log?.acknowledged_at) {
+      const wardName = log.acknowledged_by || AppState.wards.find(ward => ward.id === event.ward_id)?.name || '病棟';
+      return `<span class="exam-ward-ack is-acknowledged${compact ? ' is-compact' : ''}">
+        <i class="fas fa-check-circle"></i> ${UI.escapeHTML(wardName)}確認済 ${UI.escapeHTML(UI.formatTime(log.acknowledged_at))}
+      </span>`;
+    }
+    return `<span class="exam-ward-ack is-pending${compact ? ' is-compact' : ''}">
+      <i class="fas fa-hourglass-half"></i> 病棟確認待ち
+    </span>`;
+  },
+
+  _notifyWardAcknowledgementChanges(events) {
+    const activeLogIds = new Set();
+    events.forEach(event => {
+      if (!CONFIG.WARD_ACK_STATUSES.includes(event.current_status)) return;
+      const log = event.latest_status_log;
+      if (!log?.id) return;
+      const logId = String(log.id);
+      const acknowledged = !!log.acknowledged_at;
+      const previous = this._wardAcknowledgementState.get(logId);
+      activeLogIds.add(logId);
+      this._wardAcknowledgementState.set(logId, acknowledged);
+      if (previous === false && acknowledged) {
+        const bed = AppState.getBedById(event.bed_id);
+        const bedName = bed ? UI.formatExamBedLocationPlain(bed) : '患者';
+        const wardName = log.acknowledged_by || AppState.wards.find(ward => ward.id === event.ward_id)?.name || '病棟';
+        UI.toast(`${wardName}が${bedName}の通知を確認しました`, 'success', 5000);
+      }
+    });
+    [...this._wardAcknowledgementState.keys()].forEach(logId => {
+      if (!activeLogIds.has(logId)) this._wardAcknowledgementState.delete(logId);
+    });
+  },
+
+  _renderNotificationHistory(logs) {
+    const list = document.getElementById('exam-notification-history-list');
+    if (!list) return;
+    if (Array.isArray(logs)) this._notificationHistoryLogs = logs;
+
+    const unconfirmedOnly = document.getElementById('exam-notification-history-unconfirmed-only');
+    if (unconfirmedOnly && !unconfirmedOnly.dataset.listenerBound) {
+      unconfirmedOnly.checked = localStorage.getItem('cfg_exam_notification_history_unconfirmed_only') === 'true';
+      unconfirmedOnly.dataset.listenerBound = 'true';
+      unconfirmedOnly.addEventListener('change', () => {
+        localStorage.setItem('cfg_exam_notification_history_unconfirmed_only', unconfirmedOnly.checked ? 'true' : 'false');
+        this._renderNotificationHistory();
+      });
+    }
+
+    const items = this._notificationHistoryLogs
+      .filter(log => !unconfirmedOnly?.checked || (
+        CONFIG.WARD_ACK_STATUSES.includes(String(log.to_status || '')) && !log.acknowledged_at
+      ))
+      .slice(0, 20);
+    if (items.length === 0) {
+      const emptyLabel = unconfirmedOnly?.checked ? '未確認の通知はありません' : '通知履歴はありません';
+      list.innerHTML = `<div class="empty-state"><i class="fas fa-bell-slash"></i><p>${emptyLabel}</p></div>`;
+      return;
+    }
+
+    const showPatientNames = document.getElementById('chk-exam-show-patient-names')?.checked === true;
+    list.innerHTML = items.map(log => {
+      const bed = AppState.getBedById(log.bed_id);
+      const ward = AppState.wards.find(item => String(item.id) === String(log.ward_id));
+      const status = String(log.to_status || '');
+      const statusLabel = CONFIG.STATUS_LABEL[status] || status || '状態変更';
+      const statusIcon = CONFIG.STATUS_ICON[status] || 'fa-info-circle';
+      const patientName = String(log.patient_name || bed?.patient_name || '').trim();
+      const patientLabel = patientName ? (showPatientNames ? patientName : '＊＊＊＊') : '';
+      const detailLabel = [patientLabel, ward?.name || ''].filter(Boolean).join(' / ');
+      const changedDate = new Date(Number(log.changed_at || 0));
+      const nowDate = new Date();
+      const isToday = changedDate.getFullYear() === nowDate.getFullYear() &&
+        changedDate.getMonth() === nowDate.getMonth() &&
+        changedDate.getDate() === nowDate.getDate();
+      const timeLabel = isToday
+        ? UI.formatTime(log.changed_at)
+        : `${changedDate.getMonth() + 1}/${changedDate.getDate()} ${UI.formatTime(log.changed_at)}`;
+      const needsWardAck = CONFIG.WARD_ACK_STATUSES.includes(status);
+      const ackHtml = !needsWardAck ? '' : log.acknowledged_at
+        ? `<span class="notification-history-ack is-acknowledged"><i class="fas fa-check-circle"></i> ${UI.escapeHTML(log.acknowledged_by || ward?.name || '病棟')}確認済 ${UI.escapeHTML(UI.formatTime(log.acknowledged_at))}</span>`
+        : '<span class="notification-history-ack is-pending"><i class="fas fa-hourglass-half"></i> 病棟確認待ち</span>';
+
+      return `
+        <div class="notification-history-item status-${UI.escapeHTML(status)}">
+          <time>${UI.escapeHTML(timeLabel)}</time>
+          <span class="notification-history-icon"><i class="fas ${UI.escapeHTML(statusIcon)}"></i></span>
+          <div class="notification-history-open">
+            <span class="notification-history-main">
+              <strong>${bed ? UI.escapeHTML(UI.formatBedNamePlain(bed)) + '号床' : '病床不明'}</strong>
+              <small>${UI.escapeHTML(detailLabel)}</small>
+            </span>
+            <span class="notification-history-status">${UI.escapeHTML(statusLabel)}</span>
+          </div>
+          ${ackHtml ? `<span class="notification-history-ack-row">${ackHtml}</span>` : ''}
+        </div>`;
+    }).join('');
+  },
+
   _getViewMode() {
     return localStorage.getItem('tbs_exam_queue_view') === 'list' ? 'list' : 'card';
   },
@@ -699,10 +816,10 @@ const ExamRoom = {
         : '--';
       return `
         <div class="exam-queue-row status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
-          <div class="eqr-cell eqr-bed">${bed ? UI.escapeHTML(UI.formatBedNamePlain(bed)) + '号床' : '?'}</div>
+          <div class="eqr-cell eqr-bed">${bed ? UI.escapeHTML(UI.formatExamBedLocationPlain(bed)) : '?'}</div>
           <div class="eqr-cell" title="${UI.escapeHTML(patientName)}">${patientText}${event.patient_ic_tag_id ? ' <i class="fas fa-id-card" title="ICカード登録済"></i>' : ''}</div>
-          <div class="eqr-cell">${UI.statusBadge(event.current_status)}</div>
-          <div class="eqr-cell">${examType ? UI.escapeHTML(examType.name) : '--'}</div>
+          <div class="eqr-cell eqr-status-cell">${UI.statusBadge(event.current_status)}${this._renderWardAcknowledgement(event, { compact: true })}</div>
+          <div class="eqr-cell">${examType ? `${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.name)}` : '--'}</div>
           <div class="eqr-cell">${UI.formatTime(event.departed_at)}</div>
           <div class="eqr-cell">${UI.formatTime(event.exam_started_at)}</div>
           <div class="eqr-cell eqr-elapsed ${elapsedOver ? 'text-danger' : ''}">${elapsedMin === null ? '--' : `${elapsedMin}分`}</div>
@@ -812,13 +929,11 @@ const ExamRoom = {
       const pillsHtml = pills.length
         ? `<div class="examroom-card-pills">${pills.join('')}</div>`
         : `<div class="examroom-card-empty-note">患者なし</div>`;
-      const roomIcon = UI.normalizeExamRoomIcon(room.icon);
-
       return `
         <div class="examroom-card ${urgentClass}" data-select-room="${room.id}" tabindex="0" role="button"
           aria-label="${UI.escapeHTML(room.name)} — 患者${total}名">
           <div class="examroom-card-header">
-            <div class="examroom-card-icon"><i class="fas ${UI.escapeHTML(roomIcon)}"></i></div>
+            <div class="examroom-card-icon">${UI.examImage(room, 'room')}</div>
             <div class="examroom-card-info">
               <div class="examroom-card-name">${UI.escapeHTML(room.name)}</div>
               <div class="examroom-card-floor">${UI.escapeHTML(room.floor || '')}</div>

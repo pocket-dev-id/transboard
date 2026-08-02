@@ -58,9 +58,6 @@
       <button id="btn-fullscreen" class="btn-icon" title="フルスクリーン切替">
         <i class="fas fa-expand"></i>
       </button>
-      <button id="btn-system-reset" class="btn-icon" title="システムリセット" style="background:rgba(220,38,38,.3);border-color:rgba(220,38,38,.5);">
-        <i class="fas fa-database"></i>
-      </button>
     </div>
   </header>
 
@@ -71,7 +68,7 @@
     <section id="page-ward-dashboard" class="page active">
 
       <!-- 最終更新・取り込み時間情報バー -->
-      <div id="sync-info-bar" style="display: flex; justify-content: space-between; font-size: 11px; color: #718096; margin-bottom: 8px; padding: 0 4px; flex-wrap: wrap; gap: 8px;">
+      <div id="sync-info-bar" style="display:flex;justify-content:space-between;min-height:16px;margin-bottom:4px;padding:0 2px;color:#718096;font-size:10px;gap:6px;flex-wrap:wrap;">
         <span id="sync-time-display" style="display: none;"><i class="fas fa-sync-alt"></i> 最終同期: --:--:--</span>
         <span id="import-time-display" style="display: none;"><i class="fas fa-file-import"></i> 最終取り込み: 未取得</span>
         <span id="device-presence-display" class="device-presence-chip muted"><i class="fas fa-network-wired"></i> 接続端末: 確認中</span>
@@ -138,7 +135,7 @@
             </div>
           </div>
           <!-- フィルターボタンバー -->
-          <div id="bed-map-filter-bar" style="display: flex; gap: 6px; margin-bottom: 12px; background: rgba(248, 250, 252, 0.8); padding: 6px; border-radius: 8px; border: 1px solid #e2e8f0; width: 100%; box-sizing: border-box; align-items: center; z-index: 10; position: relative;">
+          <div id="bed-map-filter-bar" style="display:flex;align-items:center;width:100%;margin-bottom:8px;padding:4px;box-sizing:border-box;gap:5px;background:rgba(248,250,252,.8);border:1px solid #e2e8f0;border-radius:6px;z-index:10;position:relative;">
             <span style="font-size: 11px; font-weight: 800; color: #64748b; margin-right: 6px; margin-left: 4px;"><i class="fas fa-filter"></i> 絞り込み:</span>
             <button class="btn btn-outline btn-sm filter-btn active" data-filter="all">すべて</button>
             <button class="btn btn-outline btn-sm filter-btn" data-filter="active_transfer">出棟中</button>
@@ -181,6 +178,21 @@
           </div>
           <div id="staff-status-panel"></div>
         </div>
+
+        <!-- 右下: 本日の状態通知履歴 -->
+        <div id="notification-history-area">
+          <div class="panel-header">
+            <h2><i class="fas fa-bell"></i> 通知履歴</h2>
+            <div class="notification-history-tools">
+              <label class="notification-history-filter">
+                <input type="checkbox" id="notification-history-unconfirmed-only">
+                未確認のみ
+              </label>
+              <span class="panel-sub">直近20件</span>
+            </div>
+          </div>
+          <div id="notification-history-list"></div>
+        </div>
       </div>
 
       <!-- 申し送りメモ板（シフト引き継ぎ・病棟単位で共有） -->
@@ -206,16 +218,6 @@
         <button id="handover-resolved-toggle" class="handover-resolved-toggle" style="display:none;"></button>
       </div>
 
-      <!-- 下部: タイムライン簡易 -->
-      <div id="mini-timeline-area">
-        <div class="panel-header">
-          <h2><i class="fas fa-stream"></i> タイムライン（本日）</h2>
-          <button class="btn btn-outline btn-sm" id="btn-goto-timeline" style="font-size:11px;padding:3px 10px;">
-            <i class="fas fa-external-link-alt"></i> タイムラインを開く
-          </button>
-        </div>
-        <div id="mini-timeline"></div>
-      </div>
     </section>
 
     <!-- ===== 検査室画面 ===== -->
@@ -239,7 +241,22 @@
         <div id="exam-device-presence" class="device-presence-chip muted"><i class="fas fa-network-wired"></i> 接続端末: 確認中</div>
       </div>
       <div id="exam-room-summary-container"></div>
-      <div id="exam-room-queue"></div>
+      <div id="exam-room-content">
+        <div id="exam-room-queue"></div>
+        <aside id="exam-notification-history-area" hidden>
+          <div class="panel-header">
+            <h2><i class="fas fa-bell"></i> 通知履歴</h2>
+            <div class="notification-history-tools">
+              <label class="notification-history-filter">
+                <input type="checkbox" id="exam-notification-history-unconfirmed-only">
+                未確認のみ
+              </label>
+              <span class="panel-sub">直近20件</span>
+            </div>
+          </div>
+          <div id="exam-notification-history-list"></div>
+        </aside>
+      </div>
     </section>
 
     <!-- ===== タイムライン画面 ===== -->

@@ -83,6 +83,8 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
                                                                          ↘ CANCELLED
 ```
 
+病棟画面では、患者がすでに帰棟している場合に限り `IN_EXAM → RETURNED` の直接完了も選択できます。
+
 `DEPART_REGISTERED` は旧データの読み取り互換用にのみ保持され、起動時に `MOVING` へ移行されます。
 
 ---
@@ -98,6 +100,9 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 | `changed_by` | string | 変更者識別子 |
 | `changed_at` | number | 変更日時（Unixms） |
 | `note` | string | 備考 |
+| `acknowledged_at` | number \| null | 病棟が通知を確認した日時（Unixms） |
+| `acknowledged_by_ward_id` | string \| null | 確認した病棟ID |
+| `acknowledged_by` | string \| null | 確認した病棟の表示名 |
 
 ---
 

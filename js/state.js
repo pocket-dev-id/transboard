@@ -37,6 +37,9 @@ const AppState = {
   // 状態ログ
   statusLogs: [],
 
+  // 病棟ダッシュボードの通知履歴（当日分＋継続中イベントの直近分）
+  recentStatusLogs: [],
+
   // 通話状態
   callState: {
     active: false,

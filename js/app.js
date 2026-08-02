@@ -9,7 +9,7 @@ const WardDashboard = {
     Priority.renderKpi();
     Priority.renderPriorityList();
     if (typeof StaffStatus !== 'undefined') StaffStatus.render();
-    Timeline.render();
+    if (typeof NotificationHistory !== 'undefined') NotificationHistory.render();
     if (typeof Handover !== 'undefined') Handover.render();
   },
 };
@@ -388,6 +388,8 @@ const App = {
   _masterSyncTimer: null,
   _masterSyncInFlight: false,
   _masterSyncIntervalMs: 30000,
+  _dataImportPromise: Promise.resolve(),
+  _timelineLocalDate: null,
 
   // 親機単独運用モード（この1台だけで完結する運用）。子機との共有はしない前提で
   // 接続端末表示・病棟間通話・検査室タブなど多端末前提のUIを隠す。share_mode の
@@ -405,6 +407,41 @@ const App = {
     if (standalone) {
       const activePage = document.querySelector('.tab-btn.active')?.dataset.page;
       if (activePage === 'exam-room') UI.switchPage('ward-dashboard');
+    }
+  },
+
+  async _checkEncryptionStatus() {
+    if (!window.electronAPI?.getEncryptionStatus) return;
+    try {
+      const status = await window.electronAPI.getEncryptionStatus();
+      const needsWarning = !status || !status.available || (status.dbExists && !status.dbIsEncrypted);
+      let banner = document.getElementById('encryption-warning-banner');
+      if (!needsWarning) {
+        banner?.remove();
+        return;
+      }
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'encryption-warning-banner';
+        banner.setAttribute('role', 'alert');
+        banner.style.cssText = 'margin:8px 12px;padding:10px 14px;border:1px solid #dc2626;border-radius:6px;background:#fef2f2;color:#991b1b;font-size:13px;display:flex;align-items:center;gap:10px;z-index:20;';
+        const text = document.createElement('span');
+        text.textContent = !status || !status.available
+          ? 'この端末ではデータベース暗号化を利用できません。患者情報を含むデータは平文で保存される可能性があります。'
+          : 'データベースが暗号化されていません。共有端末では使用せず、設定とOSユーザー保護を確認してください。';
+        banner.appendChild(text);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = '設定を確認';
+        button.style.cssText = 'margin-left:auto;padding:4px 10px;border:1px solid #991b1b;border-radius:4px;background:#fff;color:#991b1b;cursor:pointer;';
+        button.addEventListener('click', () => {
+          if (typeof UI !== 'undefined' && UI.switchPage) UI.switchPage('settings');
+        });
+        banner.appendChild(button);
+        document.body.insertBefore(banner, document.body.firstChild);
+      }
+    } catch (err) {
+      console.warn('[Security] 暗号化状態の確認に失敗しました:', err);
     }
   },
 
@@ -474,6 +511,7 @@ const App = {
 
     // 環境検出 (インフラ #4)
     await AppEnv.detect();
+    await this._checkEncryptionStatus();
 
     // 親機サーバー可用性監視 (インフラ #3: 子機モードのみ)
     ParentServerMonitor.init();
@@ -553,6 +591,7 @@ const App = {
             grid.classList.add('hide-patient-names');
           }
           BedMap.render();
+          if (typeof NotificationHistory !== 'undefined') NotificationHistory.render();
         }
         
         // 検査室のトグルとも連動させる
@@ -594,60 +633,29 @@ const App = {
       }
     });
 
-    // システムリセットボタン（ヘッダーに常時表示される破壊的操作のため、
-    // 設定画面と同じ管理者パスコードで保護する）
-    document.getElementById('btn-system-reset').addEventListener('click', async () => {
-      const doReset = async () => {
-        if (!await UI.confirmModal('出棟中の移送情報をリセットしますか？', {
-          title: 'システムリセット',
-          detail: '患者情報やマスタデータは消去されません。',
-          type: 'danger',
-          confirmLabel: 'リセットする'
-        })) return;
-        if (window.electronAPI) {
-          await window.electronAPI.resetDatabase();
-        } else {
-          await this._resetAllActiveEvents();
-        }
-        this._prevNotified = new Set();
-        await this.loadMasters();
-        await this.refreshData();
-        WardDashboard.render();
-        UI.toast('出棟中の移送情報をリセットしました', 'info');
-      };
-
-      if (window.isAdminSession) {
-        await doReset();
-        return;
-      }
-      PasscodeModal.open(() => { doReset(); });
-    });
-
     // タイムライン日付
     const dateInput = document.getElementById('timeline-date');
+    const todayValue = TimelineDate.format();
+    this._timelineLocalDate = todayValue;
     if (dateInput) {
-      dateInput.value = new Date().toISOString().split('T')[0];
+      dateInput.value = todayValue;
       dateInput.addEventListener('change', () => Timeline._renderFullTimeline().catch(console.error));
     }
     document.getElementById('tl-today-btn')?.addEventListener('click', () => {
       if (dateInput) {
-        dateInput.value = new Date().toISOString().split('T')[0];
+        dateInput.value = TimelineDate.format();
         Timeline._renderFullTimeline().catch(console.error);
       }
     });
     document.getElementById('tl-prev-day')?.addEventListener('click', () => {
       if (dateInput && dateInput.value) {
-        const d = new Date(dateInput.value);
-        d.setDate(d.getDate() - 1);
-        dateInput.value = d.toISOString().split('T')[0];
+        dateInput.value = TimelineDate.shift(dateInput.value, -1);
         Timeline._renderFullTimeline().catch(console.error);
       }
     });
     document.getElementById('tl-next-day')?.addEventListener('click', () => {
       if (dateInput && dateInput.value) {
-        const d = new Date(dateInput.value);
-        d.setDate(d.getDate() + 1);
-        dateInput.value = d.toISOString().split('T')[0];
+        dateInput.value = TimelineDate.shift(dateInput.value, 1);
         Timeline._renderFullTimeline().catch(console.error);
       }
     });
@@ -733,18 +741,44 @@ const App = {
       console.log('[Electron] 患者・在床情報のインポートリスナーを設定しています...');
       
       // 成功時
-      window.electronAPI.onDataImported(async ({ importId, fileName, rows }) => {
+      window.electronAPI.onDataImported((payload = {}) => {
+        // 監視と手動スキャンが同時に複数CSVを検出しても、病床マスターの更新を
+        // 1ファイルずつ完了させる。並行更新によるrevision競合と取り込み失敗を防ぐ。
+        this._dataImportPromise = this._dataImportPromise
+          .catch(error => console.error('[Import] 前の取り込み処理が失敗しました:', error))
+          .then(async () => {
+        const { importId, fileName, rows = [] } = payload;
         console.log(`[Electron] インポートデータを受信 (${fileName}): ${rows.length}件`);
 
-        // 在室管理モード確認
-        const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
-        if (admMode === 'manual') {
-          UI.toast('在室管理モードが「手動登録」のためCSVインポートをスキップしました', 'warning', 5000);
+        // 子機から親機の連携設定を変更した直後でも、親機rendererの古いキャッシュを
+        // 使わないよう、取り込み開始時に設定・病床マスターを必ず読み直す。
+        const mastersLoaded = await App.loadMasters({ silent: true, loadHandover: false });
+        if (!mastersLoaded) {
           if (importId && window.electronAPI.completeDataImport) {
             await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
           }
+          UI.toast('CSV取り込み前の最新設定を取得できませんでした。原本は監視フォルダに残しています。', 'danger', 8000);
           return;
         }
+
+        let activeBedIds;
+        try {
+          const eventResult = await API.getAll('transfer_events');
+          activeBedIds = new Set(
+            (eventResult?.data || [])
+              .filter(event => CONFIG.ACTIVE_STATUSES.includes(event.current_status))
+              .map(event => event.bed_id)
+          );
+        } catch (error) {
+          console.error('[Import] 進行中移送の取得に失敗しました:', error);
+          if (importId && window.electronAPI.completeDataImport) {
+            await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
+          }
+          UI.toast('進行中の移送情報を確認できないため、CSV取り込みを中止しました。原本は残しています。', 'danger', 8000);
+          return;
+        }
+
+        const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
 
         let importedCount = 0;
         let skipCount = 0;
@@ -888,15 +922,12 @@ const App = {
           if (rows.length === 0) {
             console.warn('[Import] clearUnlisted: CSVが0件のため空床化をスキップしました');
             UI.toast('CSVが空だったため、未掲載病床の空床化はスキップしました。', 'warning', 6000);
-          } else if (skipCount > 0 || importedCount === 0) {
-            console.warn('[Import] 未掲載病床の空床化をスキップしました（不明・重複・欠損行があります）');
-            UI.toast('CSVに確認できない行があるため、未掲載病床の空床化は安全のためスキップしました。', 'warning', 6000);
+          } else if (listedBedIds.size === 0) {
+            // マッピング誤りや別形式のCSVで全病床を消さないため、有効な病床を
+            // 1件も確認できない場合だけ空床化を止める。一部の不明行は妨げない。
+            console.warn('[Import] 有効な病床行を確認できないため、未掲載病床の空床化をスキップしました');
+            UI.toast('CSVから有効な病床を1件も確認できないため、未掲載病床の空床化をスキップしました。', 'warning', 6000);
           } else {
-            const activeBedIds = new Set(
-              (AppState.activeEvents || [])
-                .filter(e => CONFIG.DEPART_STATUSES.includes(e.current_status))
-                .map(e => e.bed_id)
-            );
             for (const bed of AppState.beds) {
               if (!listedBedIds.has(bed.id) && (bed.patient_name || bed.patient_id) && !activeBedIds.has(bed.id)) {
                 // ハイブリッドモードでは手動登録済み病床をCSVクリアから保護
@@ -951,10 +982,11 @@ const App = {
         }
 
         const hasWarning = skipCount > 0;
-        const status = (importedCount === 0 && rows.length > 0) ? 'warning' : (hasWarning ? 'warning' : 'success');
+        const changedCount = importedCount + clearCount;
+        const status = (changedCount === 0 && rows.length > 0) ? 'warning' : (hasWarning ? 'warning' : 'success');
         const clearPart = clearCount > 0 ? `, 退院クリア: ${clearCount}件` : '';
         const detailMsg = `インポート成功: ${importedCount}件, スキップ: ${skipCount}件${clearPart}`;
-        const logMsg = importedCount > 0
+        const logMsg = changedCount > 0
           ? `${importedCount}件の患者情報を更新しました。${clearCount > 0 ? `（${clearCount}件を退院済みとしてクリア）` : ''}`
           : '更新対象の有効な病床データがありませんでした。';
 
@@ -986,13 +1018,21 @@ const App = {
         
         const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
         if (importToastEnabled) {
-          if (importedCount > 0) {
+          if (changedCount > 0) {
             const clearNote = clearCount > 0 ? ` / 退院クリア: ${clearCount}件` : '';
             UI.toast(`📂 ${importedCount} 件の患者・在床情報を更新しました (スキップ: ${skipCount}件${clearNote})`, 'success');
           } else {
             UI.toast(`📂 CSVインポート完了: 更新なし (スキップ: ${skipCount}件)`, 'warning');
           }
         }
+          })
+          .catch(async error => {
+            console.error(`[Import] CSV取り込み処理に失敗しました (${payload.fileName || 'ファイル名不明'}):`, error);
+            if (payload.importId && window.electronAPI.completeDataImport) {
+              await window.electronAPI.completeDataImport({ importId: payload.importId, success: false }).catch(() => {});
+            }
+            UI.toast('CSV取り込み処理に失敗しました。原本は監視フォルダに残しています。', 'danger', 8000);
+          });
       });
 
       // 失敗時
@@ -1056,7 +1096,12 @@ const App = {
 
       // スケジュール取り込み成功時
       if (window.electronAPI.onScheduleImported) {
-        window.electronAPI.onScheduleImported(async ({ feedId, feedName, fileName, count }) => {
+        window.electronAPI.onScheduleImported(async ({ success = true, feedId, feedName, fileName, count, message }) => {
+          if (success === false) {
+            console.error(`[ScheduleFeed] "${feedName}" 取り込み失敗 (${fileName}): ${message || '保存に失敗しました'}`);
+            UI.toast(`⚠️ ${feedName}: ${message || 'スケジュールの保存に失敗しました'}`, 'warning', 10000);
+            return;
+          }
           console.log(`[ScheduleFeed] "${feedName}" 取り込み完了 (${fileName}): ${count}件`);
           UI.toast(`📅 ${feedName}: ${count}件のスケジュールを取り込みました`, 'info');
           await App.refreshData({ force: true });
@@ -1669,6 +1714,7 @@ const App = {
       if (AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
+      AppState.recentStatusLogs = eventStatus.recentStatusLogs || [];
       AppState.systemSettings = systemSettings;
       AppState.scheduleFeeds = scheduleFeeds || [];
       AppState.scheduleItems = scheduleItems || [];
@@ -1712,6 +1758,16 @@ const App = {
         ok = await this.refreshData();
 
         if (ok) {
+          const localDateValue = TimelineDate.format();
+          if (this._timelineLocalDate && this._timelineLocalDate !== localDateValue) {
+            const timelineDateInput = document.getElementById('timeline-date');
+            if (timelineDateInput?.value === this._timelineLocalDate) {
+              timelineDateInput.value = localDateValue;
+            }
+            this._timelineLocalDate = localDateValue;
+            this.checkCarriedOver();
+          }
+
           if (currentPage === 'ward-dashboard') {
             WardDashboard.render();
           } else if (currentPage === 'exam-room') {
@@ -1722,11 +1778,6 @@ const App = {
 
           this._checkNotifications();
 
-          // 24時間稼働端末での日跨ぎ対応：日付が変わったら未完了出棟を再チェック
-          const nowDateStr = new Date().toDateString();
-          if (this._lastDateStr && this._lastDateStr !== nowDateStr) {
-            this.checkCarriedOver();
-          }
         }
       } catch (e) {
         ok = false;
@@ -1741,6 +1792,26 @@ const App = {
       }
     };
     AppState.pollTimer = setTimeout(tick, this._jitterDelay(CONFIG.POLL_INTERVAL));
+  },
+
+  async resetActiveEvents() {
+    if (!await UI.confirmModal('出棟中の移送情報をリセットしますか？', {
+      title: '進行中の移送をリセット',
+      detail: '患者情報やマスタデータは消去されません。',
+      type: 'danger',
+      confirmLabel: 'リセットする'
+    })) return false;
+    if (window.electronAPI) {
+      await window.electronAPI.resetDatabase();
+    } else {
+      await this._resetAllActiveEvents();
+    }
+    this._prevNotified = new Set();
+    await this.loadMasters();
+    await this.refreshData();
+    WardDashboard.render();
+    UI.toast('出棟中の移送情報をリセットしました', 'info');
+    return true;
   },
 
   async _resetAllActiveEvents() {
@@ -1796,6 +1867,45 @@ const App = {
     }
   },
 
+  _getNotificationStatusLog(eventId, status) {
+    return (AppState.recentStatusLogs || []).find(log => (
+      String(log.transfer_event_id) === String(eventId) &&
+      log.to_status === status &&
+      log.from_status !== log.to_status
+    )) || null;
+  },
+
+  _showStatusNotificationToast(message, type, duration, event) {
+    const log = event ? this._getNotificationStatusLog(event.id, event.current_status) : null;
+    const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
+    const canAcknowledge = log &&
+      CONFIG.WARD_ACK_STATUSES.includes(event.current_status) &&
+      !log.acknowledged_at &&
+      currentPage === 'ward-dashboard';
+    UI.toast(message, type, canAcknowledge ? Math.max(duration, 10000) : duration, canAcknowledge ? {
+      actionLabel: '確認しました',
+      onAction: () => this.acknowledgeNotification(log.id),
+    } : {});
+  },
+
+  async acknowledgeNotification(logId) {
+    try {
+      const result = await API.acknowledgeStatusLog(logId, AppState.currentWardId);
+      const updated = result?.log;
+      if (updated) {
+        const index = (AppState.recentStatusLogs || []).findIndex(log => String(log.id) === String(updated.id));
+        if (index >= 0) AppState.recentStatusLogs[index] = { ...AppState.recentStatusLogs[index], ...updated };
+      }
+      if (typeof NotificationHistory !== 'undefined') NotificationHistory.render();
+      UI.toast('検査室へ確認済みを送信しました', 'success', 3000);
+      return true;
+    } catch (error) {
+      console.error('[Notification Ack]', error);
+      UI.toast(`確認状態を送信できませんでした: ${error.message}`, 'danger', 5000);
+      return false;
+    }
+  },
+
   _checkNotifications() {
     const now = Date.now();
     this._updateNavBadge();
@@ -1828,7 +1938,7 @@ const App = {
     } else {
       const soundSettingRec = AppState.systemSettings?.find(s => s.id === 'notification_sounds');
       if (soundSettingRec?.value) {
-        try { soundSettings = JSON.parse(soundSettingRec.value); } catch(e) {}
+        try { soundSettings = { ...soundSettings, ...JSON.parse(soundSettingRec.value) }; } catch(e) {}
       }
     }
 
@@ -1863,7 +1973,7 @@ const App = {
             DEPART_REGISTERED: 'info', MOVING: 'info',
           };
           const toastType = toastTypes[e.current_status] || 'info';
-          UI.toast(`${bedLabel}${patientName} → ${statusLabel}`, toastType, 5000);
+          this._showStatusNotificationToast(`${bedLabel}${patientName} → ${statusLabel}`, toastType, 5000, e);
         }
       }
 
@@ -1872,10 +1982,9 @@ const App = {
         const bed = AppState.getBedById(e.bed_id);
         const cfg = soundSettings['PICKUP_REQUIRED'];
         if (cfg?.toast !== false) {
-          UI.toast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！`, 'danger', 6000);
+          this._showStatusNotificationToast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！`, 'danger', 6000, e);
         }
         this._prevNotified.add(`pickup-${e.id}`);
-        if (lastStatus === undefined && cfg?.enabled) UI.playNotificationSound(cfg.sound);
       }
 
       // あと10分通知
@@ -1883,10 +1992,9 @@ const App = {
         const bed = AppState.getBedById(e.bed_id);
         const cfg = soundSettings['NEARLY_DONE'];
         if (cfg?.toast !== false) {
-          UI.toast(`⏰ ${bed ? bed.bed_number + '号床' : ''} あと10分です`, 'warning', 5000);
+          this._showStatusNotificationToast(`⏰ ${bed ? bed.bed_number + '号床' : ''} あと10分です`, 'warning', 5000, e);
         }
         this._prevNotified.add(`nearly-${e.id}`);
-        if (lastStatus === undefined && cfg?.enabled) UI.playNotificationSound(cfg.sound);
       }
 
       // 迎え目安5分前通知（時刻経過による特別トリガー）

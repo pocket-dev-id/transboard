@@ -113,6 +113,14 @@ assert(
   importNotify.includes("shareMode === 'child'"),
   'Master sync and legacy child mode handling must remain wired'
 );
+assert(
+  main.includes('function processStatusAcknowledgeRequest') &&
+  main.includes("String(event.ward_id || '') !== wardId") &&
+  main.includes('WARD_ACKNOWLEDGEMENT_STATUSES.has(log.to_status)') &&
+  main.includes("cleanUrl === 'status/ack'") &&
+  api.includes('acknowledgeStatusLog(logId, wardId)'),
+  'Notification acknowledgements must remain authenticated, ward-scoped, and status-limited'
+);
 
 assert(
   priority.includes('UI.escapeHTML(examType.name)') &&

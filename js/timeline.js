@@ -138,6 +138,38 @@ const TimelineContextMenu = {
 };
 
 // ── メインオブジェクト ────────────────────────────────────────
+const TimelineDate = {
+  format(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  },
+
+  parse(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    const date = new Date(year, month, day);
+    if (
+      Number.isNaN(date.getTime()) ||
+      date.getFullYear() !== year ||
+      date.getMonth() !== month ||
+      date.getDate() !== day
+    ) return null;
+    return date;
+  },
+
+  shift(value, days) {
+    const date = this.parse(value);
+    if (!date) return this.format();
+    date.setDate(date.getDate() + days);
+    return this.format(date);
+  },
+};
+
 const Timeline = {
 
   // 永続フィルタ状態
@@ -145,16 +177,7 @@ const Timeline = {
   _timeRangeMode: 'fixed', // 'fixed' | 'auto'
 
   render() {
-    this._renderMiniTimeline();
     this._renderFullTimeline().catch(console.error);
-    // ミニタイムラインの「タイムラインを開く」ボタン
-    const gotoBtn = document.getElementById('btn-goto-timeline');
-    if (gotoBtn && !gotoBtn.dataset.bound) {
-      gotoBtn.dataset.bound = '1';
-      gotoBtn.addEventListener('click', () => {
-        document.querySelector('.tab-btn[data-page="timeline"]')?.click();
-      });
-    }
   },
 
   _isPatientNameVisible() {
@@ -166,7 +189,7 @@ const Timeline = {
     return String(event?.patient_name || bed?.patient_name || '').trim();
   },
 
-  _renderBedPatientLabel(event, bed, { compact = false } = {}) {
+  _renderBedPatientLabel(event, bed) {
     const bedText = bed ? `${UI.escapeHTML(UI.formatBedNamePlain(bed))}号床` : '?';
     const showNames = this._isPatientNameVisible();
     const eventName = String(event?.patient_name || '').trim();
@@ -176,74 +199,15 @@ const Timeline = {
 
     if (primaryName) {
       const masked = showNames ? UI.escapeHTML(primaryName) : '＊＊＊＊';
-      patientHtml = `<span class="${compact ? 'timeline-bed-patient' : 'tl-row-patient'}">${masked}</span>`;
+      patientHtml = `<span class="tl-row-patient">${masked}</span>`;
       if (showNames && eventName && currentName && eventName !== currentName) {
-        patientHtml += `<span class="${compact ? 'timeline-bed-patient timeline-bed-patient--changed' : 'tl-row-patient tl-row-patient--changed'}">現在: ${UI.escapeHTML(currentName)}</span>`;
+        patientHtml += `<span class="tl-row-patient tl-row-patient--changed">現在: ${UI.escapeHTML(currentName)}</span>`;
       }
     } else {
-      patientHtml = `<span class="${compact ? 'timeline-bed-patient' : 'tl-row-patient'}">患者名なし</span>`;
+      patientHtml = '<span class="tl-row-patient">患者名なし</span>';
     }
 
-    return `<span class="${compact ? 'timeline-bed-num' : 'tl-row-bed'}">${bedText}</span>${patientHtml}`;
-  },
-
-  // ── ミニタイムライン（ダッシュボード下部） ──────────────────
-  _renderMiniTimeline() {
-    const container = document.getElementById('mini-timeline');
-    if (!container) return;
-
-    const events = AppState.activeEvents.filter(e => CONFIG.DEPART_STATUSES.includes(e.current_status));
-    if (events.length === 0) {
-      container.innerHTML = '<div class="empty-state"><i class="fas fa-stream"></i><p>出棟中の患者がいません</p></div>';
-      return;
-    }
-
-    const now = Date.now();
-    const windowStart = now - 30 * 60 * 1000;
-    const windowEnd   = now + 90 * 60 * 1000;
-    const windowMs    = windowEnd - windowStart;
-    const toPercent   = ms => Math.max(0, Math.min(100, (ms - windowStart) / windowMs * 100));
-
-    let html = `<div class="timeline-row">
-      <div class="timeline-bed-label" style="font-size:10px;color:#718096;">病床</div>
-      <div class="timeline-bar-track" style="position:relative;background:transparent;">
-        ${this._renderTimeAxis(windowStart, windowEnd)}
-      </div>
-    </div>`;
-
-    events.forEach(e => {
-      const bed = AppState.getBedById(e.bed_id);
-      const segs = this._buildSegments(e, windowStart, windowEnd, toPercent);
-      const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
-      html += `<div class="timeline-row">
-        <div class="timeline-bed-label">${this._renderBedPatientLabel(e, bed, { compact: true })}</div>
-        <div class="timeline-bar-track" data-event-id="${e.id}"
-          data-window-start="${windowStart}" data-window-end="${windowEnd}"
-          data-editable="${editable}"
-          style="${editable ? 'cursor:pointer;' : ''}position:relative;">
-          ${segs.map(s => `<div class="timeline-segment ${s.cls}"
-            style="left:${s.left}%;width:${s.width}%;background:${s.color};" title="${s.label}">
-            ${s.width > 8 ? s.label : ''}</div>`).join('')}
-          <div class="timeline-now-marker" style="left:${toPercent(now)}%;"></div>
-          ${e.estimated_pickup_at ? `<div class="timeline-pickup-marker" style="left:${toPercent(e.estimated_pickup_at)}%;" title="迎え目安 ${UI.formatTime(e.estimated_pickup_at)}"></div>` : ''}
-        </div>
-      </div>`;
-    });
-
-    container.innerHTML = html;
-    this._bindClickHandlers(container, '.timeline-bar-track[data-event-id]', 'activeEvents');
-    this._bindContextMenu(container, '.timeline-bar-track[data-event-id]', 'activeEvents');
-  },
-
-  _renderTimeAxis(start, end) {
-    const ms = end - start, step = 15 * 60 * 1000;
-    let t = Math.ceil(start / step) * step, marks = [];
-    while (t <= end) {
-      const pct = (t - start) / ms * 100;
-      marks.push(`<div style="position:absolute;left:${pct}%;transform:translateX(-50%);font-size:10px;color:#94a3b8;top:2px;">${UI.formatTime(t)}</div>`);
-      t += step;
-    }
-    return marks.join('');
+    return `<span class="tl-row-bed">${bedText}</span>${patientHtml}`;
   },
 
   _buildSegments(event, winStart, winEnd, toPercent) {
@@ -296,7 +260,7 @@ const Timeline = {
       <div style="color:#4a5568;line-height:2.0;font-size:12px;">
         <div>👤 ${UI.escapeHTML(this._eventPatientName(event, bed) || '（患者名なし）')}</div>
         ${event.patient_id ? `<div style="color:#718096;">ID: ${UI.escapeHTML(event.patient_id)}</div>` : ''}
-        ${examRoom ? `<div>🏥 ${UI.escapeHTML(examRoom.name)}${examType ? ' / '+UI.escapeHTML(examType.name) : ''}</div>` : ''}
+        ${examRoom ? `<div>${UI.examImage(examRoom, 'room', 'timeline-exam-image')}${UI.escapeHTML(examRoom.name)}${examType ? ` / ${UI.examImage(examType, 'type', 'timeline-exam-image')}${UI.escapeHTML(examType.name)}` : ''}</div>` : ''}
         <div>🚶 出棟: ${UI.formatTime(event.departed_at)}</div>
         ${event.estimated_pickup_at ? `<div>🔔 迎え目安: ${UI.formatTime(event.estimated_pickup_at)}</div>` : ''}
       </div>
@@ -401,11 +365,13 @@ const Timeline = {
 
     // ── 日付 ──
     const dateInput = document.getElementById('timeline-date');
-    const targetDate = dateInput ? new Date(dateInput.value) : new Date();
-    if (isNaN(targetDate.getTime())) return;
+    const targetDate = dateInput ? TimelineDate.parse(dateInput.value) : new Date();
+    if (!targetDate) return;
     targetDate.setHours(0, 0, 0, 0);
     const dayStart = targetDate.getTime();
-    const dayEnd   = dayStart + 24 * 60 * 60 * 1000;
+    const nextDate = new Date(targetDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const dayEnd = nextDate.getTime();
 
     // ── 表示範囲トグルボタン同期 ──
     const rangeBtn = document.getElementById('tl-range-toggle');

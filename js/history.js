@@ -133,10 +133,10 @@ const HistoryView = {
         <div class="history-item" style="border-left: 4px solid var(--clr-${e.current_status.toLowerCase().replace(/_/g, '-') || 'primary-border'}); padding-left: 8px;">
           <div class="history-time">${UI.formatDateTime(e.created_at)}</div>
           <div class="history-main">
-            ${bed ? UI.escapeHTML(bed.bed_number) + '号床' : '不明'} ${patientLabel} - ${examType ? UI.escapeHTML(examType.name) : '--'}
+            ${bed ? UI.escapeHTML(bed.bed_number) + '号床' : '不明'} ${patientLabel} - ${examType ? `${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.name)}` : '--'}
           </div>
           <div class="history-sub">
-            ${examRoom ? UI.escapeHTML(examRoom.name) : '--'} | ${UI.statusBadge(e.current_status)}
+            ${examRoom ? `${UI.examImage(examRoom, 'room', 'history-exam-image')}${UI.escapeHTML(examRoom.name)}` : '--'} | ${UI.statusBadge(e.current_status)}
             ${staff ? ' | 付き添い: ' + UI.escapeHTML(staff.name) : ''}
             ${e.returned_at ? ' | 帰棟: ' + UI.formatTime(e.returned_at) : ''}
             ${e.note ? ' | <span style="color:#718096; font-style:italic;">' + UI.escapeHTML(e.note) + '</span>' : ''}

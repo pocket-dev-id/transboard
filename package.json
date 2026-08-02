@@ -17,10 +17,12 @@
     },
     "files": [
       "main.js",
+      "main-modules/**/*",
       "preload.js",
       "index.html",
       "js/**/*",
       "css/**/*",
+      "assets/**/*",
       "build/icon.ico",
       "build/icon.png",
       "nfc-reader.ps1",

@@ -26,7 +26,7 @@ const Wizard = {
       smb_auth_mode:                gs('smb_auth_mode')                || 'current',
       smb_username:                 gs('smb_username')                 || '',
       smb_password:                 gs('smb_password')                 || '',
-      admission_mode:               gs('admission_mode')               || 'csv',
+      admission_mode:               gs('admission_mode') === 'hybrid' ? 'hybrid' : 'csv',
       font_style:                   gs('font_style')                   || 'ud',
       default_zoom:                 gs('default_zoom')                 || '1.0',
       enable_patient_ic_association: gs('enable_patient_ic_association') || 'false',
@@ -304,9 +304,6 @@ const Wizard = {
           ${this._radioCard('admission_mode', 'csv', admSel('csv'),
             'fa-file-import', 'CSVインポートモード',
             '電子カルテ連携で取り込まれる在床リストをもとに患者を管理します。')}
-          ${this._radioCard('admission_mode', 'manual', admSel('manual'),
-            'fa-user-plus', '手動登録モード',
-            '担当スタッフが手動で患者を在室登録します。外部連携なしの病棟向け。')}
           ${this._radioCard('admission_mode', 'hybrid', admSel('hybrid'),
             'fa-layer-group', 'ハイブリッドモード',
             'CSVで取り込みつつ、CSVにない患者を手動で追加登録できます。')}
@@ -329,7 +326,7 @@ const Wizard = {
       ? '子機モード'
       : (this.config.standalone ? '単独運用モード（この1台だけ）' : '親機モード（子機と共有）');
     const connLabels  = { csv: 'CSVファイル連携', odbc: 'ODBCデータベース連携', none: '手動入力' };
-    const admLabels   = { csv: 'CSVインポート', manual: '手動登録', hybrid: 'ハイブリッド' };
+    const admLabels   = { csv: 'CSVインポート', hybrid: 'ハイブリッド' };
 
     const rows = [
       ['稼働モード',     modeLabel],

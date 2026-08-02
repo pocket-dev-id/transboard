@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>検査</title>
+  <rect x="7" y="7" width="50" height="50" rx="12" fill="#e0f2fe"/>
+  <circle cx="32" cy="30" r="14" fill="none" stroke="#0369a1" stroke-width="4"/>
+  <path d="M18 48h28" stroke="#0369a1" stroke-width="4" stroke-linecap="round"/>
+</svg>

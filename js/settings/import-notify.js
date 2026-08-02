@@ -126,10 +126,16 @@ Object.assign(Settings, {
       : window.electronAPI?.triggerScheduleFeedImport?.(feedId);
   },
 
+  _readParentScheduleFeedHeaders(folderPath, encoding) {
+    return this._isChildTerminal()
+      ? this._parentAction('schedule-feed-headers', { folderPath, encoding }, { timeoutMs: 20000 })
+      : window.electronAPI?.readCsvHeaders?.(folderPath, encoding);
+  },
+
   async _renderImportSettings(body) {
     // マスタから設定レコードを取得
     const dirSetting = AppState.systemSettings?.find(s => s.id === 'import_directory') || { value: '' };
-    const currentPath = dirSetting.value || '（デフォルト: プロジェクト内の import_folder フォルダ）';
+    const currentPath = dirSetting.value || '（デフォルト: ユーザーデータ内の import_folder フォルダ）';
 
     // アーカイブフォルダの状況を取得（セキュリティ C-1: 平文残留の可視化）
     const archiveInfo = window.electronAPI && window.electronAPI.getArchiveInfo
@@ -159,7 +165,7 @@ Object.assign(Settings, {
     }
 
     const connTypeSetting = AppState.systemSettings?.find(s => s.id === 'import_connection_type') || { value: 'csv' };
-    const odbcConnSetting = AppState.systemSettings?.find(s => s.id === 'odbc_connection_string') || { value: 'DSN=EMR_DB;UID=admin;PWD=admin_pass;' };
+    const odbcConnSetting = AppState.systemSettings?.find(s => s.id === 'odbc_connection_string') || { value: '' };
     const odbcQuerySetting = AppState.systemSettings?.find(s => s.id === 'odbc_sql_query') || { value: 'SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS' };
 
     const showSyncTime = (AppState.systemSettings?.find(s => s.id === 'show_sync_time')?.value ?? 'true') !== 'false';
@@ -196,7 +202,7 @@ Object.assign(Settings, {
         `;
       }).join('');
 
-    const admMode = admissionModeSetting.value || 'csv';
+    const admMode = admissionModeSetting.value === 'hybrid' ? 'hybrid' : 'csv';
     body.innerHTML = `
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
@@ -206,12 +212,10 @@ Object.assign(Settings, {
         <p class="settings-hint"><i class="fas fa-info-circle"></i>
           患者の在室情報をどのように管理するか選択します。モードはいつでも変更できます。
         </p>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px;" id="admission-mode-cards">
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px;" id="admission-mode-cards">
           ${[
             { key:'csv',    icon:'fa-file-csv',    title:'CSV連携モード',  color:'#3b82f6',
               desc:'電子カルテからCSV/ODBCで在室データを自動取り込みします。病床カードへの患者登録はシステムが行います。' },
-            { key:'manual', icon:'fa-hand-pointer', title:'手動登録モード', color:'#16a34a',
-              desc:'スタッフが病床カードをクリックして患者を手動で登録・退院します。CSVインポートは使用しません。' },
             { key:'hybrid', icon:'fa-code-branch',  title:'ハイブリッドモード', color:'#7c3aed',
               desc:'CSV自動取り込みと手動登録を併用します。手動登録した病床はCSVの自動クリアから保護されます。' },
           ].map(m => `
@@ -665,7 +669,7 @@ Object.assign(Settings, {
       try {
         if (this._isChildTerminal() || (window.electronAPI && window.electronAPI.triggerManualImport)) {
           const res = await this._runParentManualImport();
-          if (res.success) {
+          if (res?.success) {
             if (res.count > 0) {
               UI.toast(`📂 ${res.message}`, 'success');
             } else {
@@ -674,7 +678,7 @@ Object.assign(Settings, {
             await App.loadMasters();
             this.render();
           } else {
-            UI.toast(`❌ スキャンに失敗しました: ${res.message}`, 'danger');
+            UI.toast(`❌ スキャンに失敗しました: ${res?.message || '親機から応答がありません'}`, 'danger');
           }
         } else {
           UI.toast('デスクトップ環境でのみ実行可能です', 'warning');
@@ -1179,7 +1183,7 @@ Object.assign(Settings, {
     // 在室管理モードカード選択イベント
     body.querySelectorAll('.admission-mode-card').forEach(card => {
       card.addEventListener('click', () => {
-        const colors = { csv: '#3b82f6', manual: '#16a34a', hybrid: '#7c3aed' };
+        const colors = { csv: '#3b82f6', hybrid: '#7c3aed' };
         body.querySelectorAll('.admission-mode-card').forEach(c => {
           const m = c.dataset.mode;
           c.style.borderColor = '#e2e8f0';
@@ -1201,7 +1205,7 @@ Object.assign(Settings, {
         const rec = AppState.systemSettings?.find(s => s.id === 'admission_mode');
         if (rec) rec.value = selected;
         else AppState.systemSettings?.push({ id: 'admission_mode', value: selected });
-        const labels = { csv: 'CSV連携モード', manual: '手動登録モード', hybrid: 'ハイブリッドモード' };
+        const labels = { csv: 'CSV連携モード', hybrid: 'ハイブリッドモード' };
         UI.toast(`在室管理モードを「${labels[selected]}」に変更しました`, 'success');
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
@@ -1300,7 +1304,8 @@ Object.assign(Settings, {
         };
 
         if (this._isChildTerminal()) {
-          await this._parentAction('save-import-settings', { settings: settingsPayload });
+          const result = await this._parentAction('save-import-settings', { settings: settingsPayload });
+          if (result?.success === false) throw new Error(result.message || '親機へ連携設定を保存できませんでした');
         } else {
           const promises = Object.entries(settingsPayload).map(([id, value]) =>
             API.patch('system_settings', id, { value })
@@ -1321,7 +1326,10 @@ Object.assign(Settings, {
         updateSetting('show_import_time', showImportTimeVal);
 
         // メインプロセスへ変更通知（監視先およびトリガーを再設定）
-        await this._runParentWatchReload(newPath);
+        const watchResult = await this._runParentWatchReload(newPath);
+        if (watchResult?.success === false) {
+          throw new Error(watchResult.message || '監視フォルダを開けませんでした');
+        }
 
         UI.toast('連携設定を保存しました。監視フォルダ・ポリシーは即時反映されます。スケジュール変更は次の検知タイミングから有効です。', 'success', 6000);
         
@@ -1397,6 +1405,12 @@ Object.assign(Settings, {
       ? localScan !== 'false'
       : AppState.systemSettings?.find(s => s.id === 'notification_scan_sound')?.value !== 'false';
 
+    // ステータス連動の自動読み上げ（端末ごとに設定）
+    const localAutoSpeech = isChildMode ? localStorage.getItem('tbs_notification_auto_speech') : null;
+    const autoSpeechEnabled = localAutoSpeech !== null
+      ? localAutoSpeech !== 'false'
+      : AppState.systemSettings?.find(s => s.id === 'notification_auto_speech')?.value !== 'false';
+
     // OS通知
     // インポートトースト
     const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
@@ -1447,7 +1461,7 @@ Object.assign(Settings, {
               <span id="notif-volume-val" style="min-width:32px;font-weight:700;font-size:13px;color:#1e293b;">${volume}%</span>
             </div>
             <div style="font-size:11px;color:#94a3b8;margin-top:6px;">
-              スキャン音・通知音・着信音すべてに適用されます。ブラウザのミュートとは別です。
+              スキャン音・通知音・着信音・読み上げ音声すべてに適用されます。ブラウザのミュートとは別です。
             </div>
             <button class="btn btn-outline btn-sm" id="btn-test-volume" style="margin-top:10px;">
               <i class="fas fa-play"></i> テスト再生
@@ -1480,9 +1494,9 @@ Object.assign(Settings, {
       <!-- ② 着信音 -->
       <div class="settings-panel" style="margin-top:14px;">
         <div class="settings-panel-header">
-          <h3><i class="fas fa-phone-volume"></i> 着信音・スキャン音</h3>
+          <h3><i class="fas fa-phone-volume"></i> 着信音・スキャン音・読み上げ</h3>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:4px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:4px;">
           <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
             <div style="font-weight:700;font-size:13px;margin-bottom:10px;">内線/ビデオ通話 着信音</div>
             <div style="display:flex;align-items:center;gap:8px;">
@@ -1505,6 +1519,13 @@ Object.assign(Settings, {
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
               <input type="checkbox" id="scan-sound-enabled" ${scanEnabled ? 'checked' : ''} style="transform:scale(1.2);">
               <span>スキャン音を鳴らす<br><span style="font-size:11px;color:#94a3b8;">成功音・エラー音を再生します</span></span>
+            </label>
+          </div>
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+            <div style="font-weight:700;font-size:13px;margin-bottom:10px;">ステータス自動読み上げ</div>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;">
+              <input type="checkbox" id="auto-speech-enabled" ${autoSpeechEnabled ? 'checked' : ''} style="transform:scale(1.2);">
+              <span>自動アナウンスを読み上げる<br><span style="font-size:11px;color:#94a3b8;">OFFでも通知音と画面通知は利用できます</span></span>
             </label>
           </div>
         </div>
@@ -1600,7 +1621,7 @@ Object.assign(Settings, {
     volSlider.addEventListener('input', _updateVolSlider);
     _updateVolSlider();
     document.getElementById('btn-test-volume').onclick = () => {
-      UI.playNotificationSound('chime', parseInt(volSlider.value, 10) / 100);
+      UI.playNotificationSound('chime', parseInt(volSlider.value, 10) / 100, { ignoreMute: true });
     };
 
     // ── ミュート時間帯の表示切替 ──
@@ -1615,6 +1636,7 @@ Object.assign(Settings, {
       const muteStart= document.getElementById('mute-start').value || '22:00';
       const muteEnd  = document.getElementById('mute-end').value   || '06:00';
       const scanOn   = document.getElementById('scan-sound-enabled').checked;
+      const autoSpeechOn = document.getElementById('auto-speech-enabled').checked;
       const ringVal  = document.getElementById('incoming-ring-sound').value;
 
       const muteCfgNew = { enabled: muteOn, start: muteStart, end: muteEnd };
@@ -1624,12 +1646,14 @@ Object.assign(Settings, {
           localStorage.setItem('tbs_notification_volume',    vol);
           localStorage.setItem('tbs_notification_mute',      JSON.stringify(muteCfgNew));
           localStorage.setItem('tbs_notification_scan_sound',String(scanOn));
+          localStorage.setItem('tbs_notification_auto_speech',String(autoSpeechOn));
           localStorage.setItem('tbs_incoming_ring_sound',    ringVal);
           // AppState 反映
           [
             ['notification_volume', vol],
             ['notification_mute', JSON.stringify(muteCfgNew)],
             ['notification_scan_sound', String(scanOn)],
+            ['notification_auto_speech', String(autoSpeechOn)],
             ['incoming_ring_sound', ringVal],
           ].forEach(([id, value]) => {
             const r = AppState.systemSettings?.find(s => s.id === id);
@@ -1640,11 +1664,12 @@ Object.assign(Settings, {
             API.patch('system_settings', 'notification_volume',    { value: vol }),
             API.patch('system_settings', 'notification_mute',      { value: JSON.stringify(muteCfgNew) }),
             API.patch('system_settings', 'notification_scan_sound',{ value: String(scanOn) }),
+            API.patch('system_settings', 'notification_auto_speech',{ value: String(autoSpeechOn) }),
             API.patch('system_settings', 'incoming_ring_sound',    { value: ringVal }),
           ]);
           await App.loadMasters();
         }
-        UI.toast('音量・ミュート設定を保存しました', 'success');
+        UI.toast('音量・通知音設定を保存しました', 'success');
       } catch(err) {
         UI.toast('保存に失敗しました: ' + err.message, 'danger');
       }
@@ -1653,9 +1678,7 @@ Object.assign(Settings, {
     // ── 着信音テスト ──
     document.getElementById('btn-test-incoming-ring').onclick = () => {
       const sel = document.getElementById('incoming-ring-sound');
-      const rec = AppState.systemSettings?.find(s => s.id === 'incoming_ring_sound');
-      if (rec) rec.value = sel.value; else AppState.systemSettings?.push({ id: 'incoming_ring_sound', value: sel.value });
-      CallPanel.playIncomingRingTone();
+      CallPanel.playIncomingRingTone({ sound: sel.value, ignoreMute: true });
       setTimeout(() => CallPanel.stopRingTone(), 2200);
     };
 
@@ -1664,7 +1687,7 @@ Object.assign(Settings, {
       btn.onclick = () => {
         const key = btn.dataset.key;
         const sel = body.querySelector(`.sound-type-sel[data-key="${key}"]`);
-        if (sel) UI.playNotificationSound(sel.value);
+        if (sel) UI.playNotificationSound(sel.value, undefined, { ignoreMute: true });
       };
     });
 
@@ -1737,6 +1760,26 @@ Object.assign(Settings, {
     const COLORS = ['#7c3aed','#2563eb','#059669','#d97706','#dc2626','#db2777','#0891b2','#4338ca'];
 
     const schedModeLabel = { realtime: 'リアルタイム監視', interval: '定期実行', time: '時刻指定' };
+    const bedMapIconOptions = [
+      { value: 'calendar-check', label: '予定（チェック）' },
+      { value: 'calendar-alt', label: '予定（カレンダー）' },
+      { value: 'clock', label: '時刻' },
+      { value: 'clipboard-list', label: 'リスト' },
+      { value: 'stethoscope', label: '診察' },
+      { value: 'x-ray', label: 'X線' },
+      { value: 'flask', label: '検体' },
+      { value: 'heartbeat', label: '生体情報' },
+      { value: 'radiation', label: '放射線' },
+      { value: 'file-medical-alt', label: '医療文書' },
+    ];
+    const encodingLabels = {
+      auto: '自動判定',
+      'utf-8': 'UTF-8',
+      'shift-jis': 'Shift_JIS',
+      'utf-16le': 'UTF-16 LE',
+      'utf-16be': 'UTF-16 BE',
+      'euc-jp': 'EUC-JP',
+    };
 
     const listHtml = feeds.length === 0
       ? '<p style="color:#718096;font-size:13px;">スケジュール取り込み設定がありません。「追加」から作成してください。</p>'
@@ -1751,6 +1794,15 @@ Object.assign(Settings, {
             : '';
           const titleCol = f.mapping?.col_title || '';
           const dateCol = f.mapping?.col_date || f.mapping?.col_datetime || '';
+          const encodingLabel = encodingLabels[f.encoding || 'auto'] || encodingLabels.auto;
+          const feedColor = /^#[0-9a-f]{6}$/i.test(String(f.color || '')) ? f.color : '#7c3aed';
+          const bedMapIcon = bedMapIconOptions.some(option => option.value === f.bed_map_icon)
+            ? f.bed_map_icon
+            : 'calendar-check';
+          const bedMapAbbreviation = UI.escapeHTML(String(f.bed_map_abbreviation || '').trim().slice(0, 10));
+          const bedMapPreview = f.show_on_bed_map === false
+            ? ''
+            : `<span style="color:${feedColor};font-weight:${f.bed_map_bold === true ? '800' : '600'};"><i class="fas fa-${bedMapIcon}"></i>${bedMapAbbreviation ? ` ${bedMapAbbreviation}` : ''}</span>`;
           const wardNames = (f.ward_ids?.length > 0)
             ? f.ward_ids.map(id => UI.escapeHTML(String(AppState.wards?.find(w => w.id === id)?.name || id))).join(', ')
             : '全病棟';
@@ -1759,7 +1811,6 @@ Object.assign(Settings, {
           const feedIdAttr = UI.escapeHTML(String(f.id || ''));
           const feedNameHtml = UI.escapeHTML(String(f.name || '（名称なし）'));
           const watchDirHtml = UI.escapeHTML(String(f.watch_dir || ''));
-          const feedColor = /^#[0-9a-f]{6}$/i.test(String(f.color || '')) ? f.color : '#7c3aed';
           const titleColHtml = UI.escapeHTML(String(titleCol));
           const dateColHtml = UI.escapeHTML(String(dateCol));
           return `
@@ -1785,10 +1836,11 @@ Object.assign(Settings, {
             </div>
             <div style="display:flex;gap:16px;padding:6px 12px 8px 36px;background:#f8fafc;border-top:1px solid #f1f5f9;font-size:11px;color:#64748b;flex-wrap:wrap;">
               <span><i class="fas fa-clock" style="margin-right:3px;color:#94a3b8;"></i>${mode}${modeDetail}</span>
+              <span><i class="fas fa-file-code" style="margin-right:3px;color:#94a3b8;"></i>${encodingLabel}</span>
               ${dateCol ? `<span><i class="fas fa-calendar-alt" style="margin-right:3px;color:#94a3b8;"></i>日付列: <code>${dateColHtml}</code></span>` : ''}
               ${titleCol ? `<span><i class="fas fa-tag" style="margin-right:3px;color:#94a3b8;"></i>タイトル列: <code>${titleColHtml}</code></span>` : ''}
               <span><i class="fas fa-hospital" style="margin-right:3px;color:#94a3b8;"></i>${wardNames}</span>
-              <span><i class="fas fa-bed" style="margin-right:3px;color:${bedMapColor};"></i>${bedMapLabel}</span>
+              <span><i class="fas fa-bed" style="margin-right:3px;color:${bedMapColor};"></i>${bedMapLabel}${bedMapPreview ? `: ${bedMapPreview}` : ''}</span>
             </div>
           </div>`;
         }).join('');
@@ -1887,6 +1939,20 @@ Object.assign(Settings, {
                   <i class="fas fa-magic"></i> CSVからヘッダを読み込む
                 </button>
               </div>
+              <div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:10px;">
+                <div style="min-width:180px;">
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">文字コード</label>
+                  <select id="sched-form-encoding" class="form-input">
+                    <option value="auto">自動判定（推奨）</option>
+                    <option value="shift-jis">Shift_JIS（Windows / Excel）</option>
+                    <option value="utf-8">UTF-8</option>
+                    <option value="utf-16le">UTF-16 LE</option>
+                    <option value="utf-16be">UTF-16 BE</option>
+                    <option value="euc-jp">EUC-JP</option>
+                  </select>
+                </div>
+                <p style="font-size:10px;color:#718096;margin:0 0 4px;line-height:1.45;">自動判定はBOM付きUTF-8／UTF-16とUTF-8を判定し、それ以外はShift_JISとして読み込みます。EUC-JPは明示的に選択してください。</p>
+              </div>
               <div id="sched-headers-hint" style="display:none;margin-bottom:8px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1e40af;"></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
@@ -1944,6 +2010,23 @@ Object.assign(Settings, {
                 病床マップに当日予定アイコンを表示
               </label>
 
+              <div style="display:grid;grid-template-columns:minmax(150px,1fr) minmax(120px,1fr);gap:10px;margin:0 0 8px 24px;">
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">アイコン</label>
+                  <select id="sched-form-bed-map-icon" class="form-input">
+                    ${bedMapIconOptions.map(option => `<option value="${option.value}">${option.label}</option>`).join('')}
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">略称 <span style="font-weight:400;color:#718096;">（最大10文字）</span></label>
+                  <input type="text" id="sched-form-bed-map-abbreviation" class="form-input" maxlength="10" placeholder="例: 手術">
+                </div>
+              </div>
+              <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;margin:0 0 8px 24px;">
+                <input type="checkbox" id="sched-form-bed-map-bold" style="width:15px;height:15px;"> 略称を太字で表示
+              </label>
+              <div id="sched-form-bed-map-preview" style="margin:0 0 14px 24px;font-size:11px;color:#64748b;"></div>
+
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
                 <input type="checkbox" id="sched-form-active" checked style="width:16px;height:16px;">
                 この設定を有効にする
@@ -1962,6 +2045,28 @@ Object.assign(Settings, {
 
     const overlay = body.querySelector('#sched-feed-form-overlay');
     const colorInput = body.querySelector('#sched-form-color');
+    const bedMapIconInput = body.querySelector('#sched-form-bed-map-icon');
+    const bedMapAbbreviationInput = body.querySelector('#sched-form-bed-map-abbreviation');
+    const bedMapBoldInput = body.querySelector('#sched-form-bed-map-bold');
+    const bedMapEnabledInput = body.querySelector('#sched-form-bed-map');
+    const bedMapPreview = body.querySelector('#sched-form-bed-map-preview');
+
+    const updateBedMapPreview = () => {
+      const selectedIcon = bedMapIconOptions.some(option => option.value === bedMapIconInput.value)
+        ? bedMapIconInput.value
+        : 'calendar-check';
+      const abbreviation = bedMapAbbreviationInput.value.trim().slice(0, 10) || '略称';
+      if (!bedMapEnabledInput.checked) {
+        bedMapPreview.textContent = '病床マップには表示されません';
+        return;
+      }
+      bedMapPreview.innerHTML = `表示例: <span style="display:inline-flex;align-items:center;gap:2px;padding:2px 5px;border:1px solid ${colorInput.value};border-radius:4px;color:${colorInput.value};font-weight:${bedMapBoldInput.checked ? '800' : '600'};"><i class="fas fa-${selectedIcon}"></i>${UI.escapeHTML(abbreviation)}</span>`;
+    };
+    [bedMapIconInput, bedMapAbbreviationInput, bedMapBoldInput, bedMapEnabledInput, colorInput]
+      .forEach(input => input.addEventListener('input', updateBedMapPreview));
+    bedMapIconInput.addEventListener('change', updateBedMapPreview);
+    bedMapBoldInput.addEventListener('change', updateBedMapPreview);
+    bedMapEnabledInput.addEventListener('change', updateBedMapPreview);
 
     // カラーチップ選択
     body.querySelectorAll('.sched-color-chip').forEach(chip => {
@@ -1970,6 +2075,7 @@ Object.assign(Settings, {
         chip.style.border = '2px solid #1a202c';
         chip.style.transform = 'scale(1.25)';
         colorInput.value = chip.dataset.color;
+        updateBedMapPreview();
       });
     });
 
@@ -2004,14 +2110,17 @@ Object.assign(Settings, {
     body.querySelector('#sched-btn-load-headers').addEventListener('click', async () => {
       const dir = body.querySelector('#sched-form-dir').value.trim();
       if (!dir) { UI.toast('先に監視フォルダを指定してください', 'warning'); return; }
-      if (!window.electronAPI?.readCsvHeaders) { UI.toast('この機能はElectron環境でのみ利用できます', 'warning'); return; }
+      if (!this._isChildTerminal() && !window.electronAPI?.readCsvHeaders) { UI.toast('この機能はElectron環境でのみ利用できます', 'warning'); return; }
+      const requestedEncoding = body.querySelector('#sched-form-encoding').value;
       const btn = body.querySelector('#sched-btn-load-headers');
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 読み込み中...';
       try {
-        const result = await window.electronAPI.readCsvHeaders(dir);
+        const result = await this._readParentScheduleFeedHeaders(dir, requestedEncoding);
         if (!result.ok) {
-          const msg = result.reason === 'no_csv' ? 'フォルダ内にCSVファイルが見つかりません' : `読み取りエラー: ${result.reason}`;
+          const msg = result.reason === 'no_csv'
+            ? 'フォルダ内にCSVファイルが見つかりません'
+            : result.message || `読み取りエラー: ${result.reason}`;
           UI.toast(msg, 'warning');
           return;
         }
@@ -2019,7 +2128,8 @@ Object.assign(Settings, {
         datalist.innerHTML = result.headers.map(h => `<option value="${UI.escapeHTML(h)}">`).join('');
         const hint = body.querySelector('#sched-headers-hint');
         hint.style.display = 'block';
-        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${UI.escapeHTML(result.filename)}</strong> のヘッダを読み込みました: ${result.headers.map(h => `<code>${UI.escapeHTML(h)}</code>`).join(' / ')}`;
+        const detectedEncoding = encodingLabels[result.encoding] || result.encoding || encodingLabels.auto;
+        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${UI.escapeHTML(result.filename)}</strong> を ${UI.escapeHTML(detectedEncoding)} で読み込みました: ${result.headers.map(h => `<code>${UI.escapeHTML(h)}</code>`).join(' / ')}`;
       } catch (e) {
         UI.toast('CSVの読み込みに失敗しました: ' + e.message, 'danger');
       } finally {
@@ -2039,7 +2149,13 @@ Object.assign(Settings, {
       body.querySelector('#sched-form-id').value = feed?.id || '';
       body.querySelector('#sched-form-name').value = feed?.name || '';
       body.querySelector('#sched-form-dir').value = feed?.watch_dir || '';
+      body.querySelector('#sched-form-encoding').value = feed?.encoding || 'auto';
       body.querySelector('#sched-form-bed-map').checked = feed ? (feed.show_on_bed_map !== false) : true;
+      body.querySelector('#sched-form-bed-map-icon').value = bedMapIconOptions.some(option => option.value === feed?.bed_map_icon)
+        ? feed.bed_map_icon
+        : 'calendar-check';
+      body.querySelector('#sched-form-bed-map-abbreviation').value = String(feed?.bed_map_abbreviation || '').trim().slice(0, 10);
+      body.querySelector('#sched-form-bed-map-bold').checked = feed?.bed_map_bold === true;
       body.querySelector('#sched-form-active').checked = feed ? (feed.is_active !== false) : true;
 
       const color = feed?.color || '#7c3aed';
@@ -2047,6 +2163,7 @@ Object.assign(Settings, {
       body.querySelectorAll('.sched-color-chip').forEach(c => {
         c.style.border = c.dataset.color === color ? '2px solid #1a202c' : '2px solid transparent';
       });
+      updateBedMapPreview();
 
       const sched = feed?.schedule || { mode: 'realtime' };
       const modeRadio = body.querySelector(`input[name="sched-form-mode"][value="${sched.mode || 'realtime'}"]`);
@@ -2112,15 +2229,22 @@ Object.assign(Settings, {
 
       const feedId = body.querySelector('#sched-form-id').value;
       const wardIds = [...body.querySelectorAll('.sched-ward-chk:checked')].map(c => c.value);
+      const bedMapIcon = bedMapIconOptions.some(option => option.value === bedMapIconInput.value)
+        ? bedMapIconInput.value
+        : 'calendar-check';
       const data = {
         id: feedId || `feed-${Date.now()}`,
         name,
         color: colorInput.value,
         watch_dir: watchDir,
+        encoding: body.querySelector('#sched-form-encoding').value,
         schedule,
         mapping,
         retention_policy: { action: body.querySelector('input[name="sched-form-policy"]:checked').value },
         show_on_bed_map: body.querySelector('#sched-form-bed-map').checked,
+        bed_map_icon: bedMapIcon,
+        bed_map_abbreviation: bedMapAbbreviationInput.value.trim().slice(0, 10),
+        bed_map_bold: bedMapBoldInput.checked,
         is_active: body.querySelector('#sched-form-active').checked,
         ward_ids: wardIds, // 空配列 = 全病棟
       };

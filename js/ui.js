@@ -16,6 +16,48 @@ const UI = {
     { icon: 'fa-hospital-symbol', label: '検査室' },
   ],
 
+  // 院内オフライン環境でも表示できるローカルSVG。DB値から任意パスを生成せず、
+  // コード／名称を既知の画像へ対応付けることで、画像読み込みによるパストラバーサルを防ぐ。
+  EXAM_IMAGE_BY_KEY: Object.freeze({
+    ct: 'assets/exam-icons/ct.svg',
+    mri: 'assets/exam-icons/mri.svg',
+    xp: 'assets/exam-icons/xray.svg',
+    xray: 'assets/exam-icons/xray.svg',
+    endo: 'assets/exam-icons/endoscopy.svg',
+    endoscopy: 'assets/exam-icons/endoscopy.svg',
+    echo: 'assets/exam-icons/ultrasound.svg',
+    ultrasound: 'assets/exam-icons/ultrasound.svg',
+    angio: 'assets/exam-icons/angiography.svg',
+    angiography: 'assets/exam-icons/angiography.svg',
+    default: 'assets/exam-icons/generic.svg',
+  }),
+
+  _examImageKey(item) {
+    const value = item || {};
+    const raw = `${value.code || ''} ${value.name || ''} ${value.icon || ''}`.toLowerCase();
+    if (/mri|magnet/.test(raw)) return 'mri';
+    if (/\bct\b/.test(raw)) return 'ct';
+    if (/\bxp\b|x-ray|xray|x線|レントゲン|radiation/.test(raw)) return 'xray';
+    if (/endo|内視鏡|procedures/.test(raw)) return 'endo';
+    if (/echo|エコー|ultrasound|wave-square/.test(raw)) return 'echo';
+    if (/angio|血管撮影/.test(raw)) return 'angio';
+    return 'default';
+  },
+
+  getExamRoomImage(room) {
+    return this.EXAM_IMAGE_BY_KEY[this._examImageKey(room)] || this.EXAM_IMAGE_BY_KEY.default;
+  },
+
+  getExamTypeImage(type) {
+    return this.EXAM_IMAGE_BY_KEY[this._examImageKey(type)] || this.EXAM_IMAGE_BY_KEY.default;
+  },
+
+  examImage(item, kind = 'type', className = 'exam-master-image') {
+    const src = kind === 'room' ? this.getExamRoomImage(item) : this.getExamTypeImage(item);
+    const alt = item?.name ? `${String(item.name)}の画像` : '検査画像';
+    return `<img class="${this.escapeHTML(className)}" src="${src}" alt="${this.escapeHTML(alt)}" loading="lazy" decoding="async">`;
+  },
+
   normalizeExamRoomIcon(icon) {
     const value = String(icon || '').trim();
     return this.EXAM_ROOM_ICON_PRESETS.some(item => item.icon === value) ? value : 'fa-x-ray';
@@ -92,7 +134,7 @@ const UI = {
 
   /* ---------- トースト通知 ---------- */
   // innerHTML を避け DOM API で構築することでXSS防止
-  toast(message, type = 'info', duration = 4000) {
+  toast(message, type = 'info', duration = 4000, { actionLabel = '', onAction = null } = {}) {
     const container = document.getElementById('toast-container');
     if (!container) return;
     const icons = { info: 'info-circle', success: 'check-circle', warning: 'exclamation-triangle', danger: 'bell' };
@@ -106,11 +148,44 @@ const UI = {
     el.appendChild(icon);
     el.appendChild(document.createTextNode(' '));
     el.appendChild(text);
+    let actionButton = null;
+    if (actionLabel && typeof onAction === 'function') {
+      actionButton = document.createElement('button');
+      actionButton.type = 'button';
+      actionButton.className = 'toast-action';
+      actionButton.textContent = actionLabel;
+      el.appendChild(actionButton);
+    }
     container.appendChild(el);
-    setTimeout(() => {
+    const closeToast = () => {
       el.classList.add('hide');
       setTimeout(() => el.remove(), 250);
-    }, duration);
+    };
+    const timerId = setTimeout(closeToast, duration);
+    if (actionButton) {
+      actionButton.addEventListener('click', async () => {
+        clearTimeout(timerId);
+        actionButton.disabled = true;
+        actionButton.textContent = '送信中…';
+        try {
+          const completed = await onAction();
+          if (completed === false) {
+            actionButton.disabled = false;
+            actionButton.textContent = actionLabel;
+            setTimeout(closeToast, 5000);
+            return;
+          }
+          actionButton.textContent = '確認済み';
+          setTimeout(closeToast, 600);
+        } catch (error) {
+          console.error('[Toast Action]', error);
+          actionButton.disabled = false;
+          actionButton.textContent = actionLabel;
+          setTimeout(closeToast, 5000);
+        }
+      });
+    }
+    return el;
   },
 
   /* ---------- 確認ダイアログ（デザイン#5: ネイティブconfirm()の代替） ---------- */
@@ -281,9 +356,20 @@ const UI = {
     return s > e ? (cur >= s || cur < e) : (cur >= s && cur < e);
   },
 
+  _isAutomaticSpeechEnabled() {
+    const shareMode = localStorage.getItem('cfg_share_mode');
+    const isChild = shareMode === 'client' || shareMode === 'child';
+    const localValue = isChild ? localStorage.getItem('tbs_notification_auto_speech') : null;
+    if (localValue !== null) return localValue !== 'false';
+    const rec = typeof AppState !== 'undefined'
+      ? AppState.systemSettings?.find(s => s.id === 'notification_auto_speech')
+      : null;
+    return rec?.value !== 'false';
+  },
+
   /* ---------- 通知音の再生 (Web Audio API によるシンセサイズ合成) ---------- */
-  playNotificationSound(type, forceVolume) {
-    if (this._isNotifMuted()) return;
+  playNotificationSound(type, forceVolume, { ignoreMute = false } = {}) {
+    if (!ignoreMute && this._isNotifMuted()) return;
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) return;
     const vol = forceVolume !== undefined ? forceVolume : this._getNotifVolume();
@@ -425,47 +511,22 @@ const UI = {
 
   formatBedName(bed) {
     if (!bed) return '?';
-    let displayNo = bed.bed_number;
-    let joinChar = '-';
-    const mappingSetting = AppState.systemSettings?.find(s => s.id === 'import_mapping');
-    if (mappingSetting && mappingSetting.value) {
-      try {
-        const mapping = JSON.parse(mappingSetting.value);
-        if (mapping.join_char !== undefined) {
-          joinChar = mapping.join_char;
-        }
-      } catch (e) {}
-    }
-
-    let bCode = bed.bed_code || '';
-    if (!bCode && bed.bed_number && bed.room_number) {
-      const parts = bed.bed_number.split(joinChar);
-      if (parts.length > 1 && parts[0] === bed.room_number) {
-        bCode = parts.slice(1).join(joinChar);
-      }
-    }
-
-    if (bed.room_number && bed.bed_number.startsWith(bed.room_number)) {
-      const suffix = bed.bed_number.substring(bed.room_number.length);
-      displayNo = `<span style="font-weight: 800;">${this.escapeHTML(bed.room_number)}</span><span style="color:#718096; font-weight: normal; font-size: 10px;">${this.escapeHTML(suffix)}</span>`;
-    } else if (bed.room_number) {
-      if (bCode) {
-        displayNo = `<span style="font-weight: 800;">${this.escapeHTML(bed.room_number)}</span><span style="color:#718096; font-weight: normal; font-size: 10px;">-${this.escapeHTML(bCode)}</span>`;
-      } else {
-        displayNo = `<span style="font-weight: 800;">${this.escapeHTML(bed.room_number)}</span>`;
-      }
-    } else {
-      displayNo = `<span style="font-weight: 800;">${this.escapeHTML(bed.bed_number)}</span>`;
-    }
-    return displayNo;
+    // マスター画面の「病床番号（結合）」と同じ bed_number を表示の正とする。
+    // room_number は物理的な病室番号であり、ここで連結すると 706-712 のような
+    // マスターに存在しない病床番号になるため表示には混ぜない。
+    return `<span style="font-weight:800;">${this.escapeHTML(bed.bed_number || bed.room_number || '?')}</span>`;
   },
 
   // confirm() ダイアログ用: HTMLタグなしのプレーンテキスト病床名
   formatBedNamePlain(bed) {
     if (!bed) return '?';
-    if (bed.room_number && bed.bed_number.startsWith(bed.room_number)) {
-      return bed.bed_number;
-    }
-    return bed.room_number ? `${bed.room_number}-${bed.bed_number}` : bed.bed_number;
+    return String(bed.bed_number || bed.room_number || '?');
+  },
+
+  // 検査室でもマスターの「病床番号（結合）」に接尾辞だけを付けて表示する。
+  formatExamBedLocationPlain(bed) {
+    if (!bed) return '?';
+    const bedNumber = this.formatBedNamePlain(bed);
+    return /(?:号床|床)$/.test(bedNumber) ? bedNumber : `${bedNumber}号床`;
   },
 };

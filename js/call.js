@@ -116,9 +116,6 @@ const CallPanel = {
       <div class="call-section-title"><i class="fas fa-phone-alt"></i> 検査室へ発信 (WebRTC / アナウンス)</div>
       <div class="call-room-list">${roomBtns || '<div class="text-muted text-sm">検査室データ読込中...</div>'}</div>
       <div class="divider"></div>
-      <div class="call-history-title"><i class="fas fa-history"></i> 最近の通話履歴</div>
-      <div id="call-history-mini" style="margin-bottom: 8px;"></div>
-      <div class="divider"></div>
       <div class="call-history-title" style="display:flex; justify-content:space-between; align-items:center;">
         <span><i class="fas fa-bullhorn"></i> アナウンス受信履歴</span>
         <div style="display:flex; gap:4px;">
@@ -145,7 +142,6 @@ const CallPanel = {
       });
     });
 
-    this._loadRecentCalls();
     this._renderAnnouncementHistory();
   },
 
@@ -194,34 +190,6 @@ const CallPanel = {
         <div style="color:#475569; padding-left:14px; word-break:break-all; line-height:1.2; font-style:italic;">"${UI.escapeHTML(a.text)}"</div>
       </div>
     `).join('');
-  },
-
-  // ── 最近の発信・通話履歴 ──
-  async _loadRecentCalls() {
-    const el = document.getElementById('call-history-mini');
-    if (!el) return;
-    try {
-      const calls = await API.getCallHistory();
-      if (calls.length === 0) {
-        el.innerHTML = '<div style="font-size:11px;color:#94a3b8;padding:4px 0;">通話履歴なし</div>';
-        return;
-      }
-      const myId = this.getMyId();
-      el.innerHTML = calls.slice(0, 6).map(c => {
-        const fromId = c.from_id ?? (c.caller_type === 'ward' ? c.ward_id : c.exam_room_id);
-        const toId = c.to_id ?? (c.caller_type === 'ward' ? c.exam_room_id : c.ward_id);
-        const counterpartId = fromId === myId ? toId : fromId;
-        const counterpartName = counterpartId ? this.getNameById(counterpartId) : '不明';
-        const iconColor = c.status === 'missed' ? '#dc2626' : '#16a34a';
-        return `
-          <div class="call-entry">
-            <span><i class="fas fa-phone-alt" style="color:${iconColor};font-size:10px;"></i> ${UI.escapeHTML(counterpartName)}</span>
-            <span class="text-muted">${UI.formatTime(c.started_at)}</span>
-          </div>`;
-      }).join('');
-    } catch (e) {
-      el.innerHTML = '';
-    }
   },
 
   // ── 病棟側から呼び出す（検査室画面用）──
@@ -372,7 +340,7 @@ const CallPanel = {
       }
     }
     else if (msg.type === 'speech') {
-      this.playAnnouncement(msg.text, msg.from);
+      this.playAnnouncement(msg.text, msg.from, { automatic: msg.automatic === true });
     }
   },
 
@@ -1217,7 +1185,6 @@ const CallPanel = {
     this._callSourceId = null;
 
     // 通話履歴リロード
-    this._loadRecentCalls();
     if (typeof History !== 'undefined' && History._loadCalls) {
       History._loadCalls();
     }
@@ -1285,13 +1252,22 @@ const CallPanel = {
     }
   },
 
-  playIncomingRingTone() {
+  playIncomingRingTone({ sound = null, ignoreMute = false } = {}) {
     this.stopRingTone();
+    if (!ignoreMute && UI._isNotifMuted()) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       this._audioCtx = new AudioCtx();
+      const shareMode = localStorage.getItem('cfg_share_mode');
+      const isChild = shareMode === 'client' || shareMode === 'child';
+      const localRingSound = isChild ? localStorage.getItem('tbs_incoming_ring_sound') : null;
       const ringSetting = AppState.systemSettings?.find(s => s.id === 'incoming_ring_sound');
-      const ringSound = ringSetting?.value || 'ring';
+      const ringSound = sound || localRingSound || ringSetting?.value || 'ring';
+      const volume = UI._getNotifVolume();
+      if (volume <= 0) {
+        this.stopRingTone();
+        return;
+      }
       
       let isPlaying = false;
       const play = () => {
@@ -1319,9 +1295,8 @@ const CallPanel = {
         osc2.type = rf[3] || 'sine';
         osc2.frequency.setValueAtTime(rf[1], this._audioCtx.currentTime);
         
-        const vol = UI._getNotifVolume();
         const master = this._audioCtx.createGain();
-        master.gain.setValueAtTime(vol, this._audioCtx.currentTime);
+        master.gain.setValueAtTime(volume, this._audioCtx.currentTime);
         master.connect(this._audioCtx.destination);
 
         gain.gain.setValueAtTime(0, this._audioCtx.currentTime);
@@ -1362,14 +1337,15 @@ const CallPanel = {
   },
 
   // ── 音声合成（TTS / SpeechSynthesis）再生機能 ──
-  playAnnouncement(text, fromId) {
+  playAnnouncement(text, fromId, { automatic = false } = {}) {
     const fromName = this.getNameById(fromId);
     const annObj = {
       id: Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       text: text,
       fromId: fromId,
       fromName: fromName,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      automatic,
     };
 
     // 履歴に追加 (上限50件)
@@ -1383,6 +1359,9 @@ const CallPanel = {
 
     // 画面にトースト表示
     UI.toast(`【音声通知】${fromName}: "${text}"`, 'info');
+
+    // 自動アナウンスは端末ごとに停止できる。履歴とトーストは残す。
+    if ((automatic && !UI._isAutomaticSpeechEnabled()) || UI._isNotifMuted()) return;
 
     // キューに追加
     this.announcementQueue.push(annObj);
@@ -1401,12 +1380,23 @@ const CallPanel = {
 
     this.isSpeakingAnnouncement = true;
     const item = this.announcementQueue.shift();
+    const volume = UI._getNotifVolume();
+    if (
+      volume <= 0 ||
+      UI._isNotifMuted() ||
+      (item.automatic && !UI._isAutomaticSpeechEnabled())
+    ) {
+      this.isSpeakingAnnouncement = false;
+      setTimeout(() => this.processNextAnnouncement(), 0);
+      return;
+    }
 
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(item.text);
       utterance.lang = 'ja-JP';
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
+      utterance.volume = volume;
 
       // 発話終了およびエラー時のイベントハンドラを設定してキューを回す
       utterance.onend = () => {
@@ -1423,6 +1413,15 @@ const CallPanel = {
 
       // チャイム（ピンポンパンポーン）の後に喋る
       this.playChimeBeforeSpeech(() => {
+        if (
+          UI._getNotifVolume() <= 0 ||
+          UI._isNotifMuted() ||
+          (item.automatic && !UI._isAutomaticSpeechEnabled())
+        ) {
+          this.isSpeakingAnnouncement = false;
+          setTimeout(() => this.processNextAnnouncement(), 0);
+          return;
+        }
         window.speechSynthesis.speak(utterance);
       });
     } else {
@@ -1441,6 +1440,10 @@ const CallPanel = {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
+      const volume = UI._getNotifVolume();
+      const master = ctx.createGain();
+      master.gain.setValueAtTime(volume, ctx.currentTime);
+      master.connect(ctx.destination);
       
       const notes = [554.37, 440.00, 493.88, 329.63]; // C#5, A4, B4, E4
       let time = ctx.currentTime;
@@ -1457,7 +1460,7 @@ const CallPanel = {
         gain.gain.linearRampToValueAtTime(0, time + 0.4);
         
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(master);
         osc.start(time);
         osc.stop(time + 0.45);
         

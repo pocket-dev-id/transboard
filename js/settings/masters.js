@@ -916,7 +916,7 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(r => `
         <tr class="${r.is_active === false ? 'row--inactive' : ''}">
-          <td><span class="room-icon-preview"><i class="fas ${UI.escapeHTML(UI.normalizeExamRoomIcon(r.icon))}"></i></span></td>
+          <td><span class="room-icon-preview">${UI.examImage(r, 'room')}</span></td>
           <td class="font-bold">${UI.escapeHTML(r.name)}</td>
           <td>${UI.escapeHTML(r.code)}</td>
           <td>${UI.escapeHTML(r.floor || '')}</td>
@@ -1642,6 +1642,7 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(t => `
         <tr class="${t.is_active === false ? 'row--inactive' : ''}">
+          <td><span class="room-icon-preview">${UI.examImage(t, 'type')}</span></td>
           <td class="font-bold">${UI.escapeHTML(t.name)}</td>
           <td>${UI.escapeHTML(t.code)}</td>
           <td>${UI.escapeHTML(t.standard_duration_min)}分</td>

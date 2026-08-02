@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>MRI</title>
+  <rect x="5" y="5" width="54" height="54" rx="13" fill="#ede9fe"/>
+  <path d="M18 17h15a14 14 0 0 1 0 28H18" fill="none" stroke="#6d28d9" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="31" cy="31" r="7" fill="#c4b5fd" stroke="#6d28d9" stroke-width="3"/>
+  <path d="M17 50h30" stroke="#6d28d9" stroke-width="4" stroke-linecap="round"/>
+</svg>

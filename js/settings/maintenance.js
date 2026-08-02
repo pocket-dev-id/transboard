@@ -140,6 +140,21 @@ Object.assign(Settings, {
         </div>
       </div>
 
+      ${currentMode === 'parent' ? `
+      <div class="settings-panel" style="margin-bottom:16px; border-color:#fecaca;">
+        <div class="settings-panel-header">
+          <h3><i class="fas fa-broom"></i> 緊急時の操作</h3>
+          <span class="settings-badge" style="background:#fee2e2;color:#b91c1c;">要確認</span>
+        </div>
+        <p class="settings-note" style="margin-bottom:10px;">
+          端末間の状態が復旧できない場合に限り、出棟中の移送情報を一括リセットします。患者情報・病床マスタ・履歴は削除されません。
+        </p>
+        <button class="btn btn-outline btn-sm" id="btn-reset-active-events" style="border-color:#dc2626;color:#b91c1c;">
+          <i class="fas fa-broom"></i> 進行中の移送をリセット
+        </button>
+      </div>
+      ` : ''}
+
       <!-- データベースの保存先設定 (Desktop・親機専用) -->
       ${window.electronAPI && storageInfo && currentMode === 'parent' ? `
       <div class="settings-panel" style="margin-bottom:16px;">
@@ -216,6 +231,18 @@ Object.assign(Settings, {
       </div>
       ` : ''}
     `;
+
+    document.getElementById('btn-reset-active-events')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await App.resetActiveEvents();
+      } catch (e) {
+        UI.toast('リセットに失敗しました: ' + e.message, 'danger');
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     // ── このアプリについて / 診断情報エクスポート ──
     document.getElementById('btn-export-diagnostics')?.addEventListener('click', async () => {
@@ -351,9 +378,10 @@ Object.assign(Settings, {
         const val = document.getElementById('cfg-event-retention-days')?.value || '0';
         saveRetentionBtn.disabled = true;
         try {
-          await API.patch('system_settings', 'event_retention_days', { value: val });
+          const saved = await API.patch('system_settings', 'event_retention_days', { value: val });
           const obj = AppState.systemSettings?.find(s => s.id === 'event_retention_days');
-          if (obj) obj.value = val; else AppState.systemSettings.push({ id: 'event_retention_days', value: val });
+          if (obj) Object.assign(obj, saved);
+          else AppState.systemSettings.push(saved);
           UI.toast('保持期間を保存しました', 'success');
         } catch (e) {
           UI.toast('保存に失敗しました: ' + e.message, 'danger');
@@ -371,9 +399,10 @@ Object.assign(Settings, {
         const val = document.getElementById('cfg-bed-occupancy-retention-days')?.value || '7';
         saveOccupancyRetentionBtn.disabled = true;
         try {
-          await API.patch('system_settings', 'bed_occupancy_retention_days', { value: val });
+          const saved = await API.patch('system_settings', 'bed_occupancy_retention_days', { value: val });
           const obj = AppState.systemSettings?.find(s => s.id === 'bed_occupancy_retention_days');
-          if (obj) obj.value = val; else AppState.systemSettings.push({ id: 'bed_occupancy_retention_days', value: val });
+          if (obj) Object.assign(obj, saved);
+          else AppState.systemSettings.push(saved);
           UI.toast('保持期間を保存しました', 'success');
         } catch (e) {
           UI.toast('保存に失敗しました: ' + e.message, 'danger');

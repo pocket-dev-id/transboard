@@ -126,7 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
 
   // 指定フォルダ内の最初のCSVのヘッダ行を読み取る
-  readCsvHeaders: (folderPath) => ipcRenderer.invoke('read-csv-headers', folderPath),
+  readCsvHeaders: (folderPath, encoding = 'auto') => ipcRenderer.invoke('read-csv-headers', { folderPath, encoding }),
 
   // スクリーンセイバー・ディスプレイスリープの抑制
   setPowerSave: (prevent) => ipcRenderer.invoke('set-power-save', prevent),

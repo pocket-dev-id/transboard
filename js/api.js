@@ -420,12 +420,23 @@ const API = {
     });
   },
 
+  async getExamRoomStatus(roomId) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const qs = new URLSearchParams({
+      exam_room_id: roomId || '',
+      today_ms: String(today.getTime()),
+    }).toString();
+    const res = await this._fetch(`tables/transfer_events/exam-room-status?${qs}`);
+    return {
+      events: requireDataArray(res, '検査室の進捗情報'),
+      recentStatusLogs: Array.isArray(res?.recentStatusLogs) ? res.recentStatusLogs : [],
+    };
+  },
+
   async getEventsForExamRoom(roomId) {
-    const res = await this.getAll('transfer_events');
-    return res.data.filter(e =>
-      e.exam_room_id === roomId &&
-      CONFIG.ACTIVE_STATUSES.includes(e.current_status)
-    );
+    const result = await this.getExamRoomStatus(roomId);
+    return result.events;
   },
 
   async createEvent(data) {
@@ -591,6 +602,14 @@ const API = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ eventId, expectedStatus: fromStatus || null, note: String(changedBy || '') }),
+    }));
+  },
+
+  async acknowledgeStatusLog(logId, wardId) {
+    return ensureMutationSuccess(await this._fetch('status/ack', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logId, wardId }),
     }));
   },
 
