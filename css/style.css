@@ -2356,6 +2356,7 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 .settings-badge--shared { background: #f1f5f9; color: #475569; }
 .settings-badge--parent { background: #fee2e2; color: #b91c1c; }
 .settings-badge--terminal { background: #e0f2fe; color: #0369a1; }
+.settings-badge--child { background: #dbeafe; color: #1e40af; }
 
 /* 設定テーブル内の入力・カラーピッカー共通スタイル（デザイン#1） */
 .settings-input-text {

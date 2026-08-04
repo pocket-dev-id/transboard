@@ -154,12 +154,10 @@ const Priority = {
         ${timeHtml}
         ${(() => {
           if (!event.escort_staff_id) return '';
-          const staffName = UI.escapeHTML(AppState.getStaffById(event.escort_staff_id)?.name || '--');
+          const staffName = AppState.getStaffById(event.escort_staff_id)?.name || '--';
           // 実際に移動中(MOVING/PICKUP_REQUIRED)か、検査中等で病棟待機中かで表示を変える
           const isActive = CONFIG.ESCORT_ACTIVE_STATUSES.includes(status);
-          return isActive
-            ? `<div class="text-xs priority-escort priority-escort--active"><i class="fas fa-walking"></i> ${staffName}</div>`
-            : `<div class="text-xs priority-escort priority-escort--standby"><i class="fas fa-user-nurse"></i> ${staffName}（待機）</div>`;
+          return UI.escortBadge(staffName, isActive, 'priority-escort', 'text-xs');
         })()}
       </div>
     `;

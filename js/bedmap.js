@@ -20,8 +20,7 @@ const BedMap = {
     const beds = AppState.beds.filter(b => b.ward_id === ward);
 
     // 同期: 患者名表示のクラスを設定 (デフォルト非表示が基準)
-    const chk = document.getElementById('chk-show-patient-names');
-    const showNames = chk ? chk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');
+    const showNames = !UI.isPatientMaskEnabled();
     if (showNames) {
       grid.classList.remove('hide-patient-names');
     } else {
@@ -256,9 +255,7 @@ const BedMap = {
       const lastName = staff.name.split(/[\s　]/)[0];
       // 実際に移動中(MOVING/PICKUP_REQUIRED)か、検査中等で病棟へ戻り手離れしている状態かで表示を変える
       const isActive = CONFIG.ESCORT_ACTIVE_STATUSES.includes(status);
-      staffHtml = isActive
-        ? `<div class="bed-staff-badge bed-staff-badge--active" style="margin-bottom:2px;"><i class="fas fa-walking"></i> ${UI.escapeHTML(lastName)}</div>`
-        : `<div class="bed-staff-badge bed-staff-badge--standby" style="margin-bottom:2px;"><i class="fas fa-user-nurse"></i> ${UI.escapeHTML(lastName)}（待機）</div>`;
+      staffHtml = UI.escortBadge(lastName, isActive, 'bed-staff-badge', '', 'margin-bottom:2px;');
     }
 
     let icBadgeHtml = '';
@@ -282,8 +279,7 @@ const BedMap = {
     const scheduleBadgeHtml = this._renderTodayScheduleBadges(bed);
 
     // 患者情報の表示部分の作成 (マスク適用時は直接 "＊＊＊＊" に置き換え)
-    const nameChk = document.getElementById('chk-show-patient-names');
-    const showNames = nameChk ? nameChk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');
+    const showNames = !UI.isPatientMaskEnabled();
 
     let patientHtml = '';
     if (bed.patient_name) {

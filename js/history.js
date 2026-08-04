@@ -74,8 +74,7 @@ const HistoryView = {
 
     const query = document.getElementById('history-search')?.value.toLowerCase().trim() || '';
     const statusFilter = document.getElementById('history-status-filter')?.value || '';
-    const nameChk = document.getElementById('chk-show-patient-names');
-    const showNames = nameChk ? nameChk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');
+    const showNames = !UI.isPatientMaskEnabled();
 
     const filtered = AppState.allEvents.filter(e => {
       const bed = AppState.getBedById(e.bed_id);
@@ -152,8 +151,7 @@ const HistoryView = {
 
     const query = document.getElementById('history-search')?.value.toLowerCase().trim() || '';
     const statusFilter = document.getElementById('history-status-filter')?.value || '';
-    const nameChk = document.getElementById('chk-show-patient-names');
-    const showNames = nameChk ? nameChk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');
+    const showNames = !UI.isPatientMaskEnabled();
 
     const filtered = AppState.statusLogs.filter(log => {
       const event = AppState.allEvents.find(e => e.id === log.transfer_event_id);
@@ -260,8 +258,7 @@ const HistoryView = {
     try {
       const headers = ['日時', '病床', '患者名', '患者ID', '検査種別', '検査室', '付き添いスタッフ', '現在のステータス', '記録作成時間', '移送開始時間', '到着時間', '帰棟時間', '備考'];
       
-      const nameChk = document.getElementById('chk-show-patient-names');
-      const showNames = nameChk ? nameChk.checked : (localStorage.getItem('cfg_show_patient_names') === 'true');
+      const showNames = !UI.isPatientMaskEnabled();
 
       const rows = AppState.allEvents.map(e => {
         const bed = AppState.getBedById(e.bed_id);

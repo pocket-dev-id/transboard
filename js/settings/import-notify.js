@@ -1314,16 +1314,11 @@ Object.assign(Settings, {
         }
 
         // AppStateのキャッシュも更新
-        const updateSetting = (id, val) => {
-          const obj = AppState.systemSettings?.find(s => s.id === id);
-          if (obj) obj.value = val;
-          else AppState.systemSettings.push({ id, value: val });
-        };
-        updateSetting('smb_auth_mode', smbAuthMode);
-        updateSetting('smb_username', smbUsername);
-        updateSetting('smb_password', smbPassword);
-        updateSetting('show_sync_time', showSyncTimeVal);
-        updateSetting('show_import_time', showImportTimeVal);
+        this._writeLocalSetting('smb_auth_mode', smbAuthMode);
+        this._writeLocalSetting('smb_username', smbUsername);
+        this._writeLocalSetting('smb_password', smbPassword);
+        this._writeLocalSetting('show_sync_time', showSyncTimeVal);
+        this._writeLocalSetting('show_import_time', showImportTimeVal);
 
         // メインプロセスへ変更通知（監視先およびトリガーを再設定）
         const watchResult = await this._runParentWatchReload(newPath);

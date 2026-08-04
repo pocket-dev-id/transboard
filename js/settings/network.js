@@ -116,7 +116,7 @@ Object.assign(Settings, {
           <div>
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-project-diagram"></i> このPCの役割を選択
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; font-weight:800;">個別設定（PCごと）</span>
+              <span class="settings-badge settings-badge--terminal">個別設定（PCごと）</span>
             </h4>
             <div style="display:flex; flex-direction:column; gap:12px;">
               <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
@@ -140,7 +140,7 @@ Object.assign(Settings, {
           <div id="client-config-section" style="border-top:1px solid #e2e8f0; padding-top:16px; display:${currentMode === 'client' ? 'block' : 'none'};">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-plug"></i> 親機への接続設定
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#dbeafe; color:#1e40af; font-weight:800;">子機専用設定</span>
+              <span class="settings-badge settings-badge--child">子機専用設定</span>
             </h4>
             <div class="form-row" style="margin-bottom:12px;">
               <label>親機PCのIPアドレス / ホスト名</label>
@@ -178,7 +178,7 @@ Object.assign(Settings, {
             <div id="parent-share-onboarding" style="display:${isStandaloneMode ? 'none' : 'block'};">
               <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
                 <i class="fas fa-info-circle"></i> 子機から接続するための情報
-                <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#fee2e2; color:#b91c1c; font-weight:800;">親機専用情報</span>
+                <span class="settings-badge settings-badge--parent">親機専用情報</span>
               </h4>
               <p style="font-size:11px; color:#718096; margin:0 0 8px 0;">子機PCを設定する際は、この親機PCの以下のいずれかのIPアドレスを接続先に指定してください：</p>
               <ul style="font-size:12px; line-height:1.6; margin:0; padding-left:20px; color:#4a5568;">
@@ -204,7 +204,7 @@ Object.assign(Settings, {
           <div id="shared-communication-section" style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-phone-alt"></i> WebRTC音声通話機能の設定
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
+              <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-enable-webrtc-call" ${isWebRtcEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
@@ -244,7 +244,7 @@ Object.assign(Settings, {
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-id-card"></i> 患者ICカード登録機能（オプション）
-              <span style="font-size:10px; padding:2px 6px; border-radius:4px; background:#f1f5f9; color:#475569; font-weight:800;">全体同期・共通設定</span>
+              <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-enable-patient-ic" ${isIcEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
@@ -501,14 +501,9 @@ Object.assign(Settings, {
         const sharedFailed = sharedResults.some(result => result.status === 'rejected');
 
         // AppStateのシステム設定も更新
-        const updateSetting = (id, val) => {
-          const obj = AppState.systemSettings?.find(s => s.id === id);
-          if (obj) obj.value = val;
-          else AppState.systemSettings.push({ id, value: val });
-        };
         if (!sharedFailed) {
-          updateSetting('enable_webrtc_call', enableWebRtcCall);
-          updateSetting('enable_patient_ic_association', enablePatientIc);
+          this._writeLocalSetting('enable_webrtc_call', enableWebRtcCall);
+          this._writeLocalSetting('enable_patient_ic_association', enablePatientIc);
         }
 
         if (isClientSave && sharedFailed) {

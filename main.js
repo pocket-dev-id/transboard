@@ -427,6 +427,17 @@ const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 // 上限を超えても未確認メモは削除しないため、業務上の確認漏れを防ぐ。
 const HANDOVER_NOTE_MAX_ENTRIES = 1000;
 
+// 上限件数を超えたテーブルを古い順に間引く共通ヘルパー。単純な「新しいN件だけ残す」
+// テーブル(audit_logs/import_logs/calls/transfer_status_logs等)で共有する。
+// 未確認メモの保護(pruneHandoverNotes)や保持期間+安全弁の複合ロジック
+// (pruneBedOccupancyLog)など、間引く対象の選び方に業務ルールがあるものは対象外
+function trimTable(list, max, label) {
+  if (!Array.isArray(list) || list.length <= max) return false;
+  list.splice(0, list.length - max);
+  if (label) console.log(`[DB Cleaner] Trimmed ${label} to ${max} entries.`);
+  return true;
+}
+
 // ステータス変更ログは移送1件ごとに複数件追記される高頻度テーブルのため、上限を超えたら
 // 古い順に間引く。外部からのtransfer_status_logsへの直接書き込みは禁止されている
 // （main.js内の processTransferStartRequest / processStatusUpdateRequest /
@@ -435,9 +446,7 @@ const HANDOVER_NOTE_MAX_ENTRIES = 1000;
 const TRANSFER_STATUS_LOG_MAX_ENTRIES = 1000;
 
 function pruneTransferStatusLogs(db) {
-  const logs = db.transfer_status_logs;
-  if (!Array.isArray(logs) || logs.length <= TRANSFER_STATUS_LOG_MAX_ENTRIES) return;
-  logs.splice(0, logs.length - TRANSFER_STATUS_LOG_MAX_ENTRIES);
+  trimTable(db.transfer_status_logs, TRANSFER_STATUS_LOG_MAX_ENTRIES);
 }
 
 function pruneHandoverNotes(db) {
@@ -1035,9 +1044,7 @@ function appendAuditLog(db, action, {
       details: JSON.stringify(details || {}),
       created_at: now,
     });
-    if (db.audit_logs.length > AUDIT_LOG_MAX_ENTRIES) {
-      db.audit_logs.splice(0, db.audit_logs.length - AUDIT_LOG_MAX_ENTRIES);
-    }
+    trimTable(db.audit_logs, AUDIT_LOG_MAX_ENTRIES);
   } catch (err) {
     console.warn('[AuditLog] 追記に失敗:', err.message);
   }
@@ -1417,15 +1424,7 @@ let currentIntervalTimer = null;
 // インポート実行のトリガー設定（監視・定期タイマー）
 function setupImportTrigger() {
   const db = readDB();
-  const scheduleSetting = db.system_settings?.find(s => s.id === 'import_schedule');
-  let schedule = { mode: 'realtime' };
-  if (scheduleSetting && scheduleSetting.value) {
-    try {
-      schedule = JSON.parse(scheduleSetting.value);
-    } catch (e) {
-      console.error('[Watcher] スケジュール設定のパース失敗:', e);
-    }
-  }
+  const schedule = getJsonSetting(db, 'import_schedule', { mode: 'realtime' });
 
   // 既存の監視・タイマーをクリア
   if (currentWatcher) {
@@ -1870,14 +1869,9 @@ async function importCSV(filePath) {
     } else {
       // マッピング設定に保存されている設定値があればフォールバック
       const db = readDB();
-      const mappingSetting = db.system_settings?.find(s => s.id === 'import_mapping');
-      if (mappingSetting && mappingSetting.value) {
-        try {
-          const mapping = JSON.parse(mappingSetting.value);
-          if (mapping.encoding) {
-            encoding = mapping.encoding;
-          }
-        } catch (e) {}
+      const mapping = getJsonSetting(db, 'import_mapping', {});
+      if (mapping.encoding) {
+        encoding = mapping.encoding;
       }
     }
     
@@ -1930,15 +1924,7 @@ async function importCSV(filePath) {
 // 古いアーカイブファイルを整理
 function cleanOldArchives() {
   const db = readDB();
-  const policySetting = db.system_settings?.find(s => s.id === 'import_retention_policy');
-  let policy = { action: 'archive', retentionDays: '30' };
-  if (policySetting && policySetting.value) {
-    try {
-      policy = JSON.parse(policySetting.value);
-    } catch (e) {
-      console.error('[Watcher] ポリシー設定のパース失敗:', e);
-    }
-  }
+  const policy = getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' });
 
   if (policy.action !== 'archive') return;
   const days = parseInt(policy.retentionDays) || 30;
@@ -1972,15 +1958,7 @@ function cleanOldArchives() {
 // ファイルをアーカイブ移動または削除
 function archiveFile(filePath) {
   const db = readDB();
-  const policySetting = db.system_settings?.find(s => s.id === 'import_retention_policy');
-  let policy = { action: 'archive', retentionDays: '30' };
-  if (policySetting && policySetting.value) {
-    try {
-      policy = JSON.parse(policySetting.value);
-    } catch (e) {
-      console.error('[Watcher] ポリシー設定のパース失敗:', e);
-    }
-  }
+  const policy = getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' });
 
   if (policy.action === 'skip') {
     console.log(`[Watcher] ポリシー: そのまま残す (スキップ): ${filePath}`);
@@ -2639,15 +2617,9 @@ const EXAM_STATUS_ACTIONS = {
 };
 
 function getHiddenTransferStatuses(db) {
-  const setting = (db.system_settings || []).find(s => s.id === 'hidden_statuses');
-  if (!setting || !setting.value) return new Set();
-  try {
-    const parsed = JSON.parse(setting.value);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter(status => HIDEABLE_TRANSFER_STATUSES.has(status)));
-  } catch {
-    return new Set();
-  }
+  const parsed = getJsonSetting(db, 'hidden_statuses', []);
+  if (!Array.isArray(parsed)) return new Set();
+  return new Set(parsed.filter(status => HIDEABLE_TRANSFER_STATUSES.has(status)));
 }
 
 function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIONS) {
@@ -2842,6 +2814,28 @@ function pruneBedOccupancyLogFromDb(db, now = Date.now()) {
   return pruneBedOccupancyLog(db.bed_occupancy_log, days, BED_OCCUPANCY_LOG_MAX_ENTRIES, now);
 }
 
+// テーブルへの書き込みに付随する副作用(在室ログの反映・申し送りメモの間引き等)を
+// 一箇所にまとめたもの。POST/一括PATCH/単体PATCH/DELETE/一括upsertの各分岐から、
+// 同じ組み合わせを個別に書く代わりにここを参照する。
+// onUpsert: レコード1件の反映ごとに呼ぶ。onDelete: 削除時に呼ぶ。
+// finalize: そのリクエスト全体の反映が終わった後に1回だけ呼ぶ(掃除処理の重複実行を避ける)
+const WRITE_HOOKS = {
+  beds: {
+    onUpsert: (db, id, wardId, before, after, raw, now, source) =>
+      applyBedOccupancyTransition(db.bed_occupancy_log, id, wardId, before, after, raw, now, source),
+    onDelete: (db, id, now) => closeOpenBedOccupancyForDeletedBed(db.bed_occupancy_log, id, now),
+    finalize: (db, now) => pruneBedOccupancyLogFromDb(db, now),
+  },
+  handover_notes: {
+    finalize: (db) => {
+      const removedNotes = pruneHandoverNotes(db);
+      if (removedNotes > 0) {
+        console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
+      }
+    },
+  },
+};
+
 function pruneExpiredTransferEventsFromDb(db, now = Date.now()) {
   const days = getSystemSettingInt(db, 'event_retention_days', 0);
   if (days <= 0 || !Array.isArray(db.transfer_events)) return 0;
@@ -2890,6 +2884,15 @@ function getSystemSettingInt(db, id, fallback) {
   const setting = (db.system_settings || []).find(s => s.id === id);
   const value = parseInt(setting?.value, 10);
   return Number.isFinite(value) ? value : fallback;
+}
+
+// system_settingsの値をJSONとしてまるごと解釈し、未設定・不正なJSONの場合は
+// fallbackをそのまま返す。既定値のキー単位マージが必要な設定
+// (キーごとのデフォルトとマージするもの)には使わず、個別実装のままにする
+function getJsonSetting(db, id, fallback) {
+  const raw = (db.system_settings || []).find(s => s.id === id)?.value;
+  if (!raw) return fallback;
+  try { return JSON.parse(raw); } catch { return fallback; }
 }
 
 function sanitizeStatusExtraFields(extraFields) {
@@ -3373,18 +3376,9 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
   if (table === 'beds') {
     db.bed_occupancy_log = db.bed_occupancy_log || [];
     for (const operation of operations) {
-      applyBedOccupancyTransition(
-        db.bed_occupancy_log,
-        operation.after.id,
-        operation.after.ward_id,
-        operation.before,
-        operation.after,
-        operation.after,
-        now,
-        null,
-      );
+      WRITE_HOOKS.beds.onUpsert(db, operation.after.id, operation.after.ward_id, operation.before, operation.after, operation.after, now, null);
     }
-    pruneBedOccupancyLogFromDb(db, now);
+    WRITE_HOOKS.beds.finalize(db, now);
   }
   db[table] = workingList;
   appendAuditLog(db, 'DB_BULK_UPSERT', {
@@ -3764,27 +3758,22 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (table === 'beds') {
       const occupancyNow = Date.now();
       const afterRecord = index !== -1 ? list[index] : data;
-      applyBedOccupancyTransition(db.bed_occupancy_log, data.id, afterRecord.ward_id, beforeItem, afterRecord, data, occupancyNow, postOccupancySource);
-      pruneBedOccupancyLogFromDb(db, occupancyNow);
+      WRITE_HOOKS.beds.onUpsert(db, data.id, afterRecord.ward_id, beforeItem, afterRecord, data, occupancyNow, postOccupancySource);
+      WRITE_HOOKS.beds.finalize(db, occupancyNow);
     }
 
     // ディスク・メモリの管理：ログ・通話などの蓄積データテーブルの肥大化防止（自動トリム）
-    if (table === 'import_logs' && list.length > 100) {
-      list.splice(0, list.length - 100);
-      console.log(`[DB Cleaner] Trimmed import_logs to 100 entries to prevent memory/disk bloat.`);
+    if (table === 'import_logs') {
+      trimTable(list, 100, 'import_logs');
     }
     // transfer_status_logsは外部からの直接POST/PATCH/DELETEを拒否しているため
     // (table === 'transfer_status_logs' && method !== 'GET' のガード)、ここには
     // 到達しない。トリムは pruneTransferStatusLogs() が各追記箇所で行う
-    if (table === 'calls' && list.length > 500) {
-      list.splice(0, list.length - 500);
-      console.log(`[DB Cleaner] Trimmed calls to 500 entries.`);
+    if (table === 'calls') {
+      trimTable(list, 500, 'calls');
     }
     if (table === 'handover_notes') {
-      const removedNotes = pruneHandoverNotes(db);
-      if (removedNotes > 0) {
-        console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
-      }
+      WRITE_HOOKS.handover_notes.finalize(db);
     }
 
     appendAuditLog(db, index !== -1 ? 'DB_UPDATE' : 'DB_CREATE', {
@@ -3887,18 +3876,15 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
           if (table === 'beds') {
-            applyBedOccupancyTransition(db.bed_occupancy_log, targetId, list[index].ward_id, beforeSnap, list[index], patchItem, bulkOccupancyNow, occupancySource);
+            WRITE_HOOKS.beds.onUpsert(db, targetId, list[index].ward_id, beforeSnap, list[index], patchItem, bulkOccupancyNow, occupancySource);
           }
         }
       }
       if (table === 'beds') {
-        pruneBedOccupancyLogFromDb(db, bulkOccupancyNow);
+        WRITE_HOOKS.beds.finalize(db, bulkOccupancyNow);
       }
       if (table === 'handover_notes') {
-        const removedNotes = pruneHandoverNotes(db);
-        if (removedNotes > 0) {
-          console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
-        }
+        WRITE_HOOKS.handover_notes.finalize(db);
       }
       appendAuditLog(db, 'DB_BULK_UPDATE', {
         targetType: table,
@@ -3972,14 +3958,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     list[index] = { ...list[index], ...data };
     if (table === 'beds') {
       const occupancyNow = Date.now();
-      applyBedOccupancyTransition(db.bed_occupancy_log, id, list[index].ward_id, beforeItem, list[index], data, occupancyNow, occupancySource);
-      pruneBedOccupancyLogFromDb(db, occupancyNow);
+      WRITE_HOOKS.beds.onUpsert(db, id, list[index].ward_id, beforeItem, list[index], data, occupancyNow, occupancySource);
+      WRITE_HOOKS.beds.finalize(db, occupancyNow);
     }
     if (table === 'handover_notes') {
-      const removedNotes = pruneHandoverNotes(db);
-      if (removedNotes > 0) {
-        console.log(`[DB Cleaner] Trimmed ${removedNotes} resolved handover notes.`);
-      }
+      WRITE_HOOKS.handover_notes.finalize(db);
     }
     appendAuditLog(db, 'DB_UPDATE', {
       targetType: table,
@@ -4018,8 +4001,8 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     const removed = list.splice(index, 1)[0];
     if (table === 'beds') {
       const occupancyNow = Date.now();
-      closeOpenBedOccupancyForDeletedBed(db.bed_occupancy_log, id, occupancyNow);
-      pruneBedOccupancyLogFromDb(db, occupancyNow);
+      WRITE_HOOKS.beds.onDelete(db, id, occupancyNow);
+      WRITE_HOOKS.beds.finalize(db, occupancyNow);
     }
     appendAuditLog(db, 'DB_DELETE', {
       targetType: table,
