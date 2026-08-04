@@ -427,6 +427,19 @@ const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 // 上限を超えても未確認メモは削除しないため、業務上の確認漏れを防ぐ。
 const HANDOVER_NOTE_MAX_ENTRIES = 1000;
 
+// ステータス変更ログは移送1件ごとに複数件追記される高頻度テーブルのため、上限を超えたら
+// 古い順に間引く。外部からのtransfer_status_logsへの直接書き込みは禁止されている
+// （main.js内の processTransferStartRequest / processStatusUpdateRequest /
+// processStatusNoteRequest / 旧端末互換のPOST正規化からのみ追記される）ため、
+// 各追記箇所の直後でこの関数を呼ぶ必要がある
+const TRANSFER_STATUS_LOG_MAX_ENTRIES = 1000;
+
+function pruneTransferStatusLogs(db) {
+  const logs = db.transfer_status_logs;
+  if (!Array.isArray(logs) || logs.length <= TRANSFER_STATUS_LOG_MAX_ENTRIES) return;
+  logs.splice(0, logs.length - TRANSFER_STATUS_LOG_MAX_ENTRIES);
+}
+
 function pruneHandoverNotes(db) {
   const notes = Array.isArray(db.handover_notes) ? db.handover_notes : [];
   if (notes.length <= HANDOVER_NOTE_MAX_ENTRIES) return 0;
@@ -3060,6 +3073,7 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     changed_at: now,
     note: '',
   });
+  pruneTransferStatusLogs(db);
   appendAuditLog(db, 'TRANSFER_START', {
     targetType: 'transfer_events',
     targetId: eventId,
@@ -3184,6 +3198,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     changed_at: now,
     note: '',
   });
+  pruneTransferStatusLogs(db);
   appendAuditLog(db, 'STATUS_CHANGE', {
     targetType: 'transfer_events',
     targetId: eventId,
@@ -3244,6 +3259,7 @@ function processStatusNoteRequest(method, bodyStr, isExternal = false, apiToken 
     changed_at: now,
     note,
   });
+  pruneTransferStatusLogs(db);
   appendAuditLog(db, 'STATUS_NOTE', {
     targetType: 'transfer_events',
     targetId: event.id,
@@ -3739,6 +3755,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           changed_at: changedAt,
           note: '旧端末の出棟登録を移動中へ統合',
         });
+        pruneTransferStatusLogs(db);
       }
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
     }
@@ -3756,10 +3773,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       list.splice(0, list.length - 100);
       console.log(`[DB Cleaner] Trimmed import_logs to 100 entries to prevent memory/disk bloat.`);
     }
-    if (table === 'transfer_status_logs' && list.length > 1000) {
-      list.splice(0, list.length - 1000);
-      console.log(`[DB Cleaner] Trimmed transfer_status_logs to 1000 entries.`);
-    }
+    // transfer_status_logsは外部からの直接POST/PATCH/DELETEを拒否しているため
+    // (table === 'transfer_status_logs' && method !== 'GET' のガード)、ここには
+    // 到達しない。トリムは pruneTransferStatusLogs() が各追記箇所で行う
     if (table === 'calls' && list.length > 500) {
       list.splice(0, list.length - 500);
       console.log(`[DB Cleaner] Trimmed calls to 500 entries.`);
@@ -3849,27 +3865,32 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       const updatedItems = [];
       const beforeItems = [];
       const bulkOccupancyNow = Date.now();
-      bulkData.forEach(patchItem => {
+      // Array.prototype.forEach ではコールバック内のreturnがforEach自身に対する
+      // ものになり、processDbRequest本体へ伝播しない（＝revisionError/referenceError
+      // をここでreturnしても呼び出し元には返らず握りつぶされる）。事前チェックループ
+      // (上のfor...of)が同じ組み合わせを検証済みのため現状は到達しないはずだが、
+      // 万一到達した場合に正しくエラーを返せるようfor...ofで統一する
+      for (const patchItem of bulkData) {
         const targetId = patchItem.id;
         const occupancySource = patchItem._occupancySource;
         if (Object.prototype.hasOwnProperty.call(patchItem, '_occupancySource')) {
           delete patchItem._occupancySource;
         }
-         const index = list.findIndex(x => String(x.id) === String(targetId));
-         if (index !== -1) {
-           const beforeSnap = JSON.parse(JSON.stringify(list[index]));
-           const revisionError = applyMasterRevision(table, list[index], patchItem);
-           if (revisionError) return revisionError;
-           const referenceError = validateMasterReferences(db, table, beforeSnap, patchItem);
-           if (referenceError) return referenceError;
-           beforeItems.push(beforeSnap);
+        const index = list.findIndex(x => String(x.id) === String(targetId));
+        if (index !== -1) {
+          const beforeSnap = JSON.parse(JSON.stringify(list[index]));
+          const revisionError = applyMasterRevision(table, list[index], patchItem);
+          if (revisionError) return revisionError;
+          const referenceError = validateMasterReferences(db, table, beforeSnap, patchItem);
+          if (referenceError) return referenceError;
+          beforeItems.push(beforeSnap);
           list[index] = { ...list[index], ...patchItem };
           updatedItems.push(list[index]);
           if (table === 'beds') {
             applyBedOccupancyTransition(db.bed_occupancy_log, targetId, list[index].ward_id, beforeSnap, list[index], patchItem, bulkOccupancyNow, occupancySource);
           }
         }
-      });
+      }
       if (table === 'beds') {
         pruneBedOccupancyLogFromDb(db, bulkOccupancyNow);
       }
