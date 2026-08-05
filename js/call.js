@@ -41,6 +41,7 @@ const CallPanel = {
   _selectedAudioInput: null,
   _selectedVideoInput: null,
   _callSourceId: null,
+  _fullscreenChangeHandler: null,
 
   VIDEO_QUALITY_PRESETS: {
     low:    { width: 320,  height: 240, frameRate: 10,  maxBitrateBps: 200_000 },
@@ -648,7 +649,9 @@ const CallPanel = {
 
     } catch (e) {
       console.error('[WebRTC] Start Call Error:', e);
-      this.cleanupCall('マイクへのアクセスが拒否されたか、マイクが見つかりません');
+      this.cleanupCall(this.isVideoCall
+        ? 'マイクまたはカメラへのアクセスが拒否されたか、見つかりません'
+        : 'マイクへのアクセスが拒否されたか、マイクが見つかりません');
     }
   },
 
@@ -759,7 +762,9 @@ const CallPanel = {
 
     } catch (e) {
       console.error('[WebRTC] Accept Call Error:', e);
-      this.cleanupCall('マイクが見つからないか、応答処理中にエラーが発生しました');
+      this.cleanupCall(this.isVideoCall
+        ? 'マイクまたはカメラが見つからないか、応答処理中にエラーが発生しました'
+        : 'マイクが見つからないか、応答処理中にエラーが発生しました');
     }
   },
 
@@ -956,9 +961,13 @@ const CallPanel = {
         if (sender && newTrack) {
           await sender.replaceTrack(newTrack);
           await this._applyBitrateConstraint(sender, preset.maxBitrateBps);
+          const oldVideoTracks = this.localStream.getVideoTracks();
+          // localStreamを新トラックで更新し、通話終了時のcleanupCall()が新トラックも
+          // 停止できるようにする(そのままだとカメラが解放されず動作し続ける)
+          this.localStream = new MediaStream([newTrack, ...this.localStream.getAudioTracks()]);
           const localVideo = document.getElementById('webrtc-local-video');
-          if (localVideo) localVideo.srcObject = new MediaStream([newTrack, ...this.localStream.getAudioTracks()]);
-          this.localStream.getVideoTracks().forEach(t => t.stop());
+          if (localVideo) localVideo.srcObject = this.localStream;
+          oldVideoTracks.forEach(t => t.stop());
         }
       } catch(e) { console.error('[WebRTC] lowerQuality:', e); }
     }
@@ -1110,11 +1119,18 @@ const CallPanel = {
           fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
         }
       };
-      document.addEventListener('fullscreenchange', () => {
+      // 通話ごとに古いリスナーを外してから登録する。{once:true}だと通話中に一度も
+      // 発火しない(全画面を使わない)場合に外れず、通話を重ねるたびにdocumentへ
+      // 溜まり続けてしまうため、cleanupCall()で明示的に解除する方式にする
+      if (this._fullscreenChangeHandler) {
+        document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      }
+      this._fullscreenChangeHandler = () => {
         if (!document.fullscreenElement && fsBtn) {
           fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
         }
-      }, { once: true });
+      };
+      document.addEventListener('fullscreenchange', this._fullscreenChangeHandler);
     }
 
   },
@@ -1134,6 +1150,11 @@ const CallPanel = {
     this.stopRingTone();
     this.stopCallTimer();
     this._stopStatsPolling();
+
+    if (this._fullscreenChangeHandler) {
+      document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      this._fullscreenChangeHandler = null;
+    }
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
