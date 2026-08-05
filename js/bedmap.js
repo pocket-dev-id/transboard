@@ -246,7 +246,7 @@ const BedMap = {
       examInfoHtml = `<div class="bed-exam-info">
         ${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.code)}
         ${examRoom ? '→' + UI.examImage(examRoom, 'room', 'history-exam-image') + UI.escapeHTML(examRoom.name) : ''}
-        ${event.departed_at ? '<br>' + UI.formatTime(event.departed_at) + '出棟' : ''}
+        ${event.departed_at ? '<br>' + UI.formatTimeSmart(event.departed_at) + '出棟' : ''}
       </div>`;
     }
 

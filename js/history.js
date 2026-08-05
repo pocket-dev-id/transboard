@@ -137,7 +137,7 @@ const HistoryView = {
           <div class="history-sub">
             ${examRoom ? `${UI.examImage(examRoom, 'room', 'history-exam-image')}${UI.escapeHTML(examRoom.name)}` : '--'} | ${UI.statusBadge(e.current_status)}
             ${staff ? ' | 付き添い: ' + UI.escapeHTML(staff.name) : ''}
-            ${e.returned_at ? ' | 帰棟: ' + UI.formatTime(e.returned_at) : ''}
+            ${e.returned_at ? ' | 帰棟: ' + UI.formatTimeSmart(e.returned_at) : ''}
             ${e.note ? ' | <span style="color:#718096; font-style:italic;">' + UI.escapeHTML(e.note) + '</span>' : ''}
           </div>
         </div>
