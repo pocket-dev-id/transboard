@@ -216,7 +216,10 @@ const UI = {
   // opts.type: 'danger'|'warning' でアイコン・ボタン色を指定可能（未指定時は opts.danger を後方互換のショートハンドとして使用）
   // opts.title: メッセージ上部の見出し（省略時はアイコン+メッセージのみのシンプル表示）
   // opts.detail: メッセージ下部の強調警告ボックス（省略可）
-  confirmModal(message, { title, detail, danger = false, type, confirmLabel = 'OK', cancelLabel = 'キャンセル' } = {}) {
+  // opts.autoConfirmMs: 指定した場合、確認ボタンに残り秒数を表示しつつ、その時間が
+  // 経過すると自動で確定(true)する。誤操作防止の確認自体は保ちつつ、無人での
+  // 自動遷移を必要とする操作（ICスキャン等）向け
+  confirmModal(message, { title, detail, danger = false, type, confirmLabel = 'OK', cancelLabel = 'キャンセル', autoConfirmMs = 0 } = {}) {
     return new Promise(resolve => {
       const effectiveType = type || (danger ? 'danger' : null);
       const iconClass = effectiveType === 'danger' ? 'fa-exclamation-triangle'
@@ -277,7 +280,12 @@ const UI = {
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
+      let settled = false;
+      let countdownTimer = null;
       const cleanup = (result) => {
+        if (settled) return;
+        settled = true;
+        if (countdownTimer) clearInterval(countdownTimer);
         document.removeEventListener('keydown', onKeydown);
         overlay.remove();
         resolve(result);
@@ -291,6 +299,19 @@ const UI = {
       okBtn.addEventListener('click', () => cleanup(true));
       document.addEventListener('keydown', onKeydown);
       okBtn.focus();
+
+      if (autoConfirmMs > 0) {
+        let remainingSec = Math.ceil(autoConfirmMs / 1000);
+        okBtn.textContent = `${confirmLabel}（${remainingSec}）`;
+        countdownTimer = setInterval(() => {
+          remainingSec -= 1;
+          if (remainingSec <= 0) {
+            cleanup(true);
+          } else {
+            okBtn.textContent = `${confirmLabel}（${remainingSec}）`;
+          }
+        }, 1000);
+      }
     });
   },
 
