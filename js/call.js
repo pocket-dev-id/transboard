@@ -34,6 +34,11 @@ const CallPanel = {
   // 再接続タイマー
   reconnectTimeout: null,
 
+  // 無応答タイムアウト（発信側・着信側）
+  _ringTimeoutId: null,
+  _incomingRingTimeoutId: null,
+  CALL_RING_TIMEOUT_MS: 30000,
+
   // ビデオ品質・統計・デバイス選択
   _videoQualityPreset: localStorage.getItem('tbs_video_quality') || 'medium',
   _statsInterval: null,
@@ -359,6 +364,10 @@ const CallPanel = {
 
   // ── コール選択ダイアログ (音声通話 or 定型アナウンス) ──
   showCallSelectionDialog(targetId, { fromId = null, eventId = null } = {}) {
+    if (this.isCalling || this.isConnected) {
+      UI.toast('既に通話中です。先に現在の通話を終了してください。', 'warning');
+      return;
+    }
     const targetName = this.getNameById(targetId);
     const targetNameHtml = UI.escapeHTML(targetName);
     const sourceId = fromId || this.getMyId();
@@ -595,6 +604,10 @@ const CallPanel = {
   },
 
   async startCall(targetId, fromId = null) {
+    if (this.isCalling || this.isConnected) {
+      UI.toast('既に通話中です。先に現在の通話を終了してください。', 'warning');
+      return;
+    }
     const myId = fromId || this.getMyId();
     if (!myId) {
       UI.toast('自身のIDを特定できませんでした。検査室または病棟を選択してください。', 'danger');
@@ -647,6 +660,15 @@ const CallPanel = {
         started_at: Date.now()
       });
 
+      // 無応答タイムアウト: 一定時間応答が無ければ自動的に発信を取りやめる
+      this._ringTimeoutId = setTimeout(async () => {
+        if (!this.isCalling) return;
+        if (this.targetId) {
+          await API.webrtcSend({ from: this._getCallFromId(), to: this.targetId, type: 'hangup' }).catch(() => {});
+        }
+        this.cleanupCall('応答がありませんでした');
+      }, this.CALL_RING_TIMEOUT_MS);
+
     } catch (e) {
       console.error('[WebRTC] Start Call Error:', e);
       this.cleanupCall(this.isVideoCall
@@ -693,31 +715,42 @@ const CallPanel = {
     `;
     document.body.appendChild(overlay);
 
+    // 無応答タイムアウト: 一定時間応答も拒否もされなければ自動的に拒否扱いにする
+    if (this._incomingRingTimeoutId) clearTimeout(this._incomingRingTimeoutId);
+    this._incomingRingTimeoutId = setTimeout(() => {
+      this._declineIncomingCall(callerId, '応答がありませんでした（自動的に終了しました）');
+    }, this.CALL_RING_TIMEOUT_MS);
+
     document.getElementById('webrtc-btn-accept').onclick = async () => {
+      if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
       this.stopRingTone();
       // 同じIDを開いている他端末に「応答済み」を通知
       await API.webrtcSend({ from: this.getMyId(), to: this.getMyId(), type: 'answered' }).catch(() => {});
       await this.acceptCall(callerId, offerSdp);
     };
 
-    document.getElementById('webrtc-btn-reject').onclick = async () => {
-      this.stopRingTone();
-      await API.webrtcSend({
-        from: this.getMyId(),
-        to: callerId,
-        type: 'busy'
-      });
-      // 不応答として記録
-      await API.create('calls', {
-        id: `call-missed-${Date.now()}`,
-        from_id: callerId,
-        to_id: this.getMyId(),
-        status: 'missed',
-        started_at: Date.now(),
-        ended_at: Date.now()
-      });
-      this.cleanupCall('着信を拒否しました');
-    };
+    document.getElementById('webrtc-btn-reject').onclick = () => this._declineIncomingCall(callerId);
+  },
+
+  // 着信を拒否する（手動での「拒否」ボタン、および無応答タイムアウトの両方から呼ばれる）
+  async _declineIncomingCall(callerId, message = '着信を拒否しました') {
+    if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
+    this.stopRingTone();
+    await API.webrtcSend({
+      from: this.getMyId(),
+      to: callerId,
+      type: 'busy'
+    }).catch(() => {});
+    // 不応答として記録
+    await API.create('calls', {
+      id: `call-missed-${Date.now()}`,
+      from_id: callerId,
+      to_id: this.getMyId(),
+      status: 'missed',
+      started_at: Date.now(),
+      ended_at: Date.now()
+    }).catch(() => {});
+    this.cleanupCall(message);
   },
 
   async acceptCall(callerId, offerSdp) {
@@ -748,14 +781,16 @@ const CallPanel = {
         sdp: answer
       });
 
-      // 通話開始の記録
+      // 通話開始の記録（応答した時点なのでstarted_at/answered_atとも現在時刻）
       this.currentCallId = `call-${Date.now()}`;
+      const acceptedAt = Date.now();
       await API.create('calls', {
         id: this.currentCallId,
         from_id: callerId,
         to_id: this.getMyId(),
         status: 'connected',
-        started_at: Date.now()
+        started_at: acceptedAt,
+        answered_at: acceptedAt
       });
 
       this.startCallTimer();
@@ -860,12 +895,16 @@ const CallPanel = {
   },
 
   setConnectedState() {
+    if (this._ringTimeoutId) { clearTimeout(this._ringTimeoutId); this._ringTimeoutId = null; }
     this.stopRingTone();
     this.isCalling = false;
     this.isConnected = true;
     this.showConnectedDialog(this.targetId);
     this.startCallTimer();
     this._startStatsPolling();
+    if (this.currentCallId) {
+      API.patch('calls', this.currentCallId, { answered_at: Date.now() }).catch(() => {});
+    }
     // ビットレート制限を接続後に適用
     if (this.isVideoCall) {
       setTimeout(() => this._applyBitrateToAll(), 1500);
@@ -1079,6 +1118,9 @@ const CallPanel = {
           
         </div>
         <div class="phone-dialog-footer" style="display: flex; gap: 12px; justify-content: center; padding: 8px 16px; background: #f8fafc; border-top: 1px solid #e2e8f0;">
+          <button class="btn btn-outline" id="webrtc-btn-mute" style="flex: 1; padding: 8px; font-weight: bold;">
+            <i class="fas fa-microphone"></i> ミュート
+          </button>
           <button class="btn btn-danger" id="webrtc-btn-hangup" style="flex: 1; padding: 8px; font-weight: bold;">
             <i class="fas fa-phone-slash"></i> 通話を終了
           </button>
@@ -1088,6 +1130,22 @@ const CallPanel = {
     document.body.appendChild(overlay);
 
     document.getElementById('webrtc-btn-hangup').onclick = () => this.hangupCall();
+
+    // 自分のマイクを一時的にミュート/解除する（通話を切らずに音声だけ止める）
+    const muteBtn = document.getElementById('webrtc-btn-mute');
+    if (muteBtn) {
+      muteBtn.onclick = () => {
+        const audioTracks = this.localStream ? this.localStream.getAudioTracks() : [];
+        if (!audioTracks.length) return;
+        const shouldMute = audioTracks.some(t => t.enabled);
+        audioTracks.forEach(t => { t.enabled = !shouldMute; });
+        muteBtn.innerHTML = shouldMute
+          ? '<i class="fas fa-microphone-slash"></i> ミュート解除'
+          : '<i class="fas fa-microphone"></i> ミュート';
+        muteBtn.classList.toggle('btn-danger', shouldMute);
+        muteBtn.classList.toggle('btn-outline', !shouldMute);
+      };
+    }
 
     // 画質を下げるボタン
     const lqBtn = document.getElementById('webrtc-btn-lower-quality');
@@ -1150,6 +1208,12 @@ const CallPanel = {
     this.stopRingTone();
     this.stopCallTimer();
     this._stopStatsPolling();
+
+    // 無応答タイムアウト（発信側・着信側）: 通話が別の経路(hangup/busy/エラー等)で
+    // 終了した後にタイマーが残っていると、後で別の通話を開始した際に誤って
+    // その新しい通話を終了させてしまうため、終了経路によらずここで必ず解除する
+    if (this._ringTimeoutId) { clearTimeout(this._ringTimeoutId); this._ringTimeoutId = null; }
+    if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
 
     if (this._fullscreenChangeHandler) {
       document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
@@ -1247,33 +1311,39 @@ const CallPanel = {
   // ── 音響効果 (Web Audio API) ──
   playRingBackTone() {
     this.stopRingTone();
+    // 着信音(playIncomingRingTone)と同じく、通知ミュート時間帯・音量設定を尊重する。
+    // 従来はここだけ設定を無視して常に固定音量で鳴っていたため、夜間ミュート中に
+    // 発信すると着信側は無音なのに発信側だけ呼出音が鳴る非対称な挙動になっていた
+    if (UI._isNotifMuted()) return;
+    const volume = UI._getNotifVolume();
+    if (volume <= 0) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       this._audioCtx = new AudioCtx();
-      
+
       let isPlaying = false;
       const play = () => {
         if (!this._audioCtx) return;
         isPlaying = true;
-        
+
         const osc = this._audioCtx.createOscillator();
         const gain = this._audioCtx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(400, this._audioCtx.currentTime); // 400Hz 呼出音
-        
+
         gain.gain.setValueAtTime(0, this._audioCtx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.1, this._audioCtx.currentTime + 0.1);
-        gain.gain.setValueAtTime(0.1, this._audioCtx.currentTime + 1.0);
+        gain.gain.linearRampToValueAtTime(0.1 * volume, this._audioCtx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.1 * volume, this._audioCtx.currentTime + 1.0);
         gain.gain.linearRampToValueAtTime(0, this._audioCtx.currentTime + 1.1);
-        
+
         osc.connect(gain);
         gain.connect(this._audioCtx.destination);
         osc.start();
         osc.stop(this._audioCtx.currentTime + 1.2);
-        
+
         setTimeout(() => { isPlaying = false; }, 3000);
       };
-      
+
       play();
       this._ringTimer = setInterval(play, 3000);
     } catch(e) {
