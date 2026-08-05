@@ -174,11 +174,6 @@ const CONFIG = {
     return this.getHiddenStatuses().includes(status);
   },
 
-  getOperationalActiveStatuses() {
-    const hidden = new Set(this.getHiddenStatuses());
-    return this.ACTIVE_STATUSES.filter(status => !hidden.has(status));
-  },
-
   getAllowedActions(status, scope = 'ward') {
     const source = scope === this.STATUS_SCOPE.EXAM ? this.EXAM_ROOM_ACTIONS : this.ACTION_BUTTONS;
     const hidden = new Set(this.getHiddenStatuses());
@@ -197,12 +192,6 @@ const CONFIG = {
     };
     visit(source[status] || []);
     return result;
-  },
-
-  isTransitionAllowed(fromStatus, toStatus, scope = 'ward') {
-    if (!fromStatus || !toStatus) return false;
-    if (fromStatus === toStatus) return true;
-    return this.getAllowedActions(fromStatus, scope).some(action => action.toStatus === toStatus);
   },
 
   ROLES: {

@@ -181,8 +181,7 @@ const Timeline = {
   },
 
   _isPatientNameVisible() {
-    const chk = document.getElementById('chk-show-patient-names');
-    return chk ? chk.checked : localStorage.getItem('cfg_show_patient_names') === 'true';
+    return !UI.isPatientMaskEnabled();
   },
 
   _eventPatientName(event, bed) {

@@ -134,15 +134,10 @@ Object.assign(Settings, {
           ]);
           failed = results.some(result => result.status === 'rejected');
         }
-        const updateSetting = (id, value) => {
-          const obj = AppState.systemSettings?.find(s => s.id === id);
-          if (obj) obj.value = value;
-          else AppState.systemSettings.push({ id, value });
-        };
         if (!failed) {
-          updateSetting('default_zoom', defaultZoomVal);
-          updateSetting('font_style', fontStyleVal);
-          updateSetting('bed_card_size', bedCardSizeVal);
+          this._writeLocalSetting('default_zoom', defaultZoomVal);
+          this._writeLocalSetting('font_style', fontStyleVal);
+          this._writeLocalSetting('bed_card_size', bedCardSizeVal);
         }
         applyVisuals();
         UI.toast(failed ? 'この端末の表示は保存しました。共通デフォルトは親機へ反映できませんでした。' : '端末表示を保存しました', failed ? 'warning' : 'success');

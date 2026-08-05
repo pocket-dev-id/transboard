@@ -102,11 +102,17 @@ function getLocalMasterUpdatedAt(table, id) {
     bed_types: 'allBedTypes',
     exam_rooms: 'allExamRooms',
     exam_types: 'allExamTypes',
-    staffs: 'staffs',
+    // bed_types/exam_rooms/exam_typesと同様、非活性を含む全件から探す。
+    // masters.jsのスタッフ編集フォームはAppState.allStaffs(非活性含む)を使うため、
+    // 活性のみのAppState.staffsだけを見ると、非活性スタッフの編集で
+    // _expectedUpdatedAtが付与されず楽観的排他ロックが働かない
+    staffs: 'allStaffs',
     system_settings: 'systemSettings',
   }[table];
   try {
-    const records = typeof AppState !== 'undefined' ? AppState[stateKey] : null;
+    const records = typeof AppState !== 'undefined'
+      ? (AppState[stateKey] || (table === 'staffs' ? AppState.staffs : null))
+      : null;
     return Array.isArray(records)
       ? records.find(record => String(record.id) === String(id))?.updated_at
       : undefined;

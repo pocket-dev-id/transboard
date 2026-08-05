@@ -382,7 +382,8 @@ const BedModal = {
         nested.sort((a, b) => (b.departed_at || b.created_at || 0) - (a.departed_at || a.created_at || 0));
         const time = occ.ended_at != null ? occ.ended_at : Number.MAX_SAFE_INTEGER;
         return { type: 'occupancy', time, occupancy: occ, nestedEvents: nested };
-      });
+      })
+      .filter(item => item.occupancy.ended_at != null || item.nestedEvents.length > 0);
     const standaloneItems = events
       .filter(e => !claimedEventIds.has(e.id))
       .map(e => ({ type: 'event', time: e.returned_at || e.created_at, event: e }));

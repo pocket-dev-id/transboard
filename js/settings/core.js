@@ -116,6 +116,15 @@ const Settings = {
     obs.observe(document.body, { childList: true, subtree: false });
   },
 
+  // system_settingsをAppStateのキャッシュへ書き戻す。API.patch自体は呼び出し元が
+  // 行う(複数設定を1回のPromise.all/allSettledでまとめて保存する画面が多いため)。
+  // 各設定画面で個別に再実装されていた同型のクロージャをここへ集約したもの
+  _writeLocalSetting(id, value) {
+    const obj = AppState.systemSettings?.find(s => s.id === id);
+    if (obj) obj.value = value;
+    else AppState.systemSettings.push({ id, value });
+  },
+
   updateImportPreview() {
     const previewContainer = document.getElementById('helper-preview-container');
     if (!previewContainer || !this._csvDataRows || this._csvDataRows.length === 0) return;

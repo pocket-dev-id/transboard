@@ -94,11 +94,6 @@ const AppState = {
     return this.activeEvents.find(e => e.bed_id === bedId);
   },
 
-  getEventForBed(bedId) {
-    // アクティブ + 本日の帰棟済/キャンセル
-    return this.todayEvents.find(e => e.bed_id === bedId);
-  },
-
   /* ---------- サブスクライバーパターン ---------- */
   // コンポーネントが特定のデータキーの変更を購読できるようにする
   // 戻り値は購読解除関数
@@ -167,15 +162,6 @@ const AppState = {
       if (CONFIG.ESCORT_ACTIVE_STATUSES.includes(e.current_status)) ids.add(e.escort_staff_id);
     }
     return ids;
-  },
-
-  // 指定スタッフの現在の付き添い状況: 'active'(付き添い中) | 'standby'(担当中だが病棟待機) | null(担当なし)
-  getStaffEscortStatus(staffId) {
-    const event = this.activeEvents.find(e =>
-      e.escort_staff_id === staffId && CONFIG.DEPART_STATUSES.includes(e.current_status)
-    );
-    if (!event) return null;
-    return CONFIG.ESCORT_ACTIVE_STATUSES.includes(event.current_status) ? 'active' : 'standby';
   },
 
   // 優先一覧: 迎え要→あと10分→残り時間短い順
