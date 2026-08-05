@@ -61,7 +61,7 @@ const Handover = {
     const classes = ['handover-note'];
     if (n.is_resolved) classes.push('resolved');
     else if (n.is_important) classes.push('important');
-    const time = n.created_at ? UI.formatTimeSmart(n.created_at) : '';
+    const time = n.created_at ? UI.formatDateTime(n.created_at) : '';
     const author = n.author ? UI.escapeHTML(n.author) : '—';
     const imp = (n.is_important && !n.is_resolved) ? '<i class="fas fa-exclamation-circle handover-imp-icon" title="重要"></i> ' : '';
     const bodyHtml = UI.escapeHTML(n.body || '').replace(/\n/g, '<br>');
