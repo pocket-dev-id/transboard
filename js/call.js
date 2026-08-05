@@ -223,14 +223,20 @@ const CallPanel = {
     return id;
   },
 
-  getNameById(id) {
-    if (!id) return '不明';
-    if (id.startsWith('ward-')) {
-      const w = AppState.wards.find(x => x.id === id);
-      return w ? w.name : '病棟';
-    }
+  // 病棟IDは管理画面で任意の文字列を設定できる（'ward-'接頭辞は既定の例示に過ぎず必須ではない）
+  // ため、IDの接頭辞では病棟/検査室を判別できない。実データを両方探して判定する
+  resolveCallTarget(id) {
+    if (!id) return null;
+    const ward = AppState.wards.find(x => x.id === id);
+    if (ward) return { type: 'ward', record: ward };
     const room = AppState.getExamRoomById(id);
-    return room ? room.name : '検査室';
+    if (room) return { type: 'exam_room', record: room };
+    return null;
+  },
+
+  getNameById(id) {
+    const target = this.resolveCallTarget(id);
+    return target ? target.record.name : '不明';
   },
 
   _getCallFromId() {
@@ -250,7 +256,13 @@ const CallPanel = {
         return; // WebRTC通話が無効の場合はポーリングを行わない
       }
 
-      const myId = this.getMyId();
+      // 発信中・通話中は、そのやり取りを開始した時のID(_callSourceId)を使い続ける。
+      // getMyId()はアクティブなタブ/選択中の検査室から都度その場で判定するため、
+      // 呼び出し中に他のタブへ切り替えると相手からの応答・拒否シグナルの宛先(myId)が
+      // ずれて届かなくなり、応答/拒否に気づけないままになってしまう
+      const myId = (this.isCalling || this.isConnected)
+        ? (this._callSourceId || this.getMyId())
+        : this.getMyId();
       if (!myId) {
         this._nextPollAt = Date.now() + 1500;
         return;
@@ -354,9 +366,7 @@ const CallPanel = {
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
-    const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
-    const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
-    const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const phoneNum = this.resolveCallTarget(targetId)?.record.phone || '';
     const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     // 定型文リストの構築 (データベースから動的に取得)
@@ -968,9 +978,7 @@ const CallPanel = {
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
-    const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
-    const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
-    const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const phoneNum = this.resolveCallTarget(targetId)?.record.phone || '';
     const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     const overlay = document.createElement('div');
