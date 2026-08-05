@@ -1833,6 +1833,7 @@ const App = {
 
   _primeNotificationBaseline() {
     this._lastEventStatuses.clear();
+    this._prevNotified.clear();
     (AppState.todayEvents || []).forEach(event => {
       this._lastEventStatuses.set(event.id, event.current_status);
     });

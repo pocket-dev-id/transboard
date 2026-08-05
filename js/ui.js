@@ -103,6 +103,17 @@ const UI = {
            `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
   },
 
+  // 今日なら時刻のみ、それ以外は日付付きで表示する。日跨ぎで残る移送
+  // （継続扱いのイベント等）を時刻のみで表示すると別日のデータと誤読されるため
+  formatTimeSmart(ms) {
+    if (!ms) return '--:--';
+    const d = new Date(ms);
+    const now = new Date();
+    const isToday = d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return isToday ? this.formatTime(ms) : this.formatDateTime(ms);
+  },
+
   formatDuration(ms) {
     if (!ms) return '--';
     const min = Math.floor(ms / 60000);
@@ -333,6 +344,13 @@ const UI = {
     if (pageId === 'timeline') Timeline.render();
     if (pageId === 'history') HistoryView.render();
     if (pageId === 'settings') Settings.render();
+
+    // 設定タブから離れる際、端末一覧の5秒ポーリングを止める（放置すると画面を
+    // 二度と開かなくても稼働し続けるため）
+    if (pageId !== 'settings' && Settings._deviceListTimer) {
+      clearInterval(Settings._deviceListTimer);
+      Settings._deviceListTimer = null;
+    }
   },
 
   /* ---------- 通知音量・ミュート状態の取得 ---------- */

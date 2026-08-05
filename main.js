@@ -418,7 +418,7 @@ const SEEDS = {
 const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_token'];
 const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
-const AUDIT_LOG_MAX_ENTRIES = 5000;
+const AUDIT_LOG_MAX_ENTRIES = 20000;
 // 在室ログの保持は bed_occupancy_retention_days（既定7日）が主軸。この件数上限は
 // 通常運用では作動しない安全弁で、最長90日設定でも現実的な回転率に対し十分な余裕がある。
 const BED_OCCUPANCY_LOG_MAX_ENTRIES = 20000;
@@ -444,6 +444,10 @@ function trimTable(list, max, label) {
 // processStatusNoteRequest / 旧端末互換のPOST正規化からのみ追記される）ため、
 // 各追記箇所の直後でこの関数を呼ぶ必要がある
 const TRANSFER_STATUS_LOG_MAX_ENTRIES = 1000;
+
+// transfer_events の保持は event_retention_days（既定0=無効）が主軸。この件数上限は
+// 通常運用では作動しない安全弁で、他の蓄積テーブルと同様にトリムする
+const TRANSFER_EVENTS_MAX_ENTRIES = 50000;
 
 function pruneTransferStatusLogs(db) {
   trimTable(db.transfer_status_logs, TRANSFER_STATUS_LOG_MAX_ENTRIES);
@@ -3077,6 +3081,7 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     note: '',
   });
   pruneTransferStatusLogs(db);
+  trimTable(events, TRANSFER_EVENTS_MAX_ENTRIES, 'transfer_events');
   appendAuditLog(db, 'TRANSFER_START', {
     targetType: 'transfer_events',
     targetId: eventId,
@@ -3771,6 +3776,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     // 到達しない。トリムは pruneTransferStatusLogs() が各追記箇所で行う
     if (table === 'calls') {
       trimTable(list, 500, 'calls');
+    }
+    if (table === 'transfer_events') {
+      trimTable(list, TRANSFER_EVENTS_MAX_ENTRIES, 'transfer_events');
     }
     if (table === 'handover_notes') {
       WRITE_HOOKS.handover_notes.finalize(db);

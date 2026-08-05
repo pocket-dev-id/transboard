@@ -185,7 +185,7 @@ const CallPanel = {
       <div class="call-entry" style="font-size:11.5px; border-bottom:1px dashed #f1f5f9; padding:6px 0; display:flex; flex-direction:column; gap:2px; align-items:stretch; background:transparent;">
         <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
           <span style="font-weight:700; color:#1e293b;"><i class="fas fa-bullhorn" style="font-size:10px; color:#3b82f6; margin-right:4px;"></i>${UI.escapeHTML(a.fromName)}</span>
-          <span class="text-muted" style="font-size:9.5px;">${UI.formatTime(a.timestamp)}</span>
+          <span class="text-muted" style="font-size:9.5px;">${UI.formatTimeSmart(a.timestamp)}</span>
         </div>
         <div style="color:#475569; padding-left:14px; word-break:break-all; line-height:1.2; font-style:italic;">"${UI.escapeHTML(a.text)}"</div>
       </div>

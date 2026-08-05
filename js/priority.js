@@ -126,7 +126,7 @@ const Priority = {
     if (event.estimated_pickup_at) {
       const remClass = UI.remainingClass(remaining);
       const remText = UI.formatRemaining(remaining);
-      const pickupTime = UI.formatTime(event.estimated_pickup_at);
+      const pickupTime = UI.formatTimeSmart(event.estimated_pickup_at);
       timeHtml = `
         <div class="priority-time ${remClass}">
           <i class="fas fa-clock"></i> ${pickupTime}（${remText}）
@@ -149,7 +149,7 @@ const Priority = {
         </div>
         <div class="priority-exam-info">
           ${examType ? UI.escapeHTML(examType.name) : '--'} ${examRoom ? '/ ' + UI.escapeHTML(examRoom.name) : ''}
-          ${event.departed_at ? ' | ' + UI.formatTime(event.departed_at) + '出棟' : ''}
+          ${event.departed_at ? ' | ' + UI.formatTimeSmart(event.departed_at) + '出棟' : ''}
         </div>
         ${timeHtml}
         ${(() => {
@@ -297,7 +297,7 @@ const NotificationHistory = {
       const disabled = bed ? '' : ' disabled';
       const needsWardAck = CONFIG.WARD_ACK_STATUSES.includes(status);
       const ackHtml = !needsWardAck ? '' : log.acknowledged_at
-        ? `<span class="notification-history-ack is-acknowledged" title="${UI.escapeHTML(`${log.acknowledged_by || '病棟'} ${UI.formatTime(log.acknowledged_at)}確認`)}">
+        ? `<span class="notification-history-ack is-acknowledged" title="${UI.escapeHTML(`${log.acknowledged_by || '病棟'} ${UI.formatTimeSmart(log.acknowledged_at)}確認`)}">
             <i class="fas fa-check-circle"></i> ${UI.escapeHTML(log.acknowledged_by || '病棟')}確認済
           </span>`
         : `<button type="button" class="notification-history-ack-button" data-ack-log-id="${UI.escapeHTML(log.id)}">

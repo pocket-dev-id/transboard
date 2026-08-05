@@ -622,11 +622,11 @@ const ExamRoom = {
           </div>
           <div class="exam-card-info-row">
             <span class="label">出棟時刻</span>
-            <span>${UI.formatTime(event.departed_at)}</span>
+            <span>${UI.formatTimeSmart(event.departed_at)}</span>
           </div>
           <div class="exam-card-info-row">
             <span class="label">検査開始</span>
-            <span>${UI.formatTime(event.exam_started_at)}</span>
+            <span>${UI.formatTimeSmart(event.exam_started_at)}</span>
           </div>
           ${elapsedHtml}
           ${event.estimated_pickup_at ? `
@@ -678,7 +678,7 @@ const ExamRoom = {
     if (log?.acknowledged_at) {
       const wardName = log.acknowledged_by || AppState.wards.find(ward => ward.id === event.ward_id)?.name || '病棟';
       return `<span class="exam-ward-ack is-acknowledged${compact ? ' is-compact' : ''}">
-        <i class="fas fa-check-circle"></i> ${UI.escapeHTML(wardName)}確認済 ${UI.escapeHTML(UI.formatTime(log.acknowledged_at))}
+        <i class="fas fa-check-circle"></i> ${UI.escapeHTML(wardName)}確認済 ${UI.escapeHTML(UI.formatTimeSmart(log.acknowledged_at))}
       </span>`;
     }
     return `<span class="exam-ward-ack is-pending${compact ? ' is-compact' : ''}">
@@ -755,7 +755,7 @@ const ExamRoom = {
         : `${changedDate.getMonth() + 1}/${changedDate.getDate()} ${UI.formatTime(log.changed_at)}`;
       const needsWardAck = CONFIG.WARD_ACK_STATUSES.includes(status);
       const ackHtml = !needsWardAck ? '' : log.acknowledged_at
-        ? `<span class="notification-history-ack is-acknowledged"><i class="fas fa-check-circle"></i> ${UI.escapeHTML(log.acknowledged_by || ward?.name || '病棟')}確認済 ${UI.escapeHTML(UI.formatTime(log.acknowledged_at))}</span>`
+        ? `<span class="notification-history-ack is-acknowledged"><i class="fas fa-check-circle"></i> ${UI.escapeHTML(log.acknowledged_by || ward?.name || '病棟')}確認済 ${UI.escapeHTML(UI.formatTimeSmart(log.acknowledged_at))}</span>`
         : '<span class="notification-history-ack is-pending"><i class="fas fa-hourglass-half"></i> 病棟確認待ち</span>';
 
       return `
@@ -820,8 +820,8 @@ const ExamRoom = {
           <div class="eqr-cell" title="${UI.escapeHTML(patientName)}">${patientText}${event.patient_ic_tag_id ? ' <i class="fas fa-id-card" title="ICカード登録済"></i>' : ''}</div>
           <div class="eqr-cell eqr-status-cell">${UI.statusBadge(event.current_status)}${this._renderWardAcknowledgement(event, { compact: true })}</div>
           <div class="eqr-cell">${examType ? `${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.name)}` : '--'}</div>
-          <div class="eqr-cell">${UI.formatTime(event.departed_at)}</div>
-          <div class="eqr-cell">${UI.formatTime(event.exam_started_at)}</div>
+          <div class="eqr-cell">${UI.formatTimeSmart(event.departed_at)}</div>
+          <div class="eqr-cell">${UI.formatTimeSmart(event.exam_started_at)}</div>
           <div class="eqr-cell eqr-elapsed ${elapsedOver ? 'text-danger' : ''}">${elapsedMin === null ? '--' : `${elapsedMin}分`}</div>
           <div class="eqr-cell">${staff ? `<i class="fas fa-user-nurse"></i> ${UI.escapeHTML(staff.name)}` : '--'}</div>
           <div class="eqr-cell">${pickupHtml}</div>

@@ -260,8 +260,8 @@ const Timeline = {
         <div>👤 ${UI.escapeHTML(this._eventPatientName(event, bed) || '（患者名なし）')}</div>
         ${event.patient_id ? `<div style="color:#718096;">ID: ${UI.escapeHTML(event.patient_id)}</div>` : ''}
         ${examRoom ? `<div>${UI.examImage(examRoom, 'room', 'timeline-exam-image')}${UI.escapeHTML(examRoom.name)}${examType ? ` / ${UI.examImage(examType, 'type', 'timeline-exam-image')}${UI.escapeHTML(examType.name)}` : ''}</div>` : ''}
-        <div>🚶 出棟: ${UI.formatTime(event.departed_at)}</div>
-        ${event.estimated_pickup_at ? `<div>🔔 迎え目安: ${UI.formatTime(event.estimated_pickup_at)}</div>` : ''}
+        <div>🚶 出棟: ${UI.formatTimeSmart(event.departed_at)}</div>
+        ${event.estimated_pickup_at ? `<div>🔔 迎え目安: ${UI.formatTimeSmart(event.estimated_pickup_at)}</div>` : ''}
       </div>
       <div style="margin-top:10px;border-top:1px solid #e2e8f0;padding-top:10px;">
         <div style="font-size:11px;color:#718096;margin-bottom:4px;">迎え目安を変更:</div>
