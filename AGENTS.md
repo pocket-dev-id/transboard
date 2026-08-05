@@ -56,6 +56,13 @@ node --check js/app.js
 node --check js/settings/network.js
 ```
 
-There is no dedicated automated test suite in this repository yet. If a change
-touches UI behavior, describe the manual path that should be checked in the
-commit or PR notes.
+There is no full automated test suite in this repository, but `npm run check`
+does run a growing set of behavioral regression scripts under `scripts/`
+(e.g. `check-device-presence.js`, `check-call-panel.js`) that load a specific
+`js/*.js` file via `vm.runInNewContext` with a hand-built mock of the browser
+globals it touches, then assert on the resulting behavior with Node's `assert`
+module. Follow that pattern (one self-contained `scripts/check-<area>.js`
+file, wired into the `check` script in `package.json`) when a fix is concrete
+and worth pinning down. For anything else, or for changes that touch UI
+behavior without a practical way to mock it, describe the manual path that
+should be checked in the commit or PR notes instead.
