@@ -834,18 +834,21 @@ Object.assign(Settings, {
       const wardId = AppState.currentWardId;
       const beds = AppState.beds.filter(b => b.ward_id === wardId);
       
+      // マップ配置の座標は患者データと無関係のため、他端末での病床更新（患者割当・
+      // 在室状況の変化等）と衝突して保存全体が失敗しないよう、楽観的排他ロックを
+      // 使わずに保存する
       const promises = [];
       for (const [key, cell] of Object.entries(this._grid.cells)) {
         if (cell?.bedId) {
           const [col, row] = key.split(',').map(Number);
-          promises.push(API.patch('beds', cell.bedId, { map_col: col, map_row: row }));
+          promises.push(API.patch('beds', cell.bedId, { map_col: col, map_row: row }, { skipRevisionCheck: true }));
         }
       }
       // 未配置のものは null に更新
       for (const bed of beds) {
         const placed = Object.values(this._grid.cells).some(c => c?.bedId === bed.id);
         if (!placed) {
-          promises.push(API.patch('beds', bed.id, { map_col: null, map_row: null }));
+          promises.push(API.patch('beds', bed.id, { map_col: null, map_row: null }, { skipRevisionCheck: true }));
         }
       }
 
@@ -855,11 +858,11 @@ Object.assign(Settings, {
         rows: this._grid.rows,
         cells: this._grid.cells
       };
-      
+
       promises.push(API.create('system_settings', {
         id: `map_layout_${wardId}`,
         value: JSON.stringify(layoutData)
-      }));
+      }, { skipRevisionCheck: true }));
 
       await Promise.all(promises);
       await App.loadMasters();

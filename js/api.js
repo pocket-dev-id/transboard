@@ -291,8 +291,11 @@ const API = {
     return this._fetch(`tables/${table}/${id}`);
   },
 
-  async create(table, data) {
-    const payload = addExpectedMasterRevision(table, data?.id, data);
+  // skipRevisionCheck: 患者データ等とは無関係な項目（マップ配置の座標など）だけを
+  // 更新する場合に、他端末での無関係な更新と衝突して失敗するのを避けるための逃げ道。
+  // 楽観的排他ロックを守るべきフィールド（patient_name等）を含む更新では使わないこと
+  async create(table, data, { skipRevisionCheck = false } = {}) {
+    const payload = skipRevisionCheck ? data : addExpectedMasterRevision(table, data?.id, data);
     return ensureMutationSuccess(await this._fetch(`tables/${table}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -309,11 +312,11 @@ const API = {
     }));
   },
 
-  async patch(table, id, data) {
+  async patch(table, id, data, { skipRevisionCheck = false } = {}) {
     if (table === 'transfer_events' && data?.current_status === 'RETURNED') {
       return this.completeEventForMaintenance(id, data.expectedStatus || null);
     }
-    const payload = addExpectedMasterRevision(table, id, data);
+    const payload = skipRevisionCheck ? data : addExpectedMasterRevision(table, id, data);
     return ensureMutationSuccess(await this._fetch(`tables/${table}/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

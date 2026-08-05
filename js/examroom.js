@@ -193,9 +193,11 @@ const ExamRoom = {
 
       const nextLabel = this._getExamActionLabel(matchEvent, action);
       if (actions.length === 1) {
+        // 遷移先が1つに決まる典型ケース（到着・検査開始等）は、誰も画面の前にいなくても
+        // 数秒で自動的に確定させる。誤ったカードの場合はこの間にキャンセルできる
         const ok = await UI.confirmModal(
           `${bedName}（現在: ${currentLabel}）を${nextLabel}にしますか？`,
-          { title: 'ICスキャン確認', confirmLabel: '更新する' }
+          { title: 'ICスキャン確認', confirmLabel: '更新する', autoConfirmMs: 4000 }
         );
         if (!ok) {
           UI.playScanSound(false);
