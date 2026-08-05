@@ -1,0 +1,59 @@
+name: Bump Version
+
+# PRがmainにマージされるたびに package.json の patch バージョンを自動で+1する。
+# タグ付け・リリースビルド（release.yml）は引き続き手動（vX.Y.Z タグをpushした時のみ）。
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  bump-version:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Bump patch version (skip if this PR already changed it)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -e
+          BASE_VERSION=$(git show "$BASE_SHA:package.json" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).version)")
+          CURRENT_VERSION=$(node -e "process.stdout.write(require('./package.json').version)")
+          if [ "$BASE_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "このPRで既にバージョンが変更されています ($BASE_VERSION -> $CURRENT_VERSION)。自動バンプをスキップします。"
+            exit 0
+          fi
+
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const parts = pkg.version.split('.').map(Number);
+            parts[2] += 1;
+            pkg.version = parts.join('.');
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          NEW_VERSION=$(node -e "process.stdout.write(require('./package.json').version)")
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to $NEW_VERSION"
+
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "pushが競合しました。mainを取り込んで再試行します ($i/5)"
+            git pull --rebase origin main
+          done
+          echo "5回リトライしてもpushできませんでした" >&2
+          exit 1
