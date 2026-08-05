@@ -419,6 +419,10 @@ h1, h2, h3, h4,
   font-weight: 800;
   line-height: 1;
 }
+/* 患者名は病床番号より視認性を優先し、密度設定(標準/大/小)に連動して一回り大きく表示する */
+.bed-patient-name {
+  font-size: calc(var(--bed-card-num-sz) + 2px);
+}
 .bed-status-badge {
   font-size: var(--bed-card-info-sz);
   font-weight: 700;

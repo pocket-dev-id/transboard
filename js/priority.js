@@ -301,7 +301,7 @@ const NotificationHistory = {
             <i class="fas fa-check-circle"></i> ${UI.escapeHTML(log.acknowledged_by || '病棟')}確認済
           </span>`
         : `<button type="button" class="notification-history-ack-button" data-ack-log-id="${UI.escapeHTML(log.id)}">
-            確認しました
+            確認する
           </button>`;
 
       return `
@@ -331,7 +331,7 @@ const NotificationHistory = {
         const completed = await App.acknowledgeNotification(button.dataset.ackLogId);
         if (!completed && button.isConnected) {
           button.disabled = false;
-          button.textContent = '確認しました';
+          button.textContent = '確認する';
         }
       });
     });

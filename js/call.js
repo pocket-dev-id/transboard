@@ -41,6 +41,7 @@ const CallPanel = {
   _selectedAudioInput: null,
   _selectedVideoInput: null,
   _callSourceId: null,
+  _fullscreenChangeHandler: null,
 
   VIDEO_QUALITY_PRESETS: {
     low:    { width: 320,  height: 240, frameRate: 10,  maxBitrateBps: 200_000 },
@@ -223,14 +224,20 @@ const CallPanel = {
     return id;
   },
 
-  getNameById(id) {
-    if (!id) return '不明';
-    if (id.startsWith('ward-')) {
-      const w = AppState.wards.find(x => x.id === id);
-      return w ? w.name : '病棟';
-    }
+  // 病棟IDは管理画面で任意の文字列を設定できる（'ward-'接頭辞は既定の例示に過ぎず必須ではない）
+  // ため、IDの接頭辞では病棟/検査室を判別できない。実データを両方探して判定する
+  resolveCallTarget(id) {
+    if (!id) return null;
+    const ward = AppState.wards.find(x => x.id === id);
+    if (ward) return { type: 'ward', record: ward };
     const room = AppState.getExamRoomById(id);
-    return room ? room.name : '検査室';
+    if (room) return { type: 'exam_room', record: room };
+    return null;
+  },
+
+  getNameById(id) {
+    const target = this.resolveCallTarget(id);
+    return target ? target.record.name : '不明';
   },
 
   _getCallFromId() {
@@ -250,7 +257,13 @@ const CallPanel = {
         return; // WebRTC通話が無効の場合はポーリングを行わない
       }
 
-      const myId = this.getMyId();
+      // 発信中・通話中は、そのやり取りを開始した時のID(_callSourceId)を使い続ける。
+      // getMyId()はアクティブなタブ/選択中の検査室から都度その場で判定するため、
+      // 呼び出し中に他のタブへ切り替えると相手からの応答・拒否シグナルの宛先(myId)が
+      // ずれて届かなくなり、応答/拒否に気づけないままになってしまう
+      const myId = (this.isCalling || this.isConnected)
+        ? (this._callSourceId || this.getMyId())
+        : this.getMyId();
       if (!myId) {
         this._nextPollAt = Date.now() + 1500;
         return;
@@ -354,9 +367,7 @@ const CallPanel = {
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
-    const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
-    const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
-    const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const phoneNum = this.resolveCallTarget(targetId)?.record.phone || '';
     const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     // 定型文リストの構築 (データベースから動的に取得)
@@ -638,7 +649,9 @@ const CallPanel = {
 
     } catch (e) {
       console.error('[WebRTC] Start Call Error:', e);
-      this.cleanupCall('マイクへのアクセスが拒否されたか、マイクが見つかりません');
+      this.cleanupCall(this.isVideoCall
+        ? 'マイクまたはカメラへのアクセスが拒否されたか、見つかりません'
+        : 'マイクへのアクセスが拒否されたか、マイクが見つかりません');
     }
   },
 
@@ -749,7 +762,9 @@ const CallPanel = {
 
     } catch (e) {
       console.error('[WebRTC] Accept Call Error:', e);
-      this.cleanupCall('マイクが見つからないか、応答処理中にエラーが発生しました');
+      this.cleanupCall(this.isVideoCall
+        ? 'マイクまたはカメラが見つからないか、応答処理中にエラーが発生しました'
+        : 'マイクが見つからないか、応答処理中にエラーが発生しました');
     }
   },
 
@@ -946,9 +961,13 @@ const CallPanel = {
         if (sender && newTrack) {
           await sender.replaceTrack(newTrack);
           await this._applyBitrateConstraint(sender, preset.maxBitrateBps);
+          const oldVideoTracks = this.localStream.getVideoTracks();
+          // localStreamを新トラックで更新し、通話終了時のcleanupCall()が新トラックも
+          // 停止できるようにする(そのままだとカメラが解放されず動作し続ける)
+          this.localStream = new MediaStream([newTrack, ...this.localStream.getAudioTracks()]);
           const localVideo = document.getElementById('webrtc-local-video');
-          if (localVideo) localVideo.srcObject = new MediaStream([newTrack, ...this.localStream.getAudioTracks()]);
-          this.localStream.getVideoTracks().forEach(t => t.stop());
+          if (localVideo) localVideo.srcObject = this.localStream;
+          oldVideoTracks.forEach(t => t.stop());
         }
       } catch(e) { console.error('[WebRTC] lowerQuality:', e); }
     }
@@ -968,9 +987,7 @@ const CallPanel = {
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
-    const room = targetId.startsWith('ward-') ? null : AppState.getExamRoomById(targetId);
-    const ward = targetId.startsWith('ward-') ? AppState.wards.find(x => x.id === targetId) : null;
-    const phoneNum = room ? room.phone : (ward ? ward.phone : '');
+    const phoneNum = this.resolveCallTarget(targetId)?.record.phone || '';
     const phoneNumHtml = UI.escapeHTML(phoneNum || '');
 
     const overlay = document.createElement('div');
@@ -1102,11 +1119,18 @@ const CallPanel = {
           fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
         }
       };
-      document.addEventListener('fullscreenchange', () => {
+      // 通話ごとに古いリスナーを外してから登録する。{once:true}だと通話中に一度も
+      // 発火しない(全画面を使わない)場合に外れず、通話を重ねるたびにdocumentへ
+      // 溜まり続けてしまうため、cleanupCall()で明示的に解除する方式にする
+      if (this._fullscreenChangeHandler) {
+        document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      }
+      this._fullscreenChangeHandler = () => {
         if (!document.fullscreenElement && fsBtn) {
           fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
         }
-      }, { once: true });
+      };
+      document.addEventListener('fullscreenchange', this._fullscreenChangeHandler);
     }
 
   },
@@ -1126,6 +1150,11 @@ const CallPanel = {
     this.stopRingTone();
     this.stopCallTimer();
     this._stopStatsPolling();
+
+    if (this._fullscreenChangeHandler) {
+      document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      this._fullscreenChangeHandler = null;
+    }
 
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);

@@ -1884,7 +1884,7 @@ const App = {
       !log.acknowledged_at &&
       currentPage === 'ward-dashboard';
     UI.toast(message, type, canAcknowledge ? Math.max(duration, 10000) : duration, canAcknowledge ? {
-      actionLabel: '確認しました',
+      actionLabel: '確認する',
       onAction: () => this.acknowledgeNotification(log.id),
     } : {});
   },
