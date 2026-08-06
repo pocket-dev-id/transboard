@@ -2,6 +2,27 @@
  * TransBoard - 病床詳細・移送開始モーダル
  */
 
+// 退院確認。進行中の移送がある場合は、そのまま退院すると帰棟先を追えなくなるため
+// 検査室・状態を明示した危険確認に切り替える。転院・急変などで検査中の退院が
+// 必要になる場合があるためブロックはせず、確認を1段厚くするに留める。
+async function confirmPatientDischarge(bedId, bedLabel, patientLabel) {
+  const activeEvent = AppState.getActiveEventForBed(bedId);
+  if (!activeEvent) {
+    return UI.confirmModal(`${bedLabel}の患者（${patientLabel}）を退院しますか？`, {
+      title: '退院確認', danger: true, confirmLabel: '退院する',
+    });
+  }
+  const examRoom = AppState.getExamRoomById(activeEvent.exam_room_id);
+  const statusLabel = CONFIG.STATUS_LABEL[activeEvent.current_status] || activeEvent.current_status;
+  const place = examRoom ? `${examRoom.name}へ移送中（${statusLabel}）` : `移送中（${statusLabel}）`;
+  return UI.confirmModal(`${bedLabel}の患者（${patientLabel}）は現在${place}です。それでも退院しますか？`, {
+    title: '移送中の患者の退院',
+    detail: '退院すると病床の患者情報が消え、この移送の帰棟先を追えなくなります。先に帰棟またはキャンセルの処理を済ませてください。',
+    type: 'danger',
+    confirmLabel: '退院する',
+  });
+}
+
 const BedModal = {
   currentBedId: null,
   currentEventId: null,
@@ -96,7 +117,7 @@ const BedModal = {
         PatientRegModal.open(bedId, bed);
       });
       document.getElementById('btn-patient-discharge')?.addEventListener('click', async () => {
-        if (!await UI.confirmModal(`${UI.formatBedNamePlain(bed)}号床の患者（${UI.getPatientName(bed.patient_name)}）を退院しますか？`, { title: '退院確認', danger: true, confirmLabel: '退院する' })) return;
+        if (!await confirmPatientDischarge(bedId, `${UI.formatBedNamePlain(bed)}号床`, UI.getPatientName(bed.patient_name))) return;
         try {
           await API.patch('beds', bedId, {
             patient_name: null, patient_id: null, is_present: false,
@@ -1220,7 +1241,7 @@ const PatientRegModal = {
     // 退院ボタン
     document.getElementById('prm-discharge')?.addEventListener('click', async () => {
       const bedLabel = bedObj ? UI.formatBedNamePlain(bedObj) + '号床' : '';
-      if (!confirm(`${bedLabel}の患者（${defName}）を退院しますか？`)) return;
+      if (!await confirmPatientDischarge(bedId, bedLabel, defName)) return;
       try {
         await API.patch('beds', bedId, {
           patient_name: null, patient_id: null, is_present: false,

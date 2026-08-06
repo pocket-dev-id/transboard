@@ -4028,6 +4028,21 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         };
       }
     }
+    // 進行中の移送がある病床は削除しない。削除すると移送イベントのbed_idが宙に浮き、
+    // 迎え要請が「病床不明」となって帰棟先を追えなくなる。病棟の削除と同様、
+    // renderer側の確認だけでは他端末との競合を防げないため親機DBで再確認する。
+    if (table === 'beds') {
+      const activeEvents = (db.transfer_events || []).filter(event =>
+        String(event.bed_id) === String(id) && ACTIVE_TRANSFER_STATUSES.has(event.current_status)
+      );
+      if (activeEvents.length > 0) {
+        return {
+          success: false,
+          conflict: true,
+          message: 'この病床には進行中の移送があります。帰棟またはキャンセルしてから削除してください。',
+        };
+      }
+    }
     const removed = list.splice(index, 1)[0];
     if (table === 'beds') {
       const occupancyNow = Date.now();
