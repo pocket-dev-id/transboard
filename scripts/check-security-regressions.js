@@ -23,6 +23,7 @@ const networkSettings = read('js/settings/network.js');
 const importNotify = read('js/settings/import-notify.js');
 const terminalAccess = read('js/settings/terminal-access.js');
 const styles = read('css/style.css');
+const modal = read('js/modal.js');
 
 assert(!main.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
 assert(!/\bexecSync\s*\(/.test(main), 'Shell command strings must not use execSync');
@@ -171,6 +172,30 @@ assert(
   !importNotify.includes('showOsNotification') &&
   !importNotify.includes('notification_os'),
   'Windows native toast notifications must remain removed'
+);
+
+// 患者取り違え・移送の取りこぼしにつながる3つのガード。いずれも processDbRequest や
+// fs/chokidar に密結合した経路にあり実行ベースの単体テストが割に合わないため、
+// ガードが消えていないことをソース上で担保する。
+assert(
+  main.includes("if (table === 'beds') {") &&
+  /transfer_events[\s\S]{0,200}ACTIVE_TRANSFER_STATUSES[\s\S]{0,400}進行中の移送があります/.test(main),
+  'Bed deletion must stay blocked while an active transfer references the bed'
+);
+assert(
+  modal.includes('confirmPatientDischarge') &&
+  modal.includes('getActiveEventForBed') &&
+  !/if \(!confirm\(`\$\{bedLabel\}の患者/.test(modal),
+  'Discharge must keep the active-transfer confirmation (both discharge entry points)'
+);
+assert(
+  /results\.length > 0 && newItems\.length === 0/.test(main) &&
+  main.indexOf('const newItems = []') < main.indexOf("db.schedule_items.filter(x => x.feed_id !== feed.id)"),
+  'Schedule feed import must validate parsed rows before deleting existing items'
+);
+assert(
+  app.includes('overwrittenActiveBeds') && app.includes('isSameOccupant'),
+  'CSV import must warn when it overwrites a bed that has an in-flight transfer'
 );
 
 console.log('Security regression checks passed.');
