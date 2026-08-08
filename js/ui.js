@@ -76,12 +76,20 @@ const UI = {
     return this.isPatientMaskEnabled() ? '＊＊＊＊' : name;
   },
 
+  // 検査室到着後は付き添いが手離れ(待機)し、実際に迎えに行く人は同じとは限らない。
+  // 「今この欄が指しているのは付き添いか迎え担当か」を文言で明示する
+  // (isActive=true: MOVING/PICKUP_REQUIREDで実際に付き添い移動中、
+  //  false: それ以外は待機中=迎え担当として変更可能)
+  escortRoleLabel(isActive) {
+    return isActive ? '付き添い中' : '迎え担当';
+  },
+
   // 付き添いスタッフのバッジHTML。実際に移動中(active)か、検査中等で
   // 病棟へ戻り手離れしている状態(standby)かで表示を変える（病床マップ・
   // 優先対応一覧の双方から共有）
   escortBadge(name, isActive, cssPrefix, extraClass = '', style = '') {
     const icon = isActive ? 'fa-walking' : 'fa-user-nurse';
-    const suffix = isActive ? '' : '（待機）';
+    const suffix = isActive ? '' : `（${this.escortRoleLabel(false)}）`;
     const stateClass = isActive ? 'active' : 'standby';
     const classAttr = `${extraClass ? extraClass + ' ' : ''}${cssPrefix} ${cssPrefix}--${stateClass}`;
     const styleAttr = style ? ` style="${style}"` : '';

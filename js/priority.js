@@ -238,9 +238,9 @@ const StaffStatus = {
   _classify(event) {
     if (!event) return { cls: 'free', label: '空き', icon: 'fa-check-circle' };
     if (CONFIG.ESCORT_ACTIVE_STATUSES.includes(event.current_status)) {
-      return { cls: 'active', label: '付き添い中', icon: 'fa-walking' };
+      return { cls: 'active', label: UI.escortRoleLabel(true), icon: 'fa-walking' };
     }
-    return { cls: 'standby', label: '病棟待機', icon: 'fa-hourglass-half' };
+    return { cls: 'standby', label: UI.escortRoleLabel(false), icon: 'fa-hourglass-half' };
   },
 };
 
