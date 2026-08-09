@@ -782,6 +782,19 @@ const App = {
 
         let importedCount = 0;
         let skipCount = 0;
+        // 進行中の移送がある病床で患者が入れ替わった件数（取り込み後にまとめて警告する）
+        const overwrittenActiveBeds = [];
+
+        // 病床の在室者が同一人物かの判定。サーバ側 isSameBedOccupant と優先順を揃える
+        // （両者にpatient_idがあればそれで比較し、無ければ氏名で比較する）
+        const hasOccupant = (rec) => Boolean(rec && (rec.patient_id || rec.patient_name));
+        const isSameOccupant = (before, after) => {
+          if (!hasOccupant(before) || !hasOccupant(after)) return false;
+          if (before.patient_id && after.patient_id) {
+            return String(before.patient_id) === String(after.patient_id);
+          }
+          return String(before.patient_name || '') === String(after.patient_name || '');
+        };
 
         // ポリシー設定のロード
         let policy = { action: 'archive', retentionDays: '30', clearUnlisted: false };
@@ -906,6 +919,14 @@ const App = {
               _occupancySource: 'csv_import'
             };
 
+            // 進行中の移送がある病床の患者が入れ替わる場合、移送イベント側は登録時の
+            // 患者名スナップショットを持ち続けるため、帰棟までダッシュボードと移送情報で
+            // 別々の患者が表示される。電子カルテを正として上書き自体は続けるが、
+            // 気づかないまま進まないよう取り込み後に警告する。
+            if (activeBedIds.has(bed.id) && !isSameOccupant(bed, patch)) {
+              overwrittenActiveBeds.push(bed.bed_number || bed.id);
+            }
+
             seenImportedBedIds.add(bed.id);
             listedBedIds.add(bed.id);
             bulkUpdates.push(patch);
@@ -1024,6 +1045,18 @@ const App = {
           } else {
             UI.toast(`📂 CSVインポート完了: 更新なし (スキップ: ${skipCount}件)`, 'warning');
           }
+        }
+
+        // 移送中の病床で患者が入れ替わった場合の警告。取り込み通知のON/OFF設定に
+        // かかわらず出す（空床化スキップの警告と同じ扱い）
+        if (overwrittenActiveBeds.length > 0) {
+          const shown = overwrittenActiveBeds.slice(0, 5).join('、');
+          const more = overwrittenActiveBeds.length > 5 ? ` ほか${overwrittenActiveBeds.length - 5}件` : '';
+          UI.toast(
+            `⚠️ 移送中の${overwrittenActiveBeds.length}床でCSVにより患者情報が変わりました（${shown}${more}）。帰棟までダッシュボードと移送情報の患者名が食い違います。`,
+            'warning',
+            12000
+          );
         }
           })
           .catch(async error => {

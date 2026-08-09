@@ -2,6 +2,27 @@
  * TransBoard - 病床詳細・移送開始モーダル
  */
 
+// 退院確認。進行中の移送がある場合は、そのまま退院すると帰棟先を追えなくなるため
+// 検査室・状態を明示した危険確認に切り替える。転院・急変などで検査中の退院が
+// 必要になる場合があるためブロックはせず、確認を1段厚くするに留める。
+async function confirmPatientDischarge(bedId, bedLabel, patientLabel) {
+  const activeEvent = AppState.getActiveEventForBed(bedId);
+  if (!activeEvent) {
+    return UI.confirmModal(`${bedLabel}の患者（${patientLabel}）を退院しますか？`, {
+      title: '退院確認', danger: true, confirmLabel: '退院する',
+    });
+  }
+  const examRoom = AppState.getExamRoomById(activeEvent.exam_room_id);
+  const statusLabel = CONFIG.STATUS_LABEL[activeEvent.current_status] || activeEvent.current_status;
+  const place = examRoom ? `${examRoom.name}へ移送中（${statusLabel}）` : `移送中（${statusLabel}）`;
+  return UI.confirmModal(`${bedLabel}の患者（${patientLabel}）は現在${place}です。それでも退院しますか？`, {
+    title: '移送中の患者の退院',
+    detail: '退院すると病床の患者情報が消え、この移送の帰棟先を追えなくなります。先に帰棟またはキャンセルの処理を済ませてください。',
+    type: 'danger',
+    confirmLabel: '退院する',
+  });
+}
+
 const BedModal = {
   currentBedId: null,
   currentEventId: null,
@@ -96,7 +117,7 @@ const BedModal = {
         PatientRegModal.open(bedId, bed);
       });
       document.getElementById('btn-patient-discharge')?.addEventListener('click', async () => {
-        if (!await UI.confirmModal(`${UI.formatBedNamePlain(bed)}号床の患者（${UI.getPatientName(bed.patient_name)}）を退院しますか？`, { title: '退院確認', danger: true, confirmLabel: '退院する' })) return;
+        if (!await confirmPatientDischarge(bedId, `${UI.formatBedNamePlain(bed)}号床`, UI.getPatientName(bed.patient_name))) return;
         try {
           await API.patch('beds', bedId, {
             patient_name: null, patient_id: null, is_present: false,
@@ -233,7 +254,7 @@ const BedModal = {
     const busyStaffIds = AppState.getBusyEscortStaffIds();
     const staffOptions = `<option value="">（なし）</option>` +
       AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s =>
-        `<option value="${UI.escapeHTML(s.id)}">${UI.escapeHTML(s.name)}${busyStaffIds.has(s.id) ? '（⚠付き添い中）' : ''}</option>`
+        `<option value="${UI.escapeHTML(s.id)}">${UI.escapeHTML(s.name)}${busyStaffIds.has(s.id) ? `（⚠${UI.escortRoleLabel(true)}）` : ''}</option>`
       ).join('');
 
     // 患者IC登録設定が有効かどうか
@@ -551,12 +572,12 @@ const BedModal = {
             <div class="value">${examRoom ? UI.examImage(examRoom, 'room', 'history-exam-image') + UI.escapeHTML(examRoom.name) : '--'}</div>
           </div>
           <div class="modal-info-item">
-            <div class="label">付き添い看護師</div>
+            <div class="label">${CONFIG.ESCORT_ACTIVE_STATUSES.includes(event.current_status) ? '付き添い看護師' : UI.escortRoleLabel(false)}</div>
             <div class="value" style="display:flex; align-items:center; gap:4px;">
               <select id="m-escort-staff" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px; font-weight: bold; width: 120px;">
                 ${`<option value="">（なし）</option>` + AppState.staffs.filter(s => s.ward_id === AppState.currentWardId).map(s => {
                   const isBusy = AppState.getBusyEscortStaffIds(event.id).has(s.id);
-                  return `<option value="${UI.escapeHTML(s.id)}" ${event.escort_staff_id === s.id ? 'selected' : ''}>${UI.escapeHTML(s.name)}${isBusy ? '（⚠付き添い中）' : ''}</option>`;
+                  return `<option value="${UI.escapeHTML(s.id)}" ${event.escort_staff_id === s.id ? 'selected' : ''}>${UI.escapeHTML(s.name)}${isBusy ? `（⚠${UI.escortRoleLabel(true)}）` : ''}</option>`;
                 }).join('')}
               </select>
               <button class="btn btn-primary" id="btn-update-escort-staff" style="padding: 3px 6px; font-size: 11px; width: auto; height: auto; min-width: 0; line-height: 1;">変更</button>
@@ -780,13 +801,15 @@ const BedModal = {
       };
     }
 
-    // 付き添い看護師の変更
+    // 付き添い看護師/迎え担当の変更
     const updateStaffBtn = document.getElementById('btn-update-escort-staff');
     if (updateStaffBtn && event) {
       updateStaffBtn.onclick = async () => {
         const staffSelect = document.getElementById('m-escort-staff');
         if (!staffSelect) return;
         const newStaffId = staffSelect.value || null;
+        const roleLabel = CONFIG.ESCORT_ACTIVE_STATUSES.includes(event.current_status)
+          ? '付き添い看護師' : UI.escortRoleLabel(false);
 
         updateStaffBtn.disabled = true;
         updateStaffBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
@@ -797,7 +820,7 @@ const BedModal = {
             { escort_staff_id: newStaffId },
             this._getModalEventExpectedStatus(event)
           );
-          UI.toast('付き添い看護師を変更しました', 'success');
+          UI.toast(`${roleLabel}を変更しました`, 'success');
           
           await App.refreshData();
           
@@ -817,7 +840,7 @@ const BedModal = {
         } catch (err) {
           console.error(err);
           if (await this._handleEventPatchConflict(err)) return;
-          UI.toast('付き添い看護師の変更に失敗しました', 'danger');
+          UI.toast(`${roleLabel}の変更に失敗しました`, 'danger');
           updateStaffBtn.disabled = false;
           updateStaffBtn.innerHTML = '変更';
         }
@@ -1220,7 +1243,7 @@ const PatientRegModal = {
     // 退院ボタン
     document.getElementById('prm-discharge')?.addEventListener('click', async () => {
       const bedLabel = bedObj ? UI.formatBedNamePlain(bedObj) + '号床' : '';
-      if (!confirm(`${bedLabel}の患者（${defName}）を退院しますか？`)) return;
+      if (!await confirmPatientDischarge(bedId, bedLabel, defName)) return;
       try {
         await API.patch('beds', bedId, {
           patient_name: null, patient_id: null, is_present: false,

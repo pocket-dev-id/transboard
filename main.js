@@ -1706,10 +1706,9 @@ function importScheduleFeedCSV(filePath, feed) {
         const db = readDB();
         if (!db.schedule_items) db.schedule_items = [];
 
-        // このフィードの既存アイテムをすべて削除してから再挿入
-        db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
-
-        let count = 0;
+        // 取り込みは「このフィードの既存アイテムを全削除してから再挿入」する方式のため、
+        // 先に新しいアイテムを組み立て、既存を消す前に妥当性を確認する
+        const newItems = [];
         results.forEach(row => {
           const dateVal = mapping.col_date ? row[mapping.col_date] : null;
           const timeVal = mapping.col_time ? row[mapping.col_time] : null;
@@ -1722,8 +1721,8 @@ function importScheduleFeedCSV(filePath, feed) {
           const identifier = mapping.col_id ? (row[mapping.col_id] || '') : '';
           const durationMin = mapping.col_duration_min ? parseInt(row[mapping.col_duration_min]) || null : null;
 
-          db.schedule_items.push({
-            id: `sched-${feed.id}-${startMs}-${count}`,
+          newItems.push({
+            id: `sched-${feed.id}-${startMs}-${newItems.length}`,
             feed_id: feed.id,
             feed_name: feed.name || '取り込みスケジュール',
             color: feed.color || '#7c3aed',
@@ -1735,8 +1734,31 @@ function importScheduleFeedCSV(filePath, feed) {
             raw: row,
             imported_at: Date.now()
           });
-          count++;
         });
+
+        // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
+        // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
+        // 既存アイテムには触れずに中止する（患者CSV取り込み側の空振りガードと同じ方針）
+        if (results.length > 0 && newItems.length === 0) {
+          const message = `${results.length}行すべてで日時を解釈できなかったため、取り込みを中止しました。日付・時刻の列マッピングを確認してください。`;
+          console.warn(`[ScheduleFeed] "${feed.name}" ${message}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('schedule-imported', {
+              success: false,
+              feedId: feed.id,
+              feedName: feed.name,
+              fileName: path.basename(filePath),
+              count: 0,
+              encoding,
+              message,
+            });
+          }
+          return;
+        }
+
+        db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
+        db.schedule_items.push(...newItems);
+        const count = newItems.length;
 
         const saved = writeDB(db);
         if (!saved) {
@@ -4003,6 +4025,21 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           success: false,
           conflict: true,
           message: `この病棟には${linkedBeds.length}件の病床が登録されています。病床を先に削除してください。`,
+        };
+      }
+    }
+    // 進行中の移送がある病床は削除しない。削除すると移送イベントのbed_idが宙に浮き、
+    // 迎え要請が「病床不明」となって帰棟先を追えなくなる。病棟の削除と同様、
+    // renderer側の確認だけでは他端末との競合を防げないため親機DBで再確認する。
+    if (table === 'beds') {
+      const activeEvents = (db.transfer_events || []).filter(event =>
+        String(event.bed_id) === String(id) && ACTIVE_TRANSFER_STATUSES.has(event.current_status)
+      );
+      if (activeEvents.length > 0) {
+        return {
+          success: false,
+          conflict: true,
+          message: 'この病床には進行中の移送があります。帰棟またはキャンセルしてから削除してください。',
         };
       }
     }
