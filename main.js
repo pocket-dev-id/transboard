@@ -5102,6 +5102,14 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
         details: { encrypted: fileContent.startsWith(BACKUP_ENCRYPTION_MAGIC), fileName: path.basename(filePath) },
       });
       writeDB(db);
+
+      // 端末役割ファイル(terminal_role.json)を復元後のDBに同期する。ここで揃えないと、
+      // 次回起動時に repairShareModeBeforeServerStart() が「復元前の役割」を正としてDBを
+      // 上書きしてしまい、バックアップに含まれるshare_mode/parent_ipが復元直後の1回しか
+      // 有効にならない（次回起動で静かに元へ戻る）落とし穴になる。
+      const restoredShareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
+      const restoredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '');
+      writeTerminalRole({ shareMode: restoredShareMode, parentIp: restoredParentIp });
     }
     return { success: true };
   } catch (err) {
