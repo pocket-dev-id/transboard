@@ -1370,8 +1370,22 @@ const App = {
   },
 
   _connectionLostReason: null,
+  _disconnectSignalCount: 0,
 
   _setConnectionStatus(ok, reason = 'network') {
+    // 親機疎通の失敗報告は、ポーリング(5秒)・ハートビート(10秒)・
+    // ParentServerMonitor(30秒)の3系統が独立に検知してくる。いずれか1回の
+    // 失敗で即座にバナーを出すと、瞬間的な遅延だけでも頻繁に点滅してしまう。
+    // まだバナー非表示の状態からの新規失敗シグナルは、連続2回受けるまで
+    // 静観する（成功が挟まればカウンタはリセットされる）。既にバナー表示中
+    // なら理由の更新・復帰は従来通り即座に反映する。
+    if (ok) {
+      this._disconnectSignalCount = 0;
+    } else if (!this._connectionLost) {
+      this._disconnectSignalCount += 1;
+      if (this._disconnectSignalCount < 2) return;
+    }
+
     // 状態も理由も変わっていなければ何もしない（理由が変わったらバナー文言を更新する）
     if (ok === !this._connectionLost && (ok || reason === this._connectionLostReason)) return;
     this._connectionLost = !ok;
