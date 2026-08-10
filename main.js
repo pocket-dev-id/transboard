@@ -979,21 +979,24 @@ function writeDB(data) {
         return false;
       }
     }
-    // インメモリの元のデータを破壊しないようディープコピーを作成
-    const dbClone = structuredClone(data);
-
-    // センシティブな設定情報の暗号化
-    if (dbClone.system_settings && Array.isArray(dbClone.system_settings)) {
-      dbClone.system_settings.forEach(s => {
-        if (SENSITIVE_SETTING_IDS.includes(s.id)) {
-          s.value = encryptSensitiveValue(s.value);
+    // ディスク書き込み用オブジェクトを組み立てる。dataやsystem_settingsの
+    // 各要素を直接ミューテーションせず、system_settingsの機微な要素だけ
+    // 新規オブジェクト化するため、DB全体のディープコピーは不要
+    // （読み取り専用のJSON.stringifyに渡すだけの使い捨てローカル変数）。
+    const dbForDisk = (data.system_settings && Array.isArray(data.system_settings))
+      ? {
+          ...data,
+          system_settings: data.system_settings.map(s => (
+            SENSITIVE_SETTING_IDS.includes(s.id)
+              ? { ...s, value: encryptSensitiveValue(s.value) }
+              : s
+          )),
         }
-      });
-    }
+      : data;
 
     // 保存先は基本的にsafeStorageで暗号化されるため整形(pretty-print)に
     // 可読性上の意味はなく、書き込みのたびに発生するコストなので省略する。
-    safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbClone)));
+    safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbForDisk)));
 
     // 書き込み成功後にローリングバックアップを更新する
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
@@ -3615,7 +3618,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       const scopedEventById = new Map(scopedEvents.map(event => [String(event.id), event]));
       const eventById = new Map(activeEvents.map(event => [String(event.id), event]));
       const latestLogByEventId = new Map();
-      const sortedLogs = [...(db.transfer_status_logs || [])]
+      // 対象診察室に無関係なログはlatestLogByEventId/recentStatusLogsの
+      // どちらにも影響しないため、全件ソートの前にscopedEventByIdで
+      // 絞り込んでからソートし、ソート対象を縮小する。
+      const sortedLogs = (db.transfer_status_logs || [])
+        .filter(log => scopedEventById.has(String(log.transfer_event_id)))
         .sort((a, b) => Number(b.changed_at || 0) - Number(a.changed_at || 0));
       sortedLogs.forEach(log => {
           const key = String(log.transfer_event_id);
@@ -4318,6 +4325,22 @@ handleTrusted('cleanup-event-retention', () => {
   }
   return { success: true, removed };
 });
+
+// event_retention_days（既定"0"=無効）は設定しても管理者が上記ハンドラを
+// 手動実行しない限り適用されないため、無期限に蓄積したtransfer_events/
+// transfer_status_logsが各種ステータス取得エンドポイントの走査コストを
+// 押し上げ続けてしまう。設定済みの場合のみ効果を持つ、24時間毎の自動実行を追加する。
+const EVENT_RETENTION_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+setInterval(() => {
+  try {
+    const db = readDB();
+    if (normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) !== 'parent') return;
+    const removed = pruneExpiredTransferEventsFromDb(db);
+    if (removed > 0) writeDB(db);
+  } catch (err) {
+    console.warn('[DB] 保持期間クリーンアップの自動実行に失敗:', err.message);
+  }
+}, EVENT_RETENTION_CHECK_INTERVAL_MS);
 
 // ── 診断用デバッグログ ──
 // パッケージ版（.exe）はターミナルが無くコンソール出力を確認できないため、
