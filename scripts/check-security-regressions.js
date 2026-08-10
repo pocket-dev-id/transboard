@@ -54,6 +54,21 @@ assert(
   main.includes('isUnsignedUpdateSourceAllowed'),
   'Updates must use API authentication, hash verification, source restrictions, and explicit unsigned confirmation'
 );
+// 現行ビルドは未署名のため、更新は毎回confirmUnsignedUpdateのネイティブ
+// ダイアログを経由する(main.js側)。事前確認モーダルの説明文がこれに一切
+// 触れないと、予告なく現れたダイアログをユーザーが反射的に「中止」してしまい
+// 「ダウンロードしたのに更新が失敗する」体感を生む。事前に案内する文言が
+// 後退していないことを保証する。
+assert(
+  (() => {
+    const idx = app.indexOf('_promptInstallUpdate(info)');
+    const end = app.indexOf('UI.toast(\'更新をダウンロードしています', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('署名なし') && body.includes('続行');
+  })(),
+  'The pre-download update confirmation must warn that a second native Windows dialog (unsigned-update confirmation) will follow'
+);
 assert(
   !main.includes('[ScheduleFeed] "${feed.name}" CSVパース失敗'),
   'Main CSV import must not reference an out-of-scope schedule feed'
