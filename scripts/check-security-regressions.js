@@ -228,4 +228,28 @@ assert(
   'NFC watcher restarts must back off exponentially instead of retrying on a fixed interval'
 );
 
+// readDB()はキャッシュヒット時も含め毎回DB全体をディープコピーして返し、
+// processDbRequestが全APIリクエストの先頭でreadDB()を呼ぶため、このコストは
+// 5秒間隔ポーリング×全端末で繰り返し支払われる。JSON往復クローンへ戻ると
+// DBが肥大化した運用でメインプロセスのCPU負荷が高止まりするため、
+// 高速なstructuredCloneを使い続けることを保証する。
+assert(
+  (() => {
+    const readStart = main.indexOf('function readDB()');
+    const readEnd = main.indexOf('function writeDB(');
+    const writeEnd = main.indexOf('function getSettingRecord(');
+    if (readStart < 0 || readEnd < 0 || writeEnd < 0 || readEnd <= readStart || writeEnd <= readEnd) return false;
+    const readBody = main.slice(readStart, readEnd);
+    const writeBody = main.slice(readEnd, writeEnd);
+    const hasJsonRoundTripClone = /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(readBody) ||
+      /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(writeBody);
+    return !hasJsonRoundTripClone &&
+      readBody.includes('structuredClone(dbCache)') &&
+      readBody.includes('structuredClone(db)') &&
+      readBody.includes('structuredClone(recovered)') &&
+      writeBody.includes('structuredClone(data)');
+  })(),
+  'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
+);
+
 console.log('Security regression checks passed.');

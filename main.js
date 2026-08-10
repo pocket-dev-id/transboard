@@ -789,7 +789,7 @@ function migrateTransferWorkflow(db) {
 function readDB() {
   const currentSignature = getDbFileSignature();
   if (dbCache && dbCacheSignature === currentSignature) {
-    return JSON.parse(JSON.stringify(dbCache));
+    return structuredClone(dbCache);
   }
   if (dbCache && dbCacheSignature !== currentSignature) {
     console.info('[DB] 外部プロセスによる更新を検知したため、キャッシュを再読み込みします。');
@@ -924,7 +924,7 @@ function readDB() {
       writeDB(db);
     }
 
-    dbCache = JSON.parse(JSON.stringify(db));
+    dbCache = structuredClone(db);
     dbCacheSignature = getDbFileSignature();
     return db;
   } catch (err) {
@@ -941,7 +941,7 @@ function readDB() {
         if (!writeDB(recovered)) {
           throw new Error('バックアップデータの復旧保存に失敗しました');
         }
-        return JSON.parse(JSON.stringify(recovered));
+        return structuredClone(recovered);
       } catch (bakErr) {
         console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
       }
@@ -980,7 +980,7 @@ function writeDB(data) {
       }
     }
     // インメモリの元のデータを破壊しないようディープコピーを作成
-    const dbClone = JSON.parse(JSON.stringify(data));
+    const dbClone = structuredClone(data);
 
     // センシティブな設定情報の暗号化
     if (dbClone.system_settings && Array.isArray(dbClone.system_settings)) {
@@ -998,7 +998,7 @@ function writeDB(data) {
     scheduleDbBackup();
 
     // メモリキャッシュを最新の状態（復号化された形）に更新する
-    dbCache = JSON.parse(JSON.stringify(data));
+    dbCache = structuredClone(data);
     dbCacheSignature = getDbFileSignature();
 
     return true;
