@@ -991,7 +991,9 @@ function writeDB(data) {
       });
     }
 
-    safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbClone, null, 2)));
+    // 保存先は基本的にsafeStorageで暗号化されるため整形(pretty-print)に
+    // 可読性上の意味はなく、書き込みのたびに発生するコストなので省略する。
+    safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbClone)));
 
     // 書き込み成功後にローリングバックアップを更新する
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
