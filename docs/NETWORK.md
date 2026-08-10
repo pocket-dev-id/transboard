@@ -60,7 +60,7 @@
 | WebRTC音声通話 | **あり (DTLS-SRTP)** | WebRTC標準により暗号化済み |
 | db.json（保存） | **あり (safeStorage、可能な場合)** | ファイル全体を暗号化。OSユーザー資格情報に紐づくため他PCでは復号不可。`.bak`/`.corrupt`/`.before_restore`も同様に保護される |
 | ODBC接続文字列・SMBパスワード・APIトークン（保存） | **あり (safeStorage)** | Electron safeStorageでフィールド単位も二重に暗号化保存 |
-| バックアップエクスポート | **選択可 (パスワードAES-256-GCM / 患者情報除去した平文)** | PC間移行時はパスワード方式を使用（safeStorageと異なりOSに依存しない） |
+| バックアップエクスポート | **選択可 (パスワードAES-256-GCM / 患者情報除去した平文)** | PC間移行時はパスワード方式を使用（safeStorageと異なりOSに依存しない）。親機自体をPC間で移す手順は[docs/MIGRATION.md](MIGRATION.md)を参照 |
 
 APIトークンは親機の「共有・ネットワーク設定」画面で初回自動生成される。子機側は同画面または初期設定ウィザードでこの値を入力する。
 

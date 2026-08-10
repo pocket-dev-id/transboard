@@ -198,4 +198,19 @@ assert(
   'CSV import must warn when it overwrites a bed that has an in-flight transfer'
 );
 
+// 親機を別PCへ移す際、DB復元だけでは端末ロールファイル(terminal_role.json)が
+// 更新されず、次回起動時にrepairShareModeBeforeServerStart()が復元前の役割で
+// share_mode/parent_ipを静かに上書きしてしまう落とし穴を防ぐガード
+assert(
+  (() => {
+    const idx = main.indexOf("handleTrusted('restore-db'");
+    const end = main.indexOf("handleTrusted('get-database-storage-info'");
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('writeTerminalRole(') &&
+      body.indexOf('writeTerminalRole(') > body.indexOf('appendAuditLog(db,');
+  })(),
+  'Restoring a DB backup must sync terminal_role.json to the restored share_mode/parent_ip'
+);
+
 console.log('Security regression checks passed.');
