@@ -54,6 +54,21 @@ assert(
   main.includes('isUnsignedUpdateSourceAllowed'),
   'Updates must use API authentication, hash verification, source restrictions, and explicit unsigned confirmation'
 );
+// 現行ビルドは未署名のため、更新は毎回confirmUnsignedUpdateのネイティブ
+// ダイアログを経由する(main.js側)。事前確認モーダルの説明文がこれに一切
+// 触れないと、予告なく現れたダイアログをユーザーが反射的に「中止」してしまい
+// 「ダウンロードしたのに更新が失敗する」体感を生む。事前に案内する文言が
+// 後退していないことを保証する。
+assert(
+  (() => {
+    const idx = app.indexOf('_promptInstallUpdate(info)');
+    const end = app.indexOf('UI.toast(\'更新をダウンロードしています', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('署名なし') && body.includes('続行');
+  })(),
+  'The pre-download update confirmation must warn that a second native Windows dialog (unsigned-update confirmation) will follow'
+);
 assert(
   !main.includes('[ScheduleFeed] "${feed.name}" CSVパース失敗'),
   'Main CSV import must not reference an out-of-scope schedule feed'
@@ -273,9 +288,54 @@ assert(
 // writeDB()は書き込みのたびに呼ばれるため、暗号化前提で可読性の意味が薄い
 // pretty-print(インデント付きJSON.stringify)へ戻ると無駄なCPUコストが復活する
 assert(
-  !/JSON\.stringify\(dbClone,\s*null,\s*2\)/.test(main) &&
-  main.includes('JSON.stringify(dbClone)'),
+  !/JSON\.stringify\(dbForDisk,\s*null,\s*2\)/.test(main) &&
+  main.includes('JSON.stringify(dbForDisk)'),
   'writeDB must write compact JSON, not a pretty-printed (indented) JSON.stringify'
+);
+
+// writeDB()は以前、system_settingsの暗号化のためだけにDB全体を
+// structuredCloneしていた（書き込みごとに2回のフルクローン）。system_settings
+// 配列だけを部分コピーすれば十分なため、暗号化用の全体クローンが復活していない
+// ことを保証する（この最適化はDBが肥大化するほど効く）。
+assert(
+  (() => {
+    const writeStart = main.indexOf('function writeDB(');
+    const writeEnd = main.indexOf('function getSettingRecord(');
+    if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
+    const writeBody = main.slice(writeStart, writeEnd);
+    const structuredCloneCalls = writeBody.match(/structuredClone\(/g) || [];
+    return structuredCloneCalls.length === 1 &&
+      writeBody.includes('structuredClone(data)') &&
+      writeBody.includes('system_settings: data.system_settings.map(');
+  })(),
+  'writeDB must not deep-clone the whole DB a second time just to encrypt system_settings; only the settings array should be copied'
+);
+
+// event_retention_daysは管理者が手動実行しない限り適用されず、放置すると
+// transfer_events/transfer_status_logsが無期限に蓄積してステータス取得
+// エンドポイントの走査コストが増え続ける。24時間毎の自動クリーンアップが
+// 存在することを保証する。
+assert(
+  main.includes('EVENT_RETENTION_CHECK_INTERVAL_MS') &&
+  main.includes('pruneExpiredTransferEventsFromDb(db)') &&
+  /setInterval\(\(\) => \{[\s\S]{0,400}pruneExpiredTransferEventsFromDb\(db\)/.test(main),
+  'A periodic (daily) automatic cleanup of expired transfer events must exist so event_retention_days takes effect without manual action'
+);
+
+// exam-room-statusは以前、対象診察室に無関係なログも含めtransfer_status_logs
+// 全件をソートしてから絞り込んでいた(O(N log N) full sort)。対象診察室の
+// イベントに絞り込んでからソートするよう順序が戻っていないことを保証する。
+assert(
+  (() => {
+    const idx = main.indexOf("id === 'exam-room-status'");
+    const end = main.indexOf("if (id) {", idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    const filterIdx = body.indexOf('.filter(log => scopedEventById.has(');
+    const sortIdx = body.indexOf('.sort((a, b) => Number(b.changed_at');
+    return filterIdx >= 0 && sortIdx >= 0 && filterIdx < sortIdx;
+  })(),
+  'exam-room-status must filter transfer_status_logs down to the requested exam room before sorting, not sort the entire table first'
 );
 
 // 30秒間隔の_uiRefreshTimerは病棟ダッシュボード専用のDOM(病床マップ・優先度
