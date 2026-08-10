@@ -3714,11 +3714,17 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         const wardId = searchParams.get('ward_id');
         const bedId = searchParams.get('bed_id');
         const completedOnly = searchParams.get('completed_only') === 'true';
+        // CSVインポート時の病床競合チェック等、全病棟横断で進行中イベントだけを
+        // 必要とする場面向け。event_retention_daysが未設定の長期運用でtransfer_events
+        // が肥大化しても、MAX_PARENT_RESPONSE_BYTES(5MB)超過で子機取得が失敗しないよう、
+        // 全件返却ではなくサーバー側で進行中分だけに絞る
+        const activeOnly = searchParams.get('active_only') === 'true';
         const completedStatuses = new Set(['RETURNED', 'CANCELLED']);
         const filtered = list.filter(event => (
           (!wardId || String(event.ward_id) === String(wardId)) &&
           (!bedId || String(event.bed_id) === String(bedId)) &&
-          (!completedOnly || completedStatuses.has(event.current_status))
+          (!completedOnly || completedStatuses.has(event.current_status)) &&
+          (!activeOnly || ACTIVE_TRANSFER_STATUSES.has(event.current_status))
         ));
         return { data: filtered };
       }

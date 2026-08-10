@@ -787,7 +787,7 @@ const App = {
 
         let activeBedIds;
         try {
-          const eventResult = await API.getAll('transfer_events');
+          const eventResult = await API.getAll('transfer_events', { active_only: 'true' });
           activeBedIds = new Set(
             (eventResult?.data || [])
               .filter(event => CONFIG.ACTIVE_STATUSES.includes(event.current_status))

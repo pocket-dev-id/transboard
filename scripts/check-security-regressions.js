@@ -318,6 +318,24 @@ assert(
   'pruneTransferStatusLogs must protect logs belonging to in-progress transfer events instead of trimming the table with a plain oldest-first cutoff'
 );
 
+// event_retention_daysは既定"0"(無効)のため、transfer_eventsは長期運用で
+// TRANSFER_EVENTS_MAX_ENTRIES(安全弁)まで肥大化しうる。CSVインポート時の
+// 病床競合チェックが全件取得のままだと、MAX_PARENT_RESPONSE_BYTES(5MB)超過で
+// 子機のインポートが恒久的に失敗する。active_onlyフィルタで進行中イベントだけに
+// 絞って取得することを保証する。
+assert(
+  (() => {
+    const idx = main.indexOf("if (table === 'transfer_events') {", main.indexOf('async function processDbRequest'));
+    const end = main.indexOf('return { data: filtered };', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = main.slice(idx, end);
+    return body.includes("searchParams.get('active_only') === 'true'") &&
+      body.includes('!activeOnly || ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
+      app.includes("API.getAll('transfer_events', { active_only: 'true' })");
+  })(),
+  'processDbRequest must support transfer_events?active_only=true and the CSV-import active-bed check must use it, or the parent response can exceed MAX_PARENT_RESPONSE_BYTES once transfer_events grows unbounded'
+);
+
 // download-and-install-updateはインストーラ名をencodeURIComponentしてリクエストする
 // (electron-builderの既定命名"TransBoard Setup <version>.exe"はスペースを含む)。
 // 配信側の/updates/ルートがdecodeURIComponentしないと、スペース入りファイル名の
