@@ -43,6 +43,11 @@ let nfcProcess = null;
 let nfcStdoutBuffer = '';
 let nfcRestartTimer = null;
 let nfcStopping = false;
+let nfcProcessStartedAt = 0;
+let nfcConsecutiveQuickExits = 0;
+const NFC_QUICK_EXIT_THRESHOLD_MS = 3000;
+const NFC_RESTART_BASE_DELAY_MS = 5000;
+const NFC_RESTART_MAX_DELAY_MS = 60000;
 let powerSaveBlockerId = null;
 // CSV取り込みはrenderer側のDB更新完了後に初めて原本を整理する。
 // importIdで複数ファイルを同時処理しても取り違えないようにする。
@@ -88,25 +93,49 @@ function startNfcWatcher() {
     : path.join(__dirname, 'nfc-reader.ps1');
   if (!fs.existsSync(scriptPath)) return;
 
+  nfcProcessStartedAt = Date.now();
   nfcProcess = spawn(POWERSHELL_EXE, ['-NoProfile', '-NonInteractive', '-File', scriptPath], {
     stdio: ['ignore', 'pipe', 'ignore'],
     windowsHide: true,
   });
 
+  // リーダー未検出時、nfc-reader.ps1は起動直後に即終了する。無条件の固定間隔
+  // 再起動だと、リーダーが検出できない状態が続く限りPowerShellランタイム起動＋
+  // インラインC#のJITコンパイルという重い処理を延々と繰り返しCPU負荷が高止まりする。
+  // 直近の起動が短命終了だった回数に応じて再起動間隔を指数的に伸ばし、逆に
+  // ある程度動作していた（＝実際にリーダーを検出しブロッキング待機に入っていた
+  // 可能性が高い）場合はカウントをリセットして次回は素早く再検出できるようにする。
+  const registerExitAndScheduleRestart = () => {
+    const ranMs = Date.now() - nfcProcessStartedAt;
+    if (ranMs < NFC_QUICK_EXIT_THRESHOLD_MS) {
+      nfcConsecutiveQuickExits += 1;
+    } else {
+      nfcConsecutiveQuickExits = 0;
+    }
+    scheduleNfcRestart();
+  };
+
   const scheduleNfcRestart = () => {
     if (nfcStopping || isQuitting || nfcRestartTimer) return;
     const enabled = getSettingRecord(readDB(), 'enable_patient_ic_association')?.value === 'true';
-    if (!enabled) return;
+    if (!enabled) {
+      nfcConsecutiveQuickExits = 0;
+      return;
+    }
+    const delay = Math.min(
+      NFC_RESTART_MAX_DELAY_MS,
+      NFC_RESTART_BASE_DELAY_MS * Math.pow(2, nfcConsecutiveQuickExits)
+    );
     nfcRestartTimer = setTimeout(() => {
       nfcRestartTimer = null;
       startNfcWatcher();
-    }, 5000);
+    }, delay);
   };
 
   nfcProcess.on('error', (err) => {
     console.error('[NFC] PowerShellプロセスの起動に失敗しました:', err.message);
     nfcProcess = null;
-    scheduleNfcRestart();
+    registerExitAndScheduleRestart();
   });
 
   nfcProcess.stdout.on('data', (data) => {
@@ -126,13 +155,14 @@ function startNfcWatcher() {
     nfcStdoutBuffer = '';
     if (!nfcStopping) {
       console.warn(`[NFC] リーダープロセスが終了しました code=${code ?? '-'} signal=${signal ?? '-'}`);
-      scheduleNfcRestart();
+      registerExitAndScheduleRestart();
     }
   });
 }
 
 function stopNfcWatcher() {
   nfcStopping = true;
+  nfcConsecutiveQuickExits = 0;
   if (nfcRestartTimer) {
     clearTimeout(nfcRestartTimer);
     nfcRestartTimer = null;
@@ -759,7 +789,7 @@ function migrateTransferWorkflow(db) {
 function readDB() {
   const currentSignature = getDbFileSignature();
   if (dbCache && dbCacheSignature === currentSignature) {
-    return JSON.parse(JSON.stringify(dbCache));
+    return structuredClone(dbCache);
   }
   if (dbCache && dbCacheSignature !== currentSignature) {
     console.info('[DB] 外部プロセスによる更新を検知したため、キャッシュを再読み込みします。');
@@ -894,7 +924,7 @@ function readDB() {
       writeDB(db);
     }
 
-    dbCache = JSON.parse(JSON.stringify(db));
+    dbCache = structuredClone(db);
     dbCacheSignature = getDbFileSignature();
     return db;
   } catch (err) {
@@ -911,7 +941,7 @@ function readDB() {
         if (!writeDB(recovered)) {
           throw new Error('バックアップデータの復旧保存に失敗しました');
         }
-        return JSON.parse(JSON.stringify(recovered));
+        return structuredClone(recovered);
       } catch (bakErr) {
         console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
       }
@@ -950,7 +980,7 @@ function writeDB(data) {
       }
     }
     // インメモリの元のデータを破壊しないようディープコピーを作成
-    const dbClone = JSON.parse(JSON.stringify(data));
+    const dbClone = structuredClone(data);
 
     // センシティブな設定情報の暗号化
     if (dbClone.system_settings && Array.isArray(dbClone.system_settings)) {
@@ -968,7 +998,7 @@ function writeDB(data) {
     scheduleDbBackup();
 
     // メモリキャッシュを最新の状態（復号化された形）に更新する
-    dbCache = JSON.parse(JSON.stringify(data));
+    dbCache = structuredClone(data);
     dbCacheSignature = getDbFileSignature();
 
     return true;

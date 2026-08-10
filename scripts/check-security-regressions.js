@@ -213,4 +213,43 @@ assert(
   'Restoring a DB backup must sync terminal_role.json to the restored share_mode/parent_ip'
 );
 
+// NFCリーダー未検出時、nfc-reader.ps1は即終了する。固定間隔の無条件再起動に
+// 戻ると、リーダーが検出できない間PowerShellランタイム起動＋JITコンパイルの
+// 重い処理を延々と繰り返しCPU負荷が高止まりするため、指数バックオフを保証する
+assert(
+  main.includes('nfcConsecutiveQuickExits') &&
+  /const delay = Math\.min\(\s*NFC_RESTART_MAX_DELAY_MS,\s*NFC_RESTART_BASE_DELAY_MS\s*\*\s*Math\.pow\(2,\s*nfcConsecutiveQuickExits\)\s*\);[\s\S]{0,200}nfcRestartTimer = setTimeout\([\s\S]{0,100}\}, delay\);/.test(main) &&
+  (() => {
+    const idx = main.indexOf('function stopNfcWatcher');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0) return false;
+    return main.slice(idx, end).includes('nfcConsecutiveQuickExits = 0');
+  })(),
+  'NFC watcher restarts must back off exponentially instead of retrying on a fixed interval'
+);
+
+// readDB()はキャッシュヒット時も含め毎回DB全体をディープコピーして返し、
+// processDbRequestが全APIリクエストの先頭でreadDB()を呼ぶため、このコストは
+// 5秒間隔ポーリング×全端末で繰り返し支払われる。JSON往復クローンへ戻ると
+// DBが肥大化した運用でメインプロセスのCPU負荷が高止まりするため、
+// 高速なstructuredCloneを使い続けることを保証する。
+assert(
+  (() => {
+    const readStart = main.indexOf('function readDB()');
+    const readEnd = main.indexOf('function writeDB(');
+    const writeEnd = main.indexOf('function getSettingRecord(');
+    if (readStart < 0 || readEnd < 0 || writeEnd < 0 || readEnd <= readStart || writeEnd <= readEnd) return false;
+    const readBody = main.slice(readStart, readEnd);
+    const writeBody = main.slice(readEnd, writeEnd);
+    const hasJsonRoundTripClone = /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(readBody) ||
+      /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(writeBody);
+    return !hasJsonRoundTripClone &&
+      readBody.includes('structuredClone(dbCache)') &&
+      readBody.includes('structuredClone(db)') &&
+      readBody.includes('structuredClone(recovered)') &&
+      writeBody.includes('structuredClone(data)');
+  })(),
+  'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
+);
+
 console.log('Security regression checks passed.');
