@@ -458,9 +458,10 @@ const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 const HANDOVER_NOTE_MAX_ENTRIES = 1000;
 
 // 上限件数を超えたテーブルを古い順に間引く共通ヘルパー。単純な「新しいN件だけ残す」
-// テーブル(audit_logs/import_logs/calls/transfer_status_logs等)で共有する。
-// 未確認メモの保護(pruneHandoverNotes)や保持期間+安全弁の複合ロジック
-// (pruneBedOccupancyLog)など、間引く対象の選び方に業務ルールがあるものは対象外
+// テーブル(audit_logs/import_logs/calls等)で共有する。
+// 未確認メモの保護(pruneHandoverNotes)・進行中イベントのログ保護
+// (pruneTransferStatusLogs)・保持期間+安全弁の複合ロジック(pruneBedOccupancyLog)
+// など、間引く対象の選び方に業務ルールがあるものは対象外
 function trimTable(list, max, label) {
   if (!Array.isArray(list) || list.length <= max) return false;
   list.splice(0, list.length - max);
@@ -472,15 +473,37 @@ function trimTable(list, max, label) {
 // 古い順に間引く。外部からのtransfer_status_logsへの直接書き込みは禁止されている
 // （main.js内の processTransferStartRequest / processStatusUpdateRequest /
 // processStatusNoteRequest / 旧端末互換のPOST正規化からのみ追記される）ため、
-// 各追記箇所の直後でこの関数を呼ぶ必要がある
-const TRANSFER_STATUS_LOG_MAX_ENTRIES = 1000;
-
+// 各追記箇所の直後でこの関数を呼ぶ必要がある。
 // transfer_events の保持は event_retention_days（既定0=無効）が主軸。この件数上限は
 // 通常運用では作動しない安全弁で、他の蓄積テーブルと同様にトリムする
 const TRANSFER_EVENTS_MAX_ENTRIES = 50000;
+// ward-status/exam-room-status表示は進行中イベントの直近ログを参照するため、
+// 監査証跡としての保持期間を確保しつつ他の蓄積テーブル(audit_logs等)と揃える。
+// 通常運用では作動しない安全弁で、複数病棟の同時稼働でも十分な余裕がある。
+const TRANSFER_STATUS_LOG_MAX_ENTRIES = 20000;
 
+// 進行中の移送に属するログは業務表示（ward-status/exam-room-status）が参照するため
+// 削除対象から除外し、完了済みイベントのログだけを古い順に間引く安全弁。
 function pruneTransferStatusLogs(db) {
-  trimTable(db.transfer_status_logs, TRANSFER_STATUS_LOG_MAX_ENTRIES);
+  const logs = Array.isArray(db.transfer_status_logs) ? db.transfer_status_logs : [];
+  if (logs.length <= TRANSFER_STATUS_LOG_MAX_ENTRIES) return 0;
+
+  const activeEventIds = new Set(
+    (Array.isArray(db.transfer_events) ? db.transfer_events : [])
+      .filter(event => event && ACTIVE_TRANSFER_STATUSES.has(event.current_status))
+      .map(event => String(event.id))
+  );
+  const removeCount = logs.length - TRANSFER_STATUS_LOG_MAX_ENTRIES;
+  const removableIds = new Set(
+    logs
+      .filter(log => !activeEventIds.has(String(log.transfer_event_id)))
+      .slice(0, removeCount)
+      .map(log => log.id)
+  );
+  if (removableIds.size === 0) return 0;
+  db.transfer_status_logs = logs.filter(log => !removableIds.has(log.id));
+  console.log(`[DB Cleaner] Trimmed transfer_status_logs to ${db.transfer_status_logs.length} entries.`);
+  return removableIds.size;
 }
 
 function pruneHandoverNotes(db) {
@@ -785,11 +808,14 @@ function migrateTransferWorkflow(db) {
   return changed;
 }
 
-// ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）
-function readDB() {
+// ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）。
+// dbCacheそのもの、またはキャッシュと共有していない新規オブジェクトを返すため、
+// 呼び出し元は返り値をミューテーションしてはならない（読み取り専用アクセサ）。
+// 書き込みを行う場合は必ず readDB() を使うこと。
+function readDbShared() {
   const currentSignature = getDbFileSignature();
   if (dbCache && dbCacheSignature === currentSignature) {
-    return structuredClone(dbCache);
+    return dbCache;
   }
   if (dbCache && dbCacheSignature !== currentSignature) {
     console.info('[DB] 外部プロセスによる更新を検知したため、キャッシュを再読み込みします。');
@@ -941,7 +967,7 @@ function readDB() {
         if (!writeDB(recovered)) {
           throw new Error('バックアップデータの復旧保存に失敗しました');
         }
-        return structuredClone(recovered);
+        return recovered;
       } catch (bakErr) {
         console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
       }
@@ -961,6 +987,12 @@ function readDB() {
     dbCacheSignature = null;
     throw new Error('データベースを読み込めませんでした。*.corrupt と *.bak を保全したため、管理者が復旧状態を確認してください。', { cause: err });
   }
+}
+
+// readDbShared()のディープコピーを返す、書き込み用の読み込みアクセサ。
+// 返り値は呼び出し元が自由にミューテーションしてよい（dbCacheと共有しない）。
+function readDB() {
+  return structuredClone(readDbShared());
 }
 
 // ローカルデータベース書き込み
@@ -3460,7 +3492,10 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
 
 // 共通のデータベース操作処理関数
 async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
-  const db = readDB();
+  // GETはDB全体をディープコピーせずキャッシュを直接参照する（高頻度ポーリングでの
+  // CPU負荷対策）。GET経路はdbやdb[table]の中身をミューテーションしてはならない。
+  // 書き込み系メソッドは従来どおりreadDB()で専用のディープコピーを取得する。
+  const db = method === 'GET' ? readDbShared() : readDB();
 
   // URL解析 (例: "tables/transfer_events?limit=200" や "tables/beds/bed-701")
   const cleanUrl = url.replace(/^\//, '').replace(/^tables\//, '');
@@ -3570,11 +3605,13 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
   }
 
-  if (!db[table]) {
+  // GETはdbがdbCacheと共有されている可能性があるため、db[table]への代入で
+  // キャッシュをミューテーションしない。書き込み系は従来どおりdb[table]を初期化する。
+  if (!db[table] && method !== 'GET') {
     db[table] = [];
   }
 
-  const list = db[table];
+  const list = db[table] || [];
 
   if (method === 'GET') {
     if (table === 'transfer_events' && id === 'ward-status') {
