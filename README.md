@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)](https://github.com/pocket-dev-id/transboard/releases)
 [![Electron](https://img.shields.io/badge/Built%20with-Electron-47848F)](https://www.electronjs.org/)
+[![Latest Release](https://img.shields.io/github/v/release/pocket-dev-id/transboard)](https://github.com/pocket-dev-id/transboard/releases/latest)
 
 ---
 
@@ -41,9 +42,10 @@ TransBoard は、病院の看護師と検査室スタッフが**患者の移送�
 - **複数端末同期（親機・子機モード）** — 同一LAN内の複数PC・タブレットからアクセス可能
 - **ICカードスキャン対応** — NFCリーダーで患者IDを自動入力
 - **タイムライン・履歴表示** — 1日の移送履歴を時系列で確認
-- **院内通話パネル（WebRTC）** — 親機経由のシグナリングによるアプリ間音声通話
+- **院内通話パネル（WebRTC）** — 親機経由のシグナリングによるアプリ間の音声・ビデオ通話
+- **LAN経由の自動アップデート配信** — 親機がインターネットからインストーラを取り込み、子機へワンクリックで配信・更新
 - **パスコード保護** — 設定画面をパスコードでロック
-- **データバックアップ・復元** — ワンクリックでJSON形式のバックアップを作成
+- **データバックアップ・復元** — パスワード暗号化バックアップの作成・復元（親機の機種変更にも対応）
 
 ---
 
@@ -72,7 +74,7 @@ TransBoard は、病院の看護師と検査室スタッフが**患者の移送�
 
 ### 方法1: インストーラーを使う（推奨）
 
-1. [Releases ページ](https://github.com/pocket-dev-id/transboard/releases) から最新の `TransBoard-Setup-x.x.x.exe` をダウンロード
+1. [Releases ページ](https://github.com/pocket-dev-id/transboard/releases) から最新の `TransBoard Setup x.x.x.exe` をダウンロード
 2. インストーラーをダブルクリックして実行
 3. 画面の指示に従いインストール完了
 4. スタートメニューまたはデスクトップの「TransBoard」から起動
@@ -132,6 +134,8 @@ npm run dist
 
 > **注意:** 親機・子機は同一ネットワーク（院内 LAN）内に接続されている必要があります。
 
+詳しい運用手順は [docs/manual.md](docs/manual.md)、ネットワーク要件・暗号化状況は [docs/NETWORK.md](docs/NETWORK.md)、親機を別PCへ移す場合は [docs/MIGRATION.md](docs/MIGRATION.md) を参照してください。
+
 ---
 
 ## 電子カルテ CSV 取込
@@ -186,7 +190,7 @@ npm run dist
 
 | カテゴリ | 技術 |
 |----------|------|
-| デスクトップフレームワーク | [Electron](https://www.electronjs.org/) v28 |
+| デスクトップフレームワーク | [Electron](https://www.electronjs.org/) v41 |
 | フロントエンド | バニラ JavaScript / HTML / CSS |
 | データベース | ローカル JSON ファイル |
 | CSV処理 | [csv-parser](https://github.com/mafintosh/csv-parser) |
