@@ -282,7 +282,7 @@ const API = {
 
   // 申し送りメモ（指定病棟、新しい順）。親機/子機ともAPI経由で取得する
   async getHandoverNotes(wardId) {
-    const res = await this.getAll('handover_notes');
+    const res = await this.getAll('handover_notes', { ward_id: wardId || '' });
     const list = (res.data || []).filter(n => !wardId || n.ward_id === wardId);
     return list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   },
@@ -359,15 +359,11 @@ const API = {
   async getBedTypes()    { return requireDataArray(await this.getAll('bed_types'), '病床タイプ'); },
   async getExamRooms()  { return requireDataArray(await this.getAll('exam_rooms'), '検査室マスター'); },
   async getExamTypes()  { return requireDataArray(await this.getAll('exam_types'), '検査種別'); },
-  async getStaffs(wardId) {
-    return (await requireDataArray(await this.getAll('staffs'), 'スタッフマスター'))
-      .filter(s => s.is_active && (!wardId || s.ward_id === wardId));
-  },
   async getAllStaffs() { return requireDataArray(await this.getAll('staffs'), 'スタッフマスター'); },
 
   /* ---------- 出棟イベント ---------- */
   async getActiveEvents(wardId) {
-    const res = await this.getAll('transfer_events');
+    const res = await this.getAll('transfer_events', { ward_id: wardId || '' });
     return res.data.filter(e =>
       e.ward_id === wardId &&
       CONFIG.ACTIVE_STATUSES.includes(e.current_status)
@@ -409,7 +405,7 @@ const API = {
   },
 
   async getScheduleItemsForRange(dayStartMs, dayEndMs) {
-    const res = await this.getAll('schedule_items');
+    const res = await this.getAll('schedule_items', { start_ms: String(dayStartMs), end_ms: String(dayEndMs) });
     return (res.data || []).filter(item =>
       item.start_ms != null && item.start_ms >= dayStartMs && item.start_ms < dayEndMs
     );
@@ -623,7 +619,7 @@ const API = {
   },
 
   async getStatusLogs(eventId) {
-    const res = await this.getAll('transfer_status_logs');
+    const res = await this.getAll('transfer_status_logs', { transfer_event_id: eventId || '' });
     return res.data
       .filter(l => l.transfer_event_id === eventId)
       .sort((a, b) => b.changed_at - a.changed_at);

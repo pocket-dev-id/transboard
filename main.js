@@ -3749,6 +3749,23 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           )),
         };
       }
+      // 申し送りメモは病棟指定時にサーバー側で絞る（ダッシュボードは常に自病棟分しか
+      // 使わない。子機では5秒ポーリングごとの転送量にも効く）
+      if (table === 'handover_notes') {
+        const wardId = searchParams.get('ward_id');
+        if (wardId) {
+          return { data: list.filter(note => String(note.ward_id) === String(wardId)) };
+        }
+      }
+      // スケジュール項目は日次表示のたびに当日分しか使わないため、範囲指定時は
+      // サーバー側で絞る（5秒ポーリングごとの全件転送・全件クローンを避ける）
+      if (table === 'schedule_items' && searchParams.has('start_ms') && searchParams.has('end_ms')) {
+        const startMs = Number(searchParams.get('start_ms'));
+        const endMs = Number(searchParams.get('end_ms'));
+        if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+          return { data: list.filter(item => item.start_ms != null && item.start_ms >= startMs && item.start_ms < endMs) };
+        }
+      }
       return { data: list };
     }
   }

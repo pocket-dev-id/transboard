@@ -1665,7 +1665,7 @@ const App = {
 
   async loadMasters({ silent = false, loadHandover = true } = {}) {
     try {
-      const [wards, beds, bedTypes, examRooms, examTypes, staffs, allStaffs, systemSettings] = await Promise.all([
+      const [wards, beds, bedTypes, examRooms, examTypes, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
         API.getAllBeds(),
         API.getBedTypes().catch(() => [
@@ -1675,8 +1675,7 @@ const App = {
         ]),
         API.getExamRooms(),
         API.getExamTypes(),
-        API.getStaffs(),
-        API.getAllStaffs().catch(() => null),
+        API.getAllStaffs(),
         API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : []).catch(() => [])
       ]);
       AppState.wards = wards;
@@ -1687,8 +1686,8 @@ const App = {
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
       AppState.allExamTypes = examTypes;
       AppState.examTypes = examTypes.filter(t => t.is_active !== false);
-      AppState.staffs = staffs;
-      AppState.allStaffs = Array.isArray(allStaffs) ? allStaffs : staffs;
+      AppState.allStaffs = allStaffs;
+      AppState.staffs = allStaffs.filter(s => s.is_active);
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
