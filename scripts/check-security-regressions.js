@@ -252,4 +252,63 @@ assert(
   'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
 );
 
+// download-and-install-updateはインストーラ名をencodeURIComponentしてリクエストする
+// (electron-builderの既定命名"TransBoard Setup <version>.exe"はスペースを含む)。
+// 配信側の/updates/ルートがdecodeURIComponentしないと、スペース入りファイル名の
+// 配信が常にHTTP 404になる。decodeURIComponent追加時にパストラバーサルを防ぐ
+// updatesDir containmentチェックも併せて保証する。
+assert(
+  (() => {
+    const idx = main.indexOf("req.url.startsWith('/updates/')");
+    const end = main.indexOf('// "/api/"で始まるリクエストのみ処理');
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('decodeURIComponent(path.basename(') &&
+      /path\.resolve\(filePath\)\.startsWith\(updatesDirWithSep\)/.test(body) &&
+      body.indexOf('decodeURIComponent(path.basename(') < body.indexOf('const filePath = path.join(updatesDir, fileName)');
+  })(),
+  'The /updates/ static file route must decodeURIComponent the requested filename (symmetric with the encodeURIComponent on the download side) and verify the resolved path stays within updatesDir'
+);
+
+// writeDB()は書き込みのたびに呼ばれるため、暗号化前提で可読性の意味が薄い
+// pretty-print(インデント付きJSON.stringify)へ戻ると無駄なCPUコストが復活する
+assert(
+  !/JSON\.stringify\(dbClone,\s*null,\s*2\)/.test(main) &&
+  main.includes('JSON.stringify(dbClone)'),
+  'writeDB must write compact JSON, not a pretty-printed (indented) JSON.stringify'
+);
+
+// 30秒間隔の_uiRefreshTimerは病棟ダッシュボード専用のDOM(病床マップ・優先度
+// パネル)を対象にしており、他ページ表示中に無条件で呼ぶのは無駄なCPU消費に
+// なる。ward-dashboard表示中のみ実行するガードを保証する
+assert(
+  (() => {
+    const idx = app.indexOf('_uiRefreshTimer = setInterval');
+    const end = app.indexOf('}, 30000);');
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes("currentPage === 'ward-dashboard'") &&
+      body.indexOf("currentPage === 'ward-dashboard'") < body.indexOf('Priority.renderKpi()');
+  })(),
+  '_uiRefreshTimer must only re-render dashboard-only panels while the ward-dashboard tab is active'
+);
+
+// 5秒間隔ポーリングは毎tickで病床マップ全体・優先度一覧を無条件に再構築して
+// おり、DBが肥大化するほど無駄な再描画コストが積み上がる。取得データが
+// 前回描画時と同一なら重い再描画をスキップしつつ、BedMap.updateTimers()による
+// 時刻依存表示の更新だけは毎tick必ず行うことを保証する（さもないと残り時間・
+// 遅延判定の表示が固まって見える）
+assert(
+  app.includes('renderIfChanged(signature)') &&
+  app.includes('renderIfChanged(this._dashboardDataSignature())') &&
+  (() => {
+    const idx = app.indexOf('renderIfChanged(signature)');
+    const end = app.indexOf('this.render();', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    return app.slice(idx, end).includes('BedMap.updateTimers();');
+  })() &&
+  /FULL_RENDER_FALLBACK_MS/.test(app),
+  'The ward-dashboard poll-tick render must skip the expensive full re-render only when data is unchanged, always keep BedMap.updateTimers() ticking, and force a periodic fallback re-render'
+);
+
 console.log('Security regression checks passed.');

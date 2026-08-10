@@ -3,6 +3,12 @@
  */
 
 const WardDashboard = {
+  // データに変化が無いtickでも、残り時間・遅延判定など時刻依存の表示が
+  // 固まらないよう、この間隔を超えたら変化が無くても強制的に再描画する。
+  FULL_RENDER_FALLBACK_MS: 25000,
+  _lastSignature: null,
+  _lastRenderAt: 0,
+
   render() {
     BedMap.render();
     Priority.renderSummary();
@@ -11,6 +17,24 @@ const WardDashboard = {
     if (typeof StaffStatus !== 'undefined') StaffStatus.render();
     if (typeof NotificationHistory !== 'undefined') NotificationHistory.render();
     if (typeof Handover !== 'undefined') Handover.render();
+  },
+
+  // ポーリングtick専用: 取得データが前回描画時と同一なら、重い全体再描画
+  // (病床マップ全カード再構築＋優先度一覧再計算)を省略する。時刻依存の
+  // 残り時間表示だけは軽量な更新を毎tick必ず行う。
+  renderIfChanged(signature) {
+    BedMap.updateTimers();
+    const now = Date.now();
+    if (
+      signature !== null &&
+      signature === this._lastSignature &&
+      (now - this._lastRenderAt) < this.FULL_RENDER_FALLBACK_MS
+    ) {
+      return;
+    }
+    this.render();
+    this._lastSignature = signature;
+    this._lastRenderAt = now;
   },
 };
 
@@ -1149,12 +1173,20 @@ const App = {
     }
 
     // タイマー更新 (30秒ごとに残り時間表示を更新)
+    // 病床マップ・優先対応一覧は病棟ダッシュボードにしか存在しないため、
+    // 他ページ表示中はDOM更新自体が無駄になる。ダッシュボード表示中は
+    // 5秒間隔ポーリングの再描画がこれより高頻度でカバーするが、通信断・
+    // バックオフ中でも時刻依存の表示（残り時間・遅延判定）が固まらないよう
+    // フォールバックとして残す。
     if (this._uiRefreshTimer) clearInterval(this._uiRefreshTimer);
     this._uiRefreshTimer = setInterval(() => {
-      BedMap.updateTimers();
-      Priority.renderSummary();
-      Priority.renderKpi();
-      Priority.renderPriorityList();
+      const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
+      if (currentPage === 'ward-dashboard') {
+        BedMap.updateTimers();
+        Priority.renderSummary();
+        Priority.renderKpi();
+        Priority.renderPriorityList();
+      }
       this._checkNotifications();
     }, 30000);
 
@@ -1802,7 +1834,7 @@ const App = {
           }
 
           if (currentPage === 'ward-dashboard') {
-            WardDashboard.render();
+            WardDashboard.renderIfChanged(this._dashboardDataSignature());
           } else if (currentPage === 'exam-room') {
             ExamRoom._renderQueue();
           } else if (currentPage === 'timeline') {
@@ -1825,6 +1857,23 @@ const App = {
       }
     };
     AppState.pollTimer = setTimeout(tick, this._jitterDelay(CONFIG.POLL_INTERVAL));
+  },
+
+  // 病棟ダッシュボードの描画に使う取得済みデータをそのまま文字列化した指紋。
+  // 各フィールドが漏れると「変化したのに再描画されない」表示崩れになるため、
+  // 手作りの部分的な指紋ではなく、実際にレンダリングへ渡す値そのものを使う。
+  _dashboardDataSignature() {
+    try {
+      return JSON.stringify([
+        AppState.activeEvents,
+        AppState.todayEvents,
+        AppState.recentStatusLogs,
+        AppState.systemSettings,
+        AppState.scheduleItems,
+      ]);
+    } catch {
+      return null;
+    }
   },
 
   async resetActiveEvents() {
