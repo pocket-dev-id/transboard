@@ -213,4 +213,19 @@ assert(
   'Restoring a DB backup must sync terminal_role.json to the restored share_mode/parent_ip'
 );
 
+// NFCリーダー未検出時、nfc-reader.ps1は即終了する。固定間隔の無条件再起動に
+// 戻ると、リーダーが検出できない間PowerShellランタイム起動＋JITコンパイルの
+// 重い処理を延々と繰り返しCPU負荷が高止まりするため、指数バックオフを保証する
+assert(
+  main.includes('nfcConsecutiveQuickExits') &&
+  /const delay = Math\.min\(\s*NFC_RESTART_MAX_DELAY_MS,\s*NFC_RESTART_BASE_DELAY_MS\s*\*\s*Math\.pow\(2,\s*nfcConsecutiveQuickExits\)\s*\);[\s\S]{0,200}nfcRestartTimer = setTimeout\([\s\S]{0,100}\}, delay\);/.test(main) &&
+  (() => {
+    const idx = main.indexOf('function stopNfcWatcher');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0) return false;
+    return main.slice(idx, end).includes('nfcConsecutiveQuickExits = 0');
+  })(),
+  'NFC watcher restarts must back off exponentially instead of retrying on a fixed interval'
+);
+
 console.log('Security regression checks passed.');
