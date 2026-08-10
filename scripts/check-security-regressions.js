@@ -311,4 +311,20 @@ assert(
   'The ward-dashboard poll-tick render must skip the expensive full re-render only when data is unchanged, always keep BedMap.updateTimers() ticking, and force a periodic fallback re-render'
 );
 
+// 親機疎通の失敗はポーリング(5秒)・ハートビート(10秒)・ParentServerMonitor(30秒)の
+// 3系統が独立に検知して_setConnectionStatus(false, ...)を呼ぶ。単発の失敗で
+// 即座にバナーを出す実装に戻ると、瞬間的な遅延だけで頻繁に点滅してしまうため、
+// 連続2回のシグナルを要求するデバウンスを保証する
+assert(
+  (() => {
+    const idx = app.indexOf('_setConnectionStatus(ok, reason');
+    const end = app.indexOf("if (ok === !this._connectionLost", idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('_disconnectSignalCount = 0') &&
+      /_disconnectSignalCount \+= 1;\s*\n\s*if \(this\._disconnectSignalCount < 2\) return;/.test(body);
+  })(),
+  '_setConnectionStatus must debounce new disconnect signals (require 2 consecutive failures) instead of showing the banner on a single transient failure'
+);
+
 console.log('Security regression checks passed.');
