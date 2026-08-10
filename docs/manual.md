@@ -230,7 +230,7 @@ TransBoardはper-userインストール（`%LOCALAPPDATA%\Programs\`配下）の
 ### 更新の安全対策
 
 - ダウンロードしたインストーラは`latest.yml`のsha512と照合され、一致しない場合はインストールされません
-- 更新の直前にデータベースが`transboard-db.json.before_update`として自動退避されます
+- 更新の直前にデータベースが`db.json.before_update`として自動退避されます
 - 更新は通知のみで、インストールは常にユーザーの確認操作で開始されます（業務中の強制更新はありません）
 
 ### ロールバック（1つ前のバージョンに戻す）
@@ -242,7 +242,7 @@ TransBoardはper-userインストール（`%LOCALAPPDATA%\Programs\`配下）の
 
 v1.1.x以前をProgram Files配下にインストールしている場合のみ、一度だけ手動での入れ替えが必要です:
 旧版をアンインストール → 新版インストーラを実行（以後はper-userインストールとなり管理者権限不要）。
-データベースは`%APPDATA%\TransBoard\`にあるためアンインストールしても保持されます。
+データベースは`%APPDATA%\transboard\`にあるためアンインストールしても保持されます。
 
 ---
 

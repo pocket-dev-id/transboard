@@ -1,7 +1,7 @@
 # TransBoard データベーススキーマ定義 (データ #3)
 
-TransBoard はSQLiteを使用せず、JSONファイル（`transboard-db.json`）を独自ローカルデータベースとして使用します。
-保存先は `app.getPath('userData')` 配下（Windows: `%APPDATA%\TransBoard\`）です。
+TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自ローカルデータベースとして使用します。
+保存先は `app.getPath('userData')` 配下（Windows: `%APPDATA%\transboard\`）です。
 
 ---
 
@@ -201,9 +201,9 @@ key-valueペアで管理。重要なキー一覧:
 
 | OS | パス |
 |---|---|
-| Windows | `%APPDATA%\TransBoard\transboard-db.json` |
-| macOS | `~/Library/Application Support/TransBoard/transboard-db.json` |
-| Linux | `~/.config/TransBoard/transboard-db.json` |
+| Windows | `%APPDATA%\transboard\db.json` |
+| macOS | `~/Library/Application Support/transboard/db.json` |
+| Linux | `~/.config/transboard/db.json` |
 
 DBファイル自体もsafeStorageが利用可能な環境では`ENCDB1:`プレフィックス付きで全体が暗号化される（フィールド単位の暗号化とは別の保護層）。暗号化不可の環境では平文で保存され、設定画面にその旨の警告が表示される。
 
