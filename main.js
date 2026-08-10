@@ -5725,13 +5725,28 @@ function startParentServer() {
         return;
       }
 
-      const fileName = path.basename(req.url.split('?')[0]);
+      // ダウンロード側（download-and-install-update）はファイル名を
+      // encodeURIComponentしてリクエストするため、ここでも対称にデコードする。
+      // デコード後の文字列にパス区切りが混入し得るため、拡張子チェックだけでなく
+      // 実際の解決先がupdatesDir配下に収まっていることも別途検証する。
+      let fileName;
+      try {
+        fileName = decodeURIComponent(path.basename(req.url.split('?')[0]));
+      } catch {
+        sendJson(res, 404, { success: false, message: 'Update File Not Found' });
+        return;
+      }
       if (!/^(latest\.yml|.+\.(?:exe|blockmap))$/i.test(fileName)) {
         sendJson(res, 404, { success: false, message: 'Update File Not Found' });
         return;
       }
       const updatesDir = path.join(app.getPath('userData'), 'updates');
       const filePath = path.join(updatesDir, fileName);
+      const updatesDirWithSep = path.resolve(updatesDir) + path.sep;
+      if (!path.resolve(filePath).startsWith(updatesDirWithSep)) {
+        sendJson(res, 404, { success: false, message: 'Update File Not Found' });
+        return;
+      }
 
       // updatesディレクトリが存在しない場合は作成
       if (!fs.existsSync(updatesDir)) {

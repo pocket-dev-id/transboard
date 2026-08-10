@@ -252,4 +252,22 @@ assert(
   'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
 );
 
+// download-and-install-updateはインストーラ名をencodeURIComponentしてリクエストする
+// (electron-builderの既定命名"TransBoard Setup <version>.exe"はスペースを含む)。
+// 配信側の/updates/ルートがdecodeURIComponentしないと、スペース入りファイル名の
+// 配信が常にHTTP 404になる。decodeURIComponent追加時にパストラバーサルを防ぐ
+// updatesDir containmentチェックも併せて保証する。
+assert(
+  (() => {
+    const idx = main.indexOf("req.url.startsWith('/updates/')");
+    const end = main.indexOf('// "/api/"で始まるリクエストのみ処理');
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('decodeURIComponent(path.basename(') &&
+      /path\.resolve\(filePath\)\.startsWith\(updatesDirWithSep\)/.test(body) &&
+      body.indexOf('decodeURIComponent(path.basename(') < body.indexOf('const filePath = path.join(updatesDir, fileName)');
+  })(),
+  'The /updates/ static file route must decodeURIComponent the requested filename (symmetric with the encodeURIComponent on the download side) and verify the resolved path stays within updatesDir'
+);
+
 console.log('Security regression checks passed.');
