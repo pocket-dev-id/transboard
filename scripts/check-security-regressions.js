@@ -263,9 +263,36 @@ assert(
     return !hasJsonRoundTripClone &&
       sharedBody.includes('structuredClone(db)') &&
       readBody.includes('structuredClone(readDbShared())') &&
-      writeBody.includes('structuredClone(data)');
+      writeBody.includes('structuredClone(dbWithoutAuditLogs)');
   })(),
   'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
+);
+
+// audit_logsはdb.jsonから分離し、専用ファイル(AUDIT_LOG_FILE)へappendAuditLog()が
+// 都度O(1)追記することで、writeDB()の毎回のstringify/クローンコストから外している。
+// writeDB()がaudit_logsをdb.json書き込み対象から除外し続けること、
+// appendAuditLogがpush直後に専用ファイルへ同期的に追記し続けることを保証する。
+// ここが崩れると、audit_logsが再びdb.json経由の全件書き直しに戻るか、
+// あるいは監査ログが専用ファイルに永続化されないまま失われる回帰になる。
+assert(
+  (() => {
+    const writeStart = main.indexOf('function writeDB(');
+    const writeEnd = main.indexOf('function getSettingRecord(');
+    if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
+    const writeBody = main.slice(writeStart, writeEnd);
+
+    const appendStart = main.indexOf('function appendAuditLog(db, action, {');
+    const appendEnd = main.indexOf('function appendParentActionAudit(');
+    if (appendStart < 0 || appendEnd < 0 || appendEnd <= appendStart) return false;
+    const appendBody = main.slice(appendStart, appendEnd);
+
+    return writeBody.includes('const { audit_logs, ...dbWithoutAuditLogs } = data;') &&
+      writeBody.includes('JSON.stringify(dbForDisk)') &&
+      !/JSON\.stringify\(dbForDisk\)[\s\S]{0,80}audit_logs/.test(writeBody) &&
+      appendBody.includes('appendAuditLogFile(entry)') &&
+      appendBody.indexOf('db.audit_logs.push(entry)') < appendBody.indexOf('appendAuditLogFile(entry)');
+  })(),
+  'writeDB must exclude audit_logs from the db.json payload, and appendAuditLog must synchronously append each new entry to the dedicated audit log file, or audit_logs either bloats every DB write again or stops being durably persisted'
 );
 
 // readDbShared()はキャッシュヒット時にdbCacheをディープコピーせず直接返す
@@ -299,6 +326,20 @@ assert(
       /if \(!db\[table\] && method !== 'GET'\) \{/.test(body);
   })(),
   'processDbRequest must use readDbShared() (no full-DB clone) for GET and must not mutate db[table] on the GET path, which may share the live dbCache object'
+);
+
+// normalizeParentHttpRequestは子機→親機への全リクエストが通る中継経路で、
+// share_mode/parent_ipの2設定を読むだけの読み取り専用処理。readDB()に戻ると
+// このリクエストのたびにDB全体をディープコピーすることになる
+assert(
+  (() => {
+    const idx = main.indexOf('function normalizeParentHttpRequest(');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = main.slice(idx, end);
+    return body.includes('const db = readDbShared();') && !body.includes('const db = readDB();');
+  })(),
+  'normalizeParentHttpRequest must use readDbShared() (no full-DB clone) since it only reads share_mode/parent_ip on every parent-relayed request'
 );
 
 // transfer_status_logsは進行中イベント(ACTIVE_TRANSFER_STATUSES)のログを保護せずに
@@ -374,8 +415,8 @@ assert(
     const writeBody = main.slice(writeStart, writeEnd);
     const structuredCloneCalls = writeBody.match(/structuredClone\(/g) || [];
     return structuredCloneCalls.length === 1 &&
-      writeBody.includes('structuredClone(data)') &&
-      writeBody.includes('system_settings: data.system_settings.map(');
+      writeBody.includes('structuredClone(dbWithoutAuditLogs)') &&
+      writeBody.includes('system_settings: dbWithoutAuditLogs.system_settings.map(');
   })(),
   'writeDB must not deep-clone the whole DB a second time just to encrypt system_settings; only the settings array should be copied'
 );

@@ -259,6 +259,12 @@ function safeWriteFile(targetPath, content) {
 }
 
 let DB_FILE = getDBPath();
+// 監査ログ(audit_logs)は db.json から分離し、専用ファイルへ1行=1件で追記する。
+// db.audit_logsとしてメモリ上のdbオブジェクトには従来通り乗せ続けるため、
+// GET・バックアップ出力・診断画面など既存の参照箇所は無改修で動く。
+// db.jsonへは書き込まないため、毎回のwriteDB()のstringify/クローンコストから
+// audit_logs分(DB全体の数割を占めうる)が外れる。
+const AUDIT_LOG_FILE = path.join(path.dirname(DB_FILE), 'audit-log.jsonl');
 const DB_BACKUP_MIN_INTERVAL_MS = 30000;
 let dbBackupTimer = null;
 let lastDbBackupAt = 0;
@@ -449,6 +455,10 @@ const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_to
 const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 20000;
+// 監査ログ専用ファイルの間引き(rewriteAuditLogFile、O(n))は追記のたびではなく、
+// この閾値を超えたときだけ実行する。MAX_ENTRIESぴったりで間引くと、上限到達後は
+// 追記のたびに全件書き直しが走ってしまうため、猶予を持たせて頻度を抑える
+const AUDIT_LOG_COMPACT_THRESHOLD = AUDIT_LOG_MAX_ENTRIES + 4000;
 // 在室ログの保持は bed_occupancy_retention_days（既定7日）が主軸。この件数上限は
 // 通常運用では作動しない安全弁で、最長90日設定でも現実的な回転率に対し十分な余裕がある。
 const BED_OCCUPANCY_LOG_MAX_ENTRIES = 20000;
@@ -630,6 +640,62 @@ function decryptDbFileContent(raw) {
   } catch (err) {
     throw new Error('DBファイルの復号に失敗しました。別のPCまたは別のOSユーザーで暗号化されたファイルの可能性があります。');
   }
+}
+
+// 監査ログ専用ファイル(AUDIT_LOG_FILE)を1行ずつ読み込む。1行=暗号化された
+// JSON1件で、既存のdb.json暗号化(encryptDbFileContent/decryptDbFileContent)と
+// 同じ方式を1件単位に適用する。行単位で壊れていても他の行は読み続ける
+function loadAuditLogFile() {
+  try {
+    if (!fs.existsSync(AUDIT_LOG_FILE)) return [];
+    const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf8');
+    const entries = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(JSON.parse(decryptDbFileContent(line)));
+      } catch (err) {
+        console.warn('[AuditLog] 1行の読み込みに失敗したためスキップします:', err.message);
+      }
+    }
+    return entries;
+  } catch (err) {
+    console.error('[AuditLog] ファイルの読み込みに失敗:', err.message);
+    return [];
+  }
+}
+
+// 監査ログ1件をO(1)で追記する。呼び出し元のdb.audit_logs配列への
+// push直後に呼ぶことで、db.json側の書き込み頻度に関わらず即座に永続化する
+function appendAuditLogFile(entry) {
+  try {
+    fs.appendFileSync(AUDIT_LOG_FILE, encryptDbFileContent(JSON.stringify(entry)) + '\n', 'utf8');
+  } catch (err) {
+    console.warn('[AuditLog] ファイルへの追記に失敗しました:', err.message);
+  }
+}
+
+// 監査ログ専用ファイルをentriesの内容で丸ごと置き換える(O(n))。
+// 上限超過時の間引き・DBリストア時の反映・旧形式からの一度きりの移行で使う
+function rewriteAuditLogFile(entries) {
+  try {
+    const list = Array.isArray(entries) ? entries : [];
+    const content = list.map(e => encryptDbFileContent(JSON.stringify(e))).join('\n') + (list.length ? '\n' : '');
+    safeWriteFile(AUDIT_LOG_FILE, content);
+  } catch (err) {
+    console.warn('[AuditLog] ファイルの再構築に失敗しました:', err.message);
+  }
+}
+
+// db.jsonに埋め込まれた旧形式のaudit_logsを検出したら、専用ファイルが
+// まだ無い場合に限り一度だけ移行する。専用ファイルが既に存在する場合は
+// そちらを正として使う(db.json側の内容は無視する)
+function loadOrMigrateAuditLogs(embeddedAuditLogs) {
+  if (!fs.existsSync(AUDIT_LOG_FILE) && Array.isArray(embeddedAuditLogs) && embeddedAuditLogs.length > 0) {
+    console.log(`[AuditLog] db.json内の${embeddedAuditLogs.length}件を専用ファイルへ移行します`);
+    rewriteAuditLogFile(embeddedAuditLogs);
+  }
+  return loadAuditLogFile();
 }
 
 // ローカルデータベースのメモリキャッシュ（毎リクエストごとのディスク読み込み・JSON.parseを回避）。
@@ -844,10 +910,9 @@ function readDbShared() {
       db.import_logs = [];
       hasDuplicates = true;
     }
-    if (!db.audit_logs) {
-      db.audit_logs = [];
-      hasDuplicates = true;
-    }
+    // audit_logsは専用ファイル(AUDIT_LOG_FILE)側を正として読み込む。
+    // db.json不在は正常な状態(分離後は書き込まれない)なので、書き直し要求(hasDuplicates)は立てない
+    db.audit_logs = loadOrMigrateAuditLogs(db.audit_logs);
     if (!db.system_settings) {
       db.system_settings = SEEDS.system_settings;
       hasDuplicates = true;
@@ -963,6 +1028,9 @@ function readDbShared() {
         const bakRaw = fs.readFileSync(bakPath, 'utf8');
         const bakData = decryptDbFileContent(bakRaw);
         const recovered = JSON.parse(bakData);
+        // .bakが分離前の旧形式(audit_logs埋め込み)だった場合に備え、
+        // 通常の読み込みパスと同じ移行処理を通す
+        recovered.audit_logs = loadOrMigrateAuditLogs(recovered.audit_logs);
         console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
         if (!writeDB(recovered)) {
           throw new Error('バックアップデータの復旧保存に失敗しました');
@@ -1015,16 +1083,20 @@ function writeDB(data) {
     // 各要素を直接ミューテーションせず、system_settingsの機微な要素だけ
     // 新規オブジェクト化するため、DB全体のディープコピーは不要
     // （読み取り専用のJSON.stringifyに渡すだけの使い捨てローカル変数）。
-    const dbForDisk = (data.system_settings && Array.isArray(data.system_settings))
+    // audit_logsはappendAuditLog()が専用ファイル(AUDIT_LOG_FILE)へ都度追記済みのため、
+    // db.json側には含めない(肥大化するとDB全体の数割を占め、毎回のstringify/暗号化
+    // コストを不必要に増やすため)。
+    const { audit_logs, ...dbWithoutAuditLogs } = data;
+    const dbForDisk = (dbWithoutAuditLogs.system_settings && Array.isArray(dbWithoutAuditLogs.system_settings))
       ? {
-          ...data,
-          system_settings: data.system_settings.map(s => (
+          ...dbWithoutAuditLogs,
+          system_settings: dbWithoutAuditLogs.system_settings.map(s => (
             SENSITIVE_SETTING_IDS.includes(s.id)
               ? { ...s, value: encryptSensitiveValue(s.value) }
               : s
           )),
         }
-      : data;
+      : dbWithoutAuditLogs;
 
     // 保存先は基本的にsafeStorageで暗号化されるため整形(pretty-print)に
     // 可読性上の意味はなく、書き込みのたびに発生するコストなので省略する。
@@ -1034,8 +1106,13 @@ function writeDB(data) {
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
     scheduleDbBackup();
 
-    // メモリキャッシュを最新の状態（復号化された形）に更新する
-    dbCache = structuredClone(data);
+    // メモリキャッシュを最新の状態（復号化された形）に更新する。
+    // audit_logsはdb.json側に含めないためディープコピー対象から外し、
+    // 配列だけ複製(浅いコピー)して引き継ぐ。要素(監査ログ1件ずつ)は
+    // 生成後にミューテーションされない(appendAuditLog()が新規pushするのみ)ため、
+    // 参照共有で問題ない
+    dbCache = structuredClone(dbWithoutAuditLogs);
+    dbCache.audit_logs = Array.isArray(data.audit_logs) ? data.audit_logs.slice() : [];
     dbCacheSignature = getDbFileSignature();
 
     return true;
@@ -1098,7 +1175,7 @@ function appendAuditLog(db, action, {
   try {
     db.audit_logs = Array.isArray(db.audit_logs) ? db.audit_logs : [];
     const now = Date.now();
-    db.audit_logs.push({
+    const entry = {
       id: `audit-${now}-${Math.random().toString(36).slice(2, 7)}`,
       action,
       target_type: targetType,
@@ -1114,8 +1191,16 @@ function appendAuditLog(db, action, {
       reason,
       details: JSON.stringify(details || {}),
       created_at: now,
-    });
-    trimTable(db.audit_logs, AUDIT_LOG_MAX_ENTRIES);
+    };
+    db.audit_logs.push(entry);
+    // db.json側の書き込み頻度(writeDB呼び出し)とは切り離し、専用ファイルへ
+    // その場でO(1)追記する。これにより監査ログはwriteDB()の対象から外れていても
+    // 従来通り確実に(同期的に)永続化される
+    appendAuditLogFile(entry);
+    if (db.audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD) {
+      db.audit_logs = db.audit_logs.slice(db.audit_logs.length - AUDIT_LOG_MAX_ENTRIES);
+      rewriteAuditLogFile(db.audit_logs);
+    }
   } catch (err) {
     console.warn('[AuditLog] 追記に失敗:', err.message);
   }
@@ -4228,7 +4313,9 @@ function normalizeParentHttpRequest(opts) {
     throw new Error('INVALID_REQUEST');
   }
 
-  const db = readDB();
+  // 子機→親機への全リクエストが通る中継経路であり、read-onlyでshare_mode/parent_ipの
+  // 2設定を読むだけのため、DB全体のディープコピーは不要
+  const db = readDbShared();
   const shareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
   const configuredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '').trim();
   const allowedHosts = new Set();
@@ -5203,8 +5290,25 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
         console.warn('[DB] 復元前バックアップの作成に失敗しました:', bakErr.message);
       }
     }
+    // 監査ログ専用ファイルも同様に復元前の状態を保全する
+    // (db.jsonと違い、リストア操作自体はこのファイルを直接上書きしないため、
+    // 保全しておかないと復元後に反映したバックアップ内容で無条件に置き換わってしまう)
+    if (fs.existsSync(AUDIT_LOG_FILE)) {
+      try {
+        fs.copyFileSync(AUDIT_LOG_FILE, AUDIT_LOG_FILE + '.before_restore');
+      } catch (bakErr) {
+        console.warn('[AuditLog] 復元前バックアップの作成に失敗しました:', bakErr.message);
+      }
+    }
     // アトミックに上書きして復元する（自機のDB暗号化形式で保存）
     safeWriteFile(DB_FILE, encryptDbFileContent(plaintextJson));
+    // リストアはDB全体を置き換える操作のため、バックアップにaudit_logsが
+    // 埋め込まれていれば監査ログ専用ファイルも無条件に置き換える
+    // (loadOrMigrateAuditLogsは「専用ファイルが無いときだけ移行」なので、
+    // 既に専用ファイルがある通常運用でのリストアではこちらを使う必要がある)
+    if (Array.isArray(parsed.audit_logs)) {
+      rewriteAuditLogFile(parsed.audit_logs);
+    }
     // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
     dbCache = null;
     dbCacheSignature = null;
