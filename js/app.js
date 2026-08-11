@@ -1675,7 +1675,9 @@ const App = {
         ]),
         API.getExamRooms(),
         API.getExamTypes(),
-        API.getAllStaffs(),
+        // 単発の一時的な失敗でマスタ読み込み全体(wards/beds等)まで失敗させない
+        // よう、staffsだけは前回ロード分へのフォールバックを許容する
+        API.getAllStaffs().catch(() => null),
         API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : []).catch(() => [])
       ]);
       AppState.wards = wards;
@@ -1686,8 +1688,13 @@ const App = {
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
       AppState.allExamTypes = examTypes;
       AppState.examTypes = examTypes.filter(t => t.is_active !== false);
-      AppState.allStaffs = allStaffs;
-      AppState.staffs = allStaffs.filter(s => s.is_active);
+      if (Array.isArray(allStaffs)) {
+        AppState.allStaffs = allStaffs;
+        AppState.staffs = allStaffs.filter(s => s.is_active);
+      } else {
+        AppState.allStaffs = AppState.allStaffs || [];
+        AppState.staffs = AppState.staffs || [];
+      }
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });

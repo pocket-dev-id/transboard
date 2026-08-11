@@ -687,6 +687,21 @@ function rewriteAuditLogFile(entries) {
   }
 }
 
+// 2つの監査ログ列をid基準の和集合でマージし、created_at昇順で返す。
+// 同じ共有DBフォルダを複数プロセスが指す運用で、あるプロセスのメモリ上の
+// スナップショットには無いが、別プロセスが既にファイルへ追記済みのエントリを
+// 圧縮(rewriteAuditLogFile)で消してしまわないようにするために使う
+function mergeAuditLogEntries(a, b) {
+  const byId = new Map();
+  for (const entry of Array.isArray(a) ? a : []) {
+    if (entry && entry.id != null) byId.set(String(entry.id), entry);
+  }
+  for (const entry of Array.isArray(b) ? b : []) {
+    if (entry && entry.id != null && !byId.has(String(entry.id))) byId.set(String(entry.id), entry);
+  }
+  return Array.from(byId.values()).sort((x, y) => Number(x.created_at || 0) - Number(y.created_at || 0));
+}
+
 // db.jsonに埋め込まれた旧形式のaudit_logsを検出したら、専用ファイルが
 // まだ無い場合に限り一度だけ移行する。専用ファイルが既に存在する場合は
 // そちらを正として使う(db.json側の内容は無視する)
@@ -1198,7 +1213,12 @@ function appendAuditLog(db, action, {
     // 従来通り確実に(同期的に)永続化される
     appendAuditLogFile(entry);
     if (db.audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD) {
-      db.audit_logs = db.audit_logs.slice(db.audit_logs.length - AUDIT_LOG_MAX_ENTRIES);
+      // 圧縮前にディスクの最新内容を読み直してマージする。共有DBフォルダ運用で
+      // 他プロセスが追記済みのエントリを、このプロセスの古いメモリ状態で
+      // 上書き消去してしまわないようにするため(このプロセスのメモリだけを
+      // 正として丸ごと書き換えると、他プロセスの追記分がサイレントに失われる)
+      const merged = mergeAuditLogEntries(db.audit_logs, loadAuditLogFile());
+      db.audit_logs = merged.slice(Math.max(0, merged.length - AUDIT_LOG_MAX_ENTRIES));
       rewriteAuditLogFile(db.audit_logs);
     }
   } catch (err) {

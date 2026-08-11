@@ -342,6 +342,41 @@ assert(
   'normalizeParentHttpRequest must use readDbShared() (no full-DB clone) since it only reads share_mode/parent_ip on every parent-relayed request'
 );
 
+// appendAuditLogの圧縮(閾値超過時のrewriteAuditLogFile)は、このプロセスの
+// メモリ上のaudit_logsだけを正として書き換えると、共有DBフォルダ運用で
+// 他プロセスが既に専用ファイルへ追記済みのエントリをサイレントに消してしまう。
+// 圧縮前にloadAuditLogFile()でディスクの最新内容を読み直し、
+// mergeAuditLogEntriesでマージしてから間引くことを保証する。
+assert(
+  (() => {
+    const idx = main.indexOf('function appendAuditLog(db, action, {');
+    const end = main.indexOf('\nfunction appendParentActionAudit(');
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    const compactIdx = body.indexOf('AUDIT_LOG_COMPACT_THRESHOLD');
+    if (compactIdx < 0) return false;
+    const compactBody = body.slice(compactIdx);
+    return compactBody.includes('mergeAuditLogEntries(db.audit_logs, loadAuditLogFile())');
+  })(),
+  'appendAuditLog must merge with the on-disk audit log file (loadAuditLogFile + mergeAuditLogEntries) before compacting, or entries appended by another process sharing the same DB folder can be silently lost'
+);
+
+// loadMasters()のstaffs取得(getAllStaffs)は、単発の一時的な失敗でwards/beds等を
+// 含むマスタ読み込み全体を失敗させてはならない。.catch()で吸収し、
+// 前回ロード分(AppState.allStaffs/staffs)へフォールバックすることを保証する。
+assert(
+  (() => {
+    const idx = app.indexOf('async loadMasters(');
+    const end = app.indexOf('\n  async ', idx + 10);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('API.getAllStaffs().catch(() => null)') &&
+      body.includes('if (Array.isArray(allStaffs)) {') &&
+      body.includes('AppState.allStaffs = AppState.allStaffs || [];');
+  })(),
+  'loadMasters() must catch getAllStaffs() failures and fall back to the previous AppState.allStaffs/staffs instead of letting the whole Promise.all (wards/beds/examRooms/etc.) reject on a single transient staff-fetch failure'
+);
+
 // transfer_status_logsは進行中イベント(ACTIVE_TRANSFER_STATUSES)のログを保護せずに
 // 古い順一律で間引くと、5病棟規模の運用で監査証跡が数日で失われ、
 // ward-status/exam-room-status表示が参照する進行中イベントの直近ログも
