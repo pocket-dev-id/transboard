@@ -259,6 +259,12 @@ function safeWriteFile(targetPath, content) {
 }
 
 let DB_FILE = getDBPath();
+// 監査ログ(audit_logs)は db.json から分離し、専用ファイルへ1行=1件で追記する。
+// db.audit_logsとしてメモリ上のdbオブジェクトには従来通り乗せ続けるため、
+// GET・バックアップ出力・診断画面など既存の参照箇所は無改修で動く。
+// db.jsonへは書き込まないため、毎回のwriteDB()のstringify/クローンコストから
+// audit_logs分(DB全体の数割を占めうる)が外れる。
+const AUDIT_LOG_FILE = path.join(path.dirname(DB_FILE), 'audit-log.jsonl');
 const DB_BACKUP_MIN_INTERVAL_MS = 30000;
 let dbBackupTimer = null;
 let lastDbBackupAt = 0;
@@ -449,6 +455,10 @@ const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_to
 const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 20000;
+// 監査ログ専用ファイルの間引き(rewriteAuditLogFile、O(n))は追記のたびではなく、
+// この閾値を超えたときだけ実行する。MAX_ENTRIESぴったりで間引くと、上限到達後は
+// 追記のたびに全件書き直しが走ってしまうため、猶予を持たせて頻度を抑える
+const AUDIT_LOG_COMPACT_THRESHOLD = AUDIT_LOG_MAX_ENTRIES + 4000;
 // 在室ログの保持は bed_occupancy_retention_days（既定7日）が主軸。この件数上限は
 // 通常運用では作動しない安全弁で、最長90日設定でも現実的な回転率に対し十分な余裕がある。
 const BED_OCCUPANCY_LOG_MAX_ENTRIES = 20000;
@@ -458,9 +468,10 @@ const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 const HANDOVER_NOTE_MAX_ENTRIES = 1000;
 
 // 上限件数を超えたテーブルを古い順に間引く共通ヘルパー。単純な「新しいN件だけ残す」
-// テーブル(audit_logs/import_logs/calls/transfer_status_logs等)で共有する。
-// 未確認メモの保護(pruneHandoverNotes)や保持期間+安全弁の複合ロジック
-// (pruneBedOccupancyLog)など、間引く対象の選び方に業務ルールがあるものは対象外
+// テーブル(audit_logs/import_logs/calls等)で共有する。
+// 未確認メモの保護(pruneHandoverNotes)・進行中イベントのログ保護
+// (pruneTransferStatusLogs)・保持期間+安全弁の複合ロジック(pruneBedOccupancyLog)
+// など、間引く対象の選び方に業務ルールがあるものは対象外
 function trimTable(list, max, label) {
   if (!Array.isArray(list) || list.length <= max) return false;
   list.splice(0, list.length - max);
@@ -472,15 +483,37 @@ function trimTable(list, max, label) {
 // 古い順に間引く。外部からのtransfer_status_logsへの直接書き込みは禁止されている
 // （main.js内の processTransferStartRequest / processStatusUpdateRequest /
 // processStatusNoteRequest / 旧端末互換のPOST正規化からのみ追記される）ため、
-// 各追記箇所の直後でこの関数を呼ぶ必要がある
-const TRANSFER_STATUS_LOG_MAX_ENTRIES = 1000;
-
+// 各追記箇所の直後でこの関数を呼ぶ必要がある。
 // transfer_events の保持は event_retention_days（既定0=無効）が主軸。この件数上限は
 // 通常運用では作動しない安全弁で、他の蓄積テーブルと同様にトリムする
 const TRANSFER_EVENTS_MAX_ENTRIES = 50000;
+// ward-status/exam-room-status表示は進行中イベントの直近ログを参照するため、
+// 監査証跡としての保持期間を確保しつつ他の蓄積テーブル(audit_logs等)と揃える。
+// 通常運用では作動しない安全弁で、複数病棟の同時稼働でも十分な余裕がある。
+const TRANSFER_STATUS_LOG_MAX_ENTRIES = 20000;
 
+// 進行中の移送に属するログは業務表示（ward-status/exam-room-status）が参照するため
+// 削除対象から除外し、完了済みイベントのログだけを古い順に間引く安全弁。
 function pruneTransferStatusLogs(db) {
-  trimTable(db.transfer_status_logs, TRANSFER_STATUS_LOG_MAX_ENTRIES);
+  const logs = Array.isArray(db.transfer_status_logs) ? db.transfer_status_logs : [];
+  if (logs.length <= TRANSFER_STATUS_LOG_MAX_ENTRIES) return 0;
+
+  const activeEventIds = new Set(
+    (Array.isArray(db.transfer_events) ? db.transfer_events : [])
+      .filter(event => event && ACTIVE_TRANSFER_STATUSES.has(event.current_status))
+      .map(event => String(event.id))
+  );
+  const removeCount = logs.length - TRANSFER_STATUS_LOG_MAX_ENTRIES;
+  const removableIds = new Set(
+    logs
+      .filter(log => !activeEventIds.has(String(log.transfer_event_id)))
+      .slice(0, removeCount)
+      .map(log => log.id)
+  );
+  if (removableIds.size === 0) return 0;
+  db.transfer_status_logs = logs.filter(log => !removableIds.has(log.id));
+  console.log(`[DB Cleaner] Trimmed transfer_status_logs to ${db.transfer_status_logs.length} entries.`);
+  return removableIds.size;
 }
 
 function pruneHandoverNotes(db) {
@@ -607,6 +640,77 @@ function decryptDbFileContent(raw) {
   } catch (err) {
     throw new Error('DBファイルの復号に失敗しました。別のPCまたは別のOSユーザーで暗号化されたファイルの可能性があります。');
   }
+}
+
+// 監査ログ専用ファイル(AUDIT_LOG_FILE)を1行ずつ読み込む。1行=暗号化された
+// JSON1件で、既存のdb.json暗号化(encryptDbFileContent/decryptDbFileContent)と
+// 同じ方式を1件単位に適用する。行単位で壊れていても他の行は読み続ける
+function loadAuditLogFile() {
+  try {
+    if (!fs.existsSync(AUDIT_LOG_FILE)) return [];
+    const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf8');
+    const entries = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(JSON.parse(decryptDbFileContent(line)));
+      } catch (err) {
+        console.warn('[AuditLog] 1行の読み込みに失敗したためスキップします:', err.message);
+      }
+    }
+    return entries;
+  } catch (err) {
+    console.error('[AuditLog] ファイルの読み込みに失敗:', err.message);
+    return [];
+  }
+}
+
+// 監査ログ1件をO(1)で追記する。呼び出し元のdb.audit_logs配列への
+// push直後に呼ぶことで、db.json側の書き込み頻度に関わらず即座に永続化する
+function appendAuditLogFile(entry) {
+  try {
+    fs.appendFileSync(AUDIT_LOG_FILE, encryptDbFileContent(JSON.stringify(entry)) + '\n', 'utf8');
+  } catch (err) {
+    console.warn('[AuditLog] ファイルへの追記に失敗しました:', err.message);
+  }
+}
+
+// 監査ログ専用ファイルをentriesの内容で丸ごと置き換える(O(n))。
+// 上限超過時の間引き・DBリストア時の反映・旧形式からの一度きりの移行で使う
+function rewriteAuditLogFile(entries) {
+  try {
+    const list = Array.isArray(entries) ? entries : [];
+    const content = list.map(e => encryptDbFileContent(JSON.stringify(e))).join('\n') + (list.length ? '\n' : '');
+    safeWriteFile(AUDIT_LOG_FILE, content);
+  } catch (err) {
+    console.warn('[AuditLog] ファイルの再構築に失敗しました:', err.message);
+  }
+}
+
+// 2つの監査ログ列をid基準の和集合でマージし、created_at昇順で返す。
+// 同じ共有DBフォルダを複数プロセスが指す運用で、あるプロセスのメモリ上の
+// スナップショットには無いが、別プロセスが既にファイルへ追記済みのエントリを
+// 圧縮(rewriteAuditLogFile)で消してしまわないようにするために使う
+function mergeAuditLogEntries(a, b) {
+  const byId = new Map();
+  for (const entry of Array.isArray(a) ? a : []) {
+    if (entry && entry.id != null) byId.set(String(entry.id), entry);
+  }
+  for (const entry of Array.isArray(b) ? b : []) {
+    if (entry && entry.id != null && !byId.has(String(entry.id))) byId.set(String(entry.id), entry);
+  }
+  return Array.from(byId.values()).sort((x, y) => Number(x.created_at || 0) - Number(y.created_at || 0));
+}
+
+// db.jsonに埋め込まれた旧形式のaudit_logsを検出したら、専用ファイルが
+// まだ無い場合に限り一度だけ移行する。専用ファイルが既に存在する場合は
+// そちらを正として使う(db.json側の内容は無視する)
+function loadOrMigrateAuditLogs(embeddedAuditLogs) {
+  if (!fs.existsSync(AUDIT_LOG_FILE) && Array.isArray(embeddedAuditLogs) && embeddedAuditLogs.length > 0) {
+    console.log(`[AuditLog] db.json内の${embeddedAuditLogs.length}件を専用ファイルへ移行します`);
+    rewriteAuditLogFile(embeddedAuditLogs);
+  }
+  return loadAuditLogFile();
 }
 
 // ローカルデータベースのメモリキャッシュ（毎リクエストごとのディスク読み込み・JSON.parseを回避）。
@@ -785,11 +889,14 @@ function migrateTransferWorkflow(db) {
   return changed;
 }
 
-// ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）
-function readDB() {
+// ローカルデータベース読み込み（重複防止の自動クリーンアップ機能付き）。
+// dbCacheそのもの、またはキャッシュと共有していない新規オブジェクトを返すため、
+// 呼び出し元は返り値をミューテーションしてはならない（読み取り専用アクセサ）。
+// 書き込みを行う場合は必ず readDB() を使うこと。
+function readDbShared() {
   const currentSignature = getDbFileSignature();
   if (dbCache && dbCacheSignature === currentSignature) {
-    return structuredClone(dbCache);
+    return dbCache;
   }
   if (dbCache && dbCacheSignature !== currentSignature) {
     console.info('[DB] 外部プロセスによる更新を検知したため、キャッシュを再読み込みします。');
@@ -818,10 +925,9 @@ function readDB() {
       db.import_logs = [];
       hasDuplicates = true;
     }
-    if (!db.audit_logs) {
-      db.audit_logs = [];
-      hasDuplicates = true;
-    }
+    // audit_logsは専用ファイル(AUDIT_LOG_FILE)側を正として読み込む。
+    // db.json不在は正常な状態(分離後は書き込まれない)なので、書き直し要求(hasDuplicates)は立てない
+    db.audit_logs = loadOrMigrateAuditLogs(db.audit_logs);
     if (!db.system_settings) {
       db.system_settings = SEEDS.system_settings;
       hasDuplicates = true;
@@ -937,11 +1043,14 @@ function readDB() {
         const bakRaw = fs.readFileSync(bakPath, 'utf8');
         const bakData = decryptDbFileContent(bakRaw);
         const recovered = JSON.parse(bakData);
+        // .bakが分離前の旧形式(audit_logs埋め込み)だった場合に備え、
+        // 通常の読み込みパスと同じ移行処理を通す
+        recovered.audit_logs = loadOrMigrateAuditLogs(recovered.audit_logs);
         console.warn('[DB] バックアップファイルからデータを復旧しました:', bakPath);
         if (!writeDB(recovered)) {
           throw new Error('バックアップデータの復旧保存に失敗しました');
         }
-        return structuredClone(recovered);
+        return recovered;
       } catch (bakErr) {
         console.error('[DB] バックアップファイルの復旧にも失敗しました:', bakErr.message);
       }
@@ -961,6 +1070,12 @@ function readDB() {
     dbCacheSignature = null;
     throw new Error('データベースを読み込めませんでした。*.corrupt と *.bak を保全したため、管理者が復旧状態を確認してください。', { cause: err });
   }
+}
+
+// readDbShared()のディープコピーを返す、書き込み用の読み込みアクセサ。
+// 返り値は呼び出し元が自由にミューテーションしてよい（dbCacheと共有しない）。
+function readDB() {
+  return structuredClone(readDbShared());
 }
 
 // ローカルデータベース書き込み
@@ -983,16 +1098,20 @@ function writeDB(data) {
     // 各要素を直接ミューテーションせず、system_settingsの機微な要素だけ
     // 新規オブジェクト化するため、DB全体のディープコピーは不要
     // （読み取り専用のJSON.stringifyに渡すだけの使い捨てローカル変数）。
-    const dbForDisk = (data.system_settings && Array.isArray(data.system_settings))
+    // audit_logsはappendAuditLog()が専用ファイル(AUDIT_LOG_FILE)へ都度追記済みのため、
+    // db.json側には含めない(肥大化するとDB全体の数割を占め、毎回のstringify/暗号化
+    // コストを不必要に増やすため)。
+    const { audit_logs, ...dbWithoutAuditLogs } = data;
+    const dbForDisk = (dbWithoutAuditLogs.system_settings && Array.isArray(dbWithoutAuditLogs.system_settings))
       ? {
-          ...data,
-          system_settings: data.system_settings.map(s => (
+          ...dbWithoutAuditLogs,
+          system_settings: dbWithoutAuditLogs.system_settings.map(s => (
             SENSITIVE_SETTING_IDS.includes(s.id)
               ? { ...s, value: encryptSensitiveValue(s.value) }
               : s
           )),
         }
-      : data;
+      : dbWithoutAuditLogs;
 
     // 保存先は基本的にsafeStorageで暗号化されるため整形(pretty-print)に
     // 可読性上の意味はなく、書き込みのたびに発生するコストなので省略する。
@@ -1002,8 +1121,13 @@ function writeDB(data) {
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
     scheduleDbBackup();
 
-    // メモリキャッシュを最新の状態（復号化された形）に更新する
-    dbCache = structuredClone(data);
+    // メモリキャッシュを最新の状態（復号化された形）に更新する。
+    // audit_logsはdb.json側に含めないためディープコピー対象から外し、
+    // 配列だけ複製(浅いコピー)して引き継ぐ。要素(監査ログ1件ずつ)は
+    // 生成後にミューテーションされない(appendAuditLog()が新規pushするのみ)ため、
+    // 参照共有で問題ない
+    dbCache = structuredClone(dbWithoutAuditLogs);
+    dbCache.audit_logs = Array.isArray(data.audit_logs) ? data.audit_logs.slice() : [];
     dbCacheSignature = getDbFileSignature();
 
     return true;
@@ -1066,7 +1190,7 @@ function appendAuditLog(db, action, {
   try {
     db.audit_logs = Array.isArray(db.audit_logs) ? db.audit_logs : [];
     const now = Date.now();
-    db.audit_logs.push({
+    const entry = {
       id: `audit-${now}-${Math.random().toString(36).slice(2, 7)}`,
       action,
       target_type: targetType,
@@ -1082,8 +1206,21 @@ function appendAuditLog(db, action, {
       reason,
       details: JSON.stringify(details || {}),
       created_at: now,
-    });
-    trimTable(db.audit_logs, AUDIT_LOG_MAX_ENTRIES);
+    };
+    db.audit_logs.push(entry);
+    // db.json側の書き込み頻度(writeDB呼び出し)とは切り離し、専用ファイルへ
+    // その場でO(1)追記する。これにより監査ログはwriteDB()の対象から外れていても
+    // 従来通り確実に(同期的に)永続化される
+    appendAuditLogFile(entry);
+    if (db.audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD) {
+      // 圧縮前にディスクの最新内容を読み直してマージする。共有DBフォルダ運用で
+      // 他プロセスが追記済みのエントリを、このプロセスの古いメモリ状態で
+      // 上書き消去してしまわないようにするため(このプロセスのメモリだけを
+      // 正として丸ごと書き換えると、他プロセスの追記分がサイレントに失われる)
+      const merged = mergeAuditLogEntries(db.audit_logs, loadAuditLogFile());
+      db.audit_logs = merged.slice(Math.max(0, merged.length - AUDIT_LOG_MAX_ENTRIES));
+      rewriteAuditLogFile(db.audit_logs);
+    }
   } catch (err) {
     console.warn('[AuditLog] 追記に失敗:', err.message);
   }
@@ -3460,7 +3597,10 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
 
 // 共通のデータベース操作処理関数
 async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
-  const db = readDB();
+  // GETはDB全体をディープコピーせずキャッシュを直接参照する（高頻度ポーリングでの
+  // CPU負荷対策）。GET経路はdbやdb[table]の中身をミューテーションしてはならない。
+  // 書き込み系メソッドは従来どおりreadDB()で専用のディープコピーを取得する。
+  const db = method === 'GET' ? readDbShared() : readDB();
 
   // URL解析 (例: "tables/transfer_events?limit=200" や "tables/beds/bed-701")
   const cleanUrl = url.replace(/^\//, '').replace(/^tables\//, '');
@@ -3570,11 +3710,13 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
   }
 
-  if (!db[table]) {
+  // GETはdbがdbCacheと共有されている可能性があるため、db[table]への代入で
+  // キャッシュをミューテーションしない。書き込み系は従来どおりdb[table]を初期化する。
+  if (!db[table] && method !== 'GET') {
     db[table] = [];
   }
 
-  const list = db[table];
+  const list = db[table] || [];
 
   if (method === 'GET') {
     if (table === 'transfer_events' && id === 'ward-status') {
@@ -3677,11 +3819,17 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         const wardId = searchParams.get('ward_id');
         const bedId = searchParams.get('bed_id');
         const completedOnly = searchParams.get('completed_only') === 'true';
+        // CSVインポート時の病床競合チェック等、全病棟横断で進行中イベントだけを
+        // 必要とする場面向け。event_retention_daysが未設定の長期運用でtransfer_events
+        // が肥大化しても、MAX_PARENT_RESPONSE_BYTES(5MB)超過で子機取得が失敗しないよう、
+        // 全件返却ではなくサーバー側で進行中分だけに絞る
+        const activeOnly = searchParams.get('active_only') === 'true';
         const completedStatuses = new Set(['RETURNED', 'CANCELLED']);
         const filtered = list.filter(event => (
           (!wardId || String(event.ward_id) === String(wardId)) &&
           (!bedId || String(event.bed_id) === String(bedId)) &&
-          (!completedOnly || completedStatuses.has(event.current_status))
+          (!completedOnly || completedStatuses.has(event.current_status)) &&
+          (!activeOnly || ACTIVE_TRANSFER_STATUSES.has(event.current_status))
         ));
         return { data: filtered };
       }
@@ -3711,6 +3859,23 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
               : setting
           )),
         };
+      }
+      // 申し送りメモは病棟指定時にサーバー側で絞る（ダッシュボードは常に自病棟分しか
+      // 使わない。子機では5秒ポーリングごとの転送量にも効く）
+      if (table === 'handover_notes') {
+        const wardId = searchParams.get('ward_id');
+        if (wardId) {
+          return { data: list.filter(note => String(note.ward_id) === String(wardId)) };
+        }
+      }
+      // スケジュール項目は日次表示のたびに当日分しか使わないため、範囲指定時は
+      // サーバー側で絞る（5秒ポーリングごとの全件転送・全件クローンを避ける）
+      if (table === 'schedule_items' && searchParams.has('start_ms') && searchParams.has('end_ms')) {
+        const startMs = Number(searchParams.get('start_ms'));
+        const endMs = Number(searchParams.get('end_ms'));
+        if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+          return { data: list.filter(item => item.start_ms != null && item.start_ms >= startMs && item.start_ms < endMs) };
+        }
       }
       return { data: list };
     }
@@ -4168,7 +4333,9 @@ function normalizeParentHttpRequest(opts) {
     throw new Error('INVALID_REQUEST');
   }
 
-  const db = readDB();
+  // 子機→親機への全リクエストが通る中継経路であり、read-onlyでshare_mode/parent_ipの
+  // 2設定を読むだけのため、DB全体のディープコピーは不要
+  const db = readDbShared();
   const shareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
   const configuredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '').trim();
   const allowedHosts = new Set();
@@ -5143,8 +5310,25 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
         console.warn('[DB] 復元前バックアップの作成に失敗しました:', bakErr.message);
       }
     }
+    // 監査ログ専用ファイルも同様に復元前の状態を保全する
+    // (db.jsonと違い、リストア操作自体はこのファイルを直接上書きしないため、
+    // 保全しておかないと復元後に反映したバックアップ内容で無条件に置き換わってしまう)
+    if (fs.existsSync(AUDIT_LOG_FILE)) {
+      try {
+        fs.copyFileSync(AUDIT_LOG_FILE, AUDIT_LOG_FILE + '.before_restore');
+      } catch (bakErr) {
+        console.warn('[AuditLog] 復元前バックアップの作成に失敗しました:', bakErr.message);
+      }
+    }
     // アトミックに上書きして復元する（自機のDB暗号化形式で保存）
     safeWriteFile(DB_FILE, encryptDbFileContent(plaintextJson));
+    // リストアはDB全体を置き換える操作のため、バックアップにaudit_logsが
+    // 埋め込まれていれば監査ログ専用ファイルも無条件に置き換える
+    // (loadOrMigrateAuditLogsは「専用ファイルが無いときだけ移行」なので、
+    // 既に専用ファイルがある通常運用でのリストアではこちらを使う必要がある)
+    if (Array.isArray(parsed.audit_logs)) {
+      rewriteAuditLogFile(parsed.audit_logs);
+    }
     // writeDB()を経由しない直接書き込みのため、メモリキャッシュを無効化して次回読み込み時にディスクから再読込させる
     dbCache = null;
     dbCacheSignature = null;

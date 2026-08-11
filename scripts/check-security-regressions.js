@@ -243,28 +243,173 @@ assert(
   'NFC watcher restarts must back off exponentially instead of retrying on a fixed interval'
 );
 
-// readDB()はキャッシュヒット時も含め毎回DB全体をディープコピーして返し、
-// processDbRequestが全APIリクエストの先頭でreadDB()を呼ぶため、このコストは
-// 5秒間隔ポーリング×全端末で繰り返し支払われる。JSON往復クローンへ戻ると
-// DBが肥大化した運用でメインプロセスのCPU負荷が高止まりするため、
-// 高速なstructuredCloneを使い続けることを保証する。
+// readDbShared()/readDB()はJSON往復クローンではなくstructuredCloneを使い続ける必要がある
+// （DBが肥大化した運用でメインプロセスのCPU負荷が高止まりするため）。
+// readDB()はreadDbShared()の結果をstructuredCloneで包むだけの薄いラッパーであることも保証する
+// （書き込み系がキャッシュと共有しない専用コピーを受け取れなくなる回帰を防ぐ）。
 assert(
   (() => {
-    const readStart = main.indexOf('function readDB()');
+    const sharedStart = main.indexOf('function readDbShared()');
+    const sharedEnd = main.indexOf('function readDB()');
     const readEnd = main.indexOf('function writeDB(');
     const writeEnd = main.indexOf('function getSettingRecord(');
-    if (readStart < 0 || readEnd < 0 || writeEnd < 0 || readEnd <= readStart || writeEnd <= readEnd) return false;
-    const readBody = main.slice(readStart, readEnd);
+    if (sharedStart < 0 || sharedEnd < 0 || readEnd < 0 || writeEnd < 0 ||
+        sharedEnd <= sharedStart || readEnd <= sharedEnd || writeEnd <= readEnd) return false;
+    const sharedBody = main.slice(sharedStart, sharedEnd);
+    const readBody = main.slice(sharedEnd, readEnd);
     const writeBody = main.slice(readEnd, writeEnd);
-    const hasJsonRoundTripClone = /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(readBody) ||
+    const hasJsonRoundTripClone = /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(sharedBody) ||
       /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(writeBody);
     return !hasJsonRoundTripClone &&
-      readBody.includes('structuredClone(dbCache)') &&
-      readBody.includes('structuredClone(db)') &&
-      readBody.includes('structuredClone(recovered)') &&
-      writeBody.includes('structuredClone(data)');
+      sharedBody.includes('structuredClone(db)') &&
+      readBody.includes('structuredClone(readDbShared())') &&
+      writeBody.includes('structuredClone(dbWithoutAuditLogs)');
   })(),
   'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
+);
+
+// audit_logsはdb.jsonから分離し、専用ファイル(AUDIT_LOG_FILE)へappendAuditLog()が
+// 都度O(1)追記することで、writeDB()の毎回のstringify/クローンコストから外している。
+// writeDB()がaudit_logsをdb.json書き込み対象から除外し続けること、
+// appendAuditLogがpush直後に専用ファイルへ同期的に追記し続けることを保証する。
+// ここが崩れると、audit_logsが再びdb.json経由の全件書き直しに戻るか、
+// あるいは監査ログが専用ファイルに永続化されないまま失われる回帰になる。
+assert(
+  (() => {
+    const writeStart = main.indexOf('function writeDB(');
+    const writeEnd = main.indexOf('function getSettingRecord(');
+    if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
+    const writeBody = main.slice(writeStart, writeEnd);
+
+    const appendStart = main.indexOf('function appendAuditLog(db, action, {');
+    const appendEnd = main.indexOf('function appendParentActionAudit(');
+    if (appendStart < 0 || appendEnd < 0 || appendEnd <= appendStart) return false;
+    const appendBody = main.slice(appendStart, appendEnd);
+
+    return writeBody.includes('const { audit_logs, ...dbWithoutAuditLogs } = data;') &&
+      writeBody.includes('JSON.stringify(dbForDisk)') &&
+      !/JSON\.stringify\(dbForDisk\)[\s\S]{0,80}audit_logs/.test(writeBody) &&
+      appendBody.includes('appendAuditLogFile(entry)') &&
+      appendBody.indexOf('db.audit_logs.push(entry)') < appendBody.indexOf('appendAuditLogFile(entry)');
+  })(),
+  'writeDB must exclude audit_logs from the db.json payload, and appendAuditLog must synchronously append each new entry to the dedicated audit log file, or audit_logs either bloats every DB write again or stops being durably persisted'
+);
+
+// readDbShared()はキャッシュヒット時にdbCacheをディープコピーせず直接返す
+// （高頻度ポーリングでDB全体のstructuredCloneを繰り返すコストを避けるため）。
+// GET専用アクセサに戻り値のクローンが復活すると、5台・5病棟規模で
+// 親機のCPU負荷が飽和する回帰につながるため、キャッシュヒット経路が
+// 参照をそのまま返すことを保証する。
+assert(
+  (() => {
+    const sharedStart = main.indexOf('function readDbShared()');
+    const sharedEnd = main.indexOf('function readDB()');
+    if (sharedStart < 0 || sharedEnd < 0 || sharedEnd <= sharedStart) return false;
+    const sharedBody = main.slice(sharedStart, sharedEnd);
+    return sharedBody.includes('return dbCache;') &&
+      !sharedBody.includes('return structuredClone(dbCache)');
+  })(),
+  'readDbShared() cache-hit path must return dbCache directly without structuredClone, or GET polling from every terminal pays a full DB clone again'
+);
+
+// processDbRequestはGET(読み取り専用)のときだけクローンしないreadDbShared()を使い、
+// 書き込み系メソッドは従来どおりreadDB()で専用のディープコピーを取得する必要がある。
+// GET経路が誤ってreadDB()に戻ると、5台・5病棟規模のポーリング負荷で
+// 親機のCPU負荷が飽和する回帰につながる。
+assert(
+  (() => {
+    const idx = main.indexOf('async function processDbRequest(');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = main.slice(idx, end);
+    return /const db = method === 'GET' \? readDbShared\(\) : readDB\(\);/.test(body) &&
+      /if \(!db\[table\] && method !== 'GET'\) \{/.test(body);
+  })(),
+  'processDbRequest must use readDbShared() (no full-DB clone) for GET and must not mutate db[table] on the GET path, which may share the live dbCache object'
+);
+
+// normalizeParentHttpRequestは子機→親機への全リクエストが通る中継経路で、
+// share_mode/parent_ipの2設定を読むだけの読み取り専用処理。readDB()に戻ると
+// このリクエストのたびにDB全体をディープコピーすることになる
+assert(
+  (() => {
+    const idx = main.indexOf('function normalizeParentHttpRequest(');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = main.slice(idx, end);
+    return body.includes('const db = readDbShared();') && !body.includes('const db = readDB();');
+  })(),
+  'normalizeParentHttpRequest must use readDbShared() (no full-DB clone) since it only reads share_mode/parent_ip on every parent-relayed request'
+);
+
+// appendAuditLogの圧縮(閾値超過時のrewriteAuditLogFile)は、このプロセスの
+// メモリ上のaudit_logsだけを正として書き換えると、共有DBフォルダ運用で
+// 他プロセスが既に専用ファイルへ追記済みのエントリをサイレントに消してしまう。
+// 圧縮前にloadAuditLogFile()でディスクの最新内容を読み直し、
+// mergeAuditLogEntriesでマージしてから間引くことを保証する。
+assert(
+  (() => {
+    const idx = main.indexOf('function appendAuditLog(db, action, {');
+    const end = main.indexOf('\nfunction appendParentActionAudit(');
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    const compactIdx = body.indexOf('AUDIT_LOG_COMPACT_THRESHOLD');
+    if (compactIdx < 0) return false;
+    const compactBody = body.slice(compactIdx);
+    return compactBody.includes('mergeAuditLogEntries(db.audit_logs, loadAuditLogFile())');
+  })(),
+  'appendAuditLog must merge with the on-disk audit log file (loadAuditLogFile + mergeAuditLogEntries) before compacting, or entries appended by another process sharing the same DB folder can be silently lost'
+);
+
+// loadMasters()のstaffs取得(getAllStaffs)は、単発の一時的な失敗でwards/beds等を
+// 含むマスタ読み込み全体を失敗させてはならない。.catch()で吸収し、
+// 前回ロード分(AppState.allStaffs/staffs)へフォールバックすることを保証する。
+assert(
+  (() => {
+    const idx = app.indexOf('async loadMasters(');
+    const end = app.indexOf('\n  async ', idx + 10);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('API.getAllStaffs().catch(() => null)') &&
+      body.includes('if (Array.isArray(allStaffs)) {') &&
+      body.includes('AppState.allStaffs = AppState.allStaffs || [];');
+  })(),
+  'loadMasters() must catch getAllStaffs() failures and fall back to the previous AppState.allStaffs/staffs instead of letting the whole Promise.all (wards/beds/examRooms/etc.) reject on a single transient staff-fetch failure'
+);
+
+// transfer_status_logsは進行中イベント(ACTIVE_TRANSFER_STATUSES)のログを保護せずに
+// 古い順一律で間引くと、5病棟規模の運用で監査証跡が数日で失われ、
+// ward-status/exam-room-status表示が参照する進行中イベントの直近ログも
+// 消えかねない。完了済みイベントのログだけを間引く設計を維持することを保証する。
+assert(
+  (() => {
+    const idx = main.indexOf('function pruneTransferStatusLogs(');
+    const end = main.indexOf('\nfunction pruneHandoverNotes(');
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
+      body.includes('!activeEventIds.has(String(log.transfer_event_id))') &&
+      !/^\s*trimTable\(db\.transfer_status_logs/m.test(body);
+  })(),
+  'pruneTransferStatusLogs must protect logs belonging to in-progress transfer events instead of trimming the table with a plain oldest-first cutoff'
+);
+
+// event_retention_daysは既定"0"(無効)のため、transfer_eventsは長期運用で
+// TRANSFER_EVENTS_MAX_ENTRIES(安全弁)まで肥大化しうる。CSVインポート時の
+// 病床競合チェックが全件取得のままだと、MAX_PARENT_RESPONSE_BYTES(5MB)超過で
+// 子機のインポートが恒久的に失敗する。active_onlyフィルタで進行中イベントだけに
+// 絞って取得することを保証する。
+assert(
+  (() => {
+    const idx = main.indexOf("if (table === 'transfer_events') {", main.indexOf('async function processDbRequest'));
+    const end = main.indexOf('return { data: filtered };', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = main.slice(idx, end);
+    return body.includes("searchParams.get('active_only') === 'true'") &&
+      body.includes('!activeOnly || ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
+      app.includes("API.getAll('transfer_events', { active_only: 'true' })");
+  })(),
+  'processDbRequest must support transfer_events?active_only=true and the CSV-import active-bed check must use it, or the parent response can exceed MAX_PARENT_RESPONSE_BYTES once transfer_events grows unbounded'
 );
 
 // download-and-install-updateはインストーラ名をencodeURIComponentしてリクエストする
@@ -305,8 +450,8 @@ assert(
     const writeBody = main.slice(writeStart, writeEnd);
     const structuredCloneCalls = writeBody.match(/structuredClone\(/g) || [];
     return structuredCloneCalls.length === 1 &&
-      writeBody.includes('structuredClone(data)') &&
-      writeBody.includes('system_settings: data.system_settings.map(');
+      writeBody.includes('structuredClone(dbWithoutAuditLogs)') &&
+      writeBody.includes('system_settings: dbWithoutAuditLogs.system_settings.map(');
   })(),
   'writeDB must not deep-clone the whole DB a second time just to encrypt system_settings; only the settings array should be copied'
 );
