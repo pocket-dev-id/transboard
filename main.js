@@ -1098,10 +1098,11 @@ function writeDB(data) {
     // 各要素を直接ミューテーションせず、system_settingsの機微な要素だけ
     // 新規オブジェクト化するため、DB全体のディープコピーは不要
     // （読み取り専用のJSON.stringifyに渡すだけの使い捨てローカル変数）。
-    // audit_logsはappendAuditLog()が専用ファイル(AUDIT_LOG_FILE)へ都度追記済みのため、
+    // audit_logsはこの関数の下部でAUDIT_LOG_FILEへ個別に永続化するため、
     // db.json側には含めない(肥大化するとDB全体の数割を占め、毎回のstringify/暗号化
-    // コストを不必要に増やすため)。
-    const { audit_logs, ...dbWithoutAuditLogs } = data;
+    // コストを不必要に増やすため)。_pendingAuditLogEntriesも同様に除外する
+    // （appendAuditLog()が積んだ、まだファイル未反映の監査エントリの一時リスト）。
+    const { audit_logs, _pendingAuditLogEntries, ...dbWithoutAuditLogs } = data;
     const dbForDisk = (dbWithoutAuditLogs.system_settings && Array.isArray(dbWithoutAuditLogs.system_settings))
       ? {
           ...dbWithoutAuditLogs,
@@ -1116,6 +1117,25 @@ function writeDB(data) {
     // 保存先は基本的にsafeStorageで暗号化されるため整形(pretty-print)に
     // 可読性上の意味はなく、書き込みのたびに発生するコストなので省略する。
     safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbForDisk)));
+
+    // 監査ログの永続化は、対応するDB書き込みが実際に成功した後にだけ行う。
+    // ここより前(safeWriteFile失敗時や、この関数の先頭にある署名不一致による
+    // 早期return false)でappendAuditLog()の分だけが先に永続化されてしまうと、
+    // 「成功した」と主張する監査エントリだけが残り、実際の変更は
+    // 書き込まれていないという矛盾した監査証跡になってしまうため
+    const pendingAuditEntries = Array.isArray(_pendingAuditLogEntries) ? _pendingAuditLogEntries : [];
+    for (const entry of pendingAuditEntries) {
+      appendAuditLogFile(entry);
+    }
+    if (pendingAuditEntries.length > 0 && Array.isArray(audit_logs) && audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD) {
+      // 圧縮前にディスクの最新内容を読み直してマージする。共有DBフォルダ運用で
+      // 他プロセスが追記済みのエントリを、このプロセスの古いメモリ状態で
+      // 上書き消去してしまわないようにするため(このプロセスのメモリだけを
+      // 正として丸ごと書き換えると、他プロセスの追記分がサイレントに失われる)
+      const merged = mergeAuditLogEntries(audit_logs, loadAuditLogFile());
+      data.audit_logs = merged.slice(Math.max(0, merged.length - AUDIT_LOG_MAX_ENTRIES));
+      rewriteAuditLogFile(data.audit_logs);
+    }
 
     // 書き込み成功後にローリングバックアップを更新する
     // （破損時のリカバリ用。直前の正常状態を1世代保持）
@@ -1208,19 +1228,13 @@ function appendAuditLog(db, action, {
       created_at: now,
     };
     db.audit_logs.push(entry);
-    // db.json側の書き込み頻度(writeDB呼び出し)とは切り離し、専用ファイルへ
-    // その場でO(1)追記する。これにより監査ログはwriteDB()の対象から外れていても
-    // 従来通り確実に(同期的に)永続化される
-    appendAuditLogFile(entry);
-    if (db.audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD) {
-      // 圧縮前にディスクの最新内容を読み直してマージする。共有DBフォルダ運用で
-      // 他プロセスが追記済みのエントリを、このプロセスの古いメモリ状態で
-      // 上書き消去してしまわないようにするため(このプロセスのメモリだけを
-      // 正として丸ごと書き換えると、他プロセスの追記分がサイレントに失われる)
-      const merged = mergeAuditLogEntries(db.audit_logs, loadAuditLogFile());
-      db.audit_logs = merged.slice(Math.max(0, merged.length - AUDIT_LOG_MAX_ENTRIES));
-      rewriteAuditLogFile(db.audit_logs);
-    }
+    // 専用ファイル(AUDIT_LOG_FILE)への実際の永続化はここでは行わず、
+    // writeDB()が対応するdb.json書き込みに成功した後にまとめて行う
+    // （このappendAuditLog単体では、呼び出し元のwriteDB(db)が失敗しても
+    // 「成功した」と主張する監査エントリだけが残ってしまうため）。
+    // ここではwriteDB()に渡すための一時的な保留リストに積むだけ。
+    db._pendingAuditLogEntries = Array.isArray(db._pendingAuditLogEntries) ? db._pendingAuditLogEntries : [];
+    db._pendingAuditLogEntries.push(entry);
   } catch (err) {
     console.warn('[AuditLog] 追記に失敗:', err.message);
   }
