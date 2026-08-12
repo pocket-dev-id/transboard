@@ -40,10 +40,11 @@ assert(
   'All IPC handlers must be registered through handleTrusted'
 );
 
-const updateVerifyIndex = main.indexOf('verifyWindowsCodeSignature(installerPath)');
-const updateSpawnIndex = main.indexOf("spawn(installerPath, ['/S']");
+const updateHandlerIdx = main.indexOf("handleTrusted('download-and-install-update'");
+const updateVerifyIndex = main.indexOf('verifyWindowsCodeSignature(installerPath)', updateHandlerIdx);
+const updateSpawnIndex = main.indexOf('spawnInstallerAfterOwnExit(installerPath)', updateHandlerIdx);
 assert(
-  updateVerifyIndex >= 0 && updateSpawnIndex > updateVerifyIndex,
+  updateHandlerIdx >= 0 && updateVerifyIndex >= 0 && updateSpawnIndex > updateVerifyIndex,
   'The updater must verify Authenticode before launching an installer'
 );
 assert(
@@ -719,6 +720,33 @@ assert(
       main.slice(idx).includes('SCHEDULE_TIME_RE_SRC');
   })(),
   'parseScheduleDatetimeMs must accept :, ：, and . as the time separator (e.g. hh.mm.ss) via SCHEDULE_TIME_RE_SRC'
+);
+
+// インストーラをspawnした直後に固定時間(setTimeout)でapp.quit()すると、
+// 旧exeのファイルロックがまだ解放されていないうちに新インストーラの
+// サイレントアンインストール(electron-builder製NSISが旧バージョン検出時に
+// 自動実行)が走り、「古いアプリをアンインストールできません」という
+// 失敗の原因になる。spawnInstallerAfterOwnExitがPowerShellのWait-Processで
+// 自プロセスの実際の終了を待ってからインストーラを起動することを保証する
+assert(
+  (() => {
+    const idx = main.indexOf('function spawnInstallerAfterOwnExit(installerPath) {');
+    if (idx < 0) return false;
+    const end = main.indexOf('handleTrusted(\'download-and-install-update\'', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    const waitIdx = body.indexOf('Wait-Process');
+    const startIdx = body.indexOf('Start-Process');
+    return waitIdx >= 0 && startIdx > waitIdx &&
+      body.includes('TRANSBOARD_WAIT_PID') &&
+      body.includes('process.pid') &&
+      body.includes("detached: true");
+  })(),
+  'spawnInstallerAfterOwnExit must wait for this process to actually exit (Wait-Process on its own PID) before launching the installer'
+);
+assert(
+  !main.includes('setTimeout(() => app.quit(), 500)'),
+  'The updater must not rely on a fixed 500ms delay before quitting; the installer launch must be sequenced after this process actually exits'
 );
 
 console.log('Security regression checks passed.');
