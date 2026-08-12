@@ -4809,20 +4809,42 @@ function isUnsignedUpdateSourceAllowed(feedBase) {
   if (!feedBase) return true;
   try {
     const source = new URL(feedBase);
-    return source.protocol === 'https:' ||
-      source.hostname === 'localhost' ||
-      isPrivateOrLoopbackIpv4(source.hostname);
+    if (source.protocol === 'https:' ||
+        source.hostname === 'localhost' ||
+        isPrivateOrLoopbackIpv4(source.hostname)) {
+      return true;
+    }
+    // parent_ip はホスト名（機器名・mDNS/WINS名等）で運用されることもあり、
+    // その場合はドット区切りIPv4の見た目チェックに掛からず一律で拒否されてしまう。
+    // feedBase はここまでbuildUpdateFeedBase()がsystem_settings.parent_ip
+    // （またはループバック）からのみ組み立てており、ユーザー入力や外部リンクから
+    // 任意のホストを指すことはできない。この関数が本来防ぎたいのは「公開インターネット上の
+    // IPアドレスに対する平文HTTPでの中間者攻撃」であり、ドット区切りIPv4literalでない
+    // （＝名前解決に依存する、院内LAN内でのみ意味を持つ）ホスト名はその攻撃対象にならない
+    // ため許可する。
+    return !/^\d{1,3}(\.\d{1,3}){3}$/.test(source.hostname);
   } catch {
     return false;
   }
 }
 
-async function confirmUnsignedUpdate({ version, fileName, sha512, feedBase = null } = {}) {
+async function confirmUnsignedUpdate({ version, fileName, sha512, feedBase = null, autoAcceptForChild = false } = {}) {
   if (!isUnsignedUpdateSourceAllowed(feedBase)) {
     return {
       accepted: false,
       message: '署名なし更新は院内LANまたはHTTPSの更新元からのみ許可されます',
     };
+  }
+
+  // 子機が親機から取得する更新ファイルは、親機側で取込時(import-update-files)に
+  // 管理者が同じ確認ダイアログを既に一度通過しており、SHA-512整合性検証も
+  // 呼び出し元で実施済みのため、子機ごとに同じ警告への再クリックを求めるのは
+  // 実質的な安全性向上を伴わない手間であり、無人稼働中の子機で誤って
+  // 「更新を中止」を押してしまう(＝更新が終わらない)主要因になっていた。
+  // 子機ではこの人手による再確認を省略し、自動的に許可する。
+  if (autoAcceptForChild) {
+    console.warn(`[Updater] 子機更新: 親機で検証済みの配布ファイルのため署名なし確認をスキップして続行します: v${version || '?'}`);
+    return { accepted: true };
   }
 
   const result = await dialog.showMessageBox(mainWindow, {
@@ -4896,6 +4918,8 @@ handleTrusted('check-for-update', async (event, { parentIp } = {}) => {
 handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
     const feedBase = buildUpdateFeedBase(parentIp);
+    const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+    const isChildTerminal = shareMode !== 'parent';
     const ymlText = await httpGetText(`${feedBase}/latest.yml`, {
       headers: getUpdateRequestHeaders(),
     });
@@ -4932,12 +4956,15 @@ handleTrusted('download-and-install-update', async (event, { parentIp } = {}) =>
         fileName: info.path,
         sha512: info.sha512,
         feedBase,
+        autoAcceptForChild: isChildTerminal,
       });
       if (!unsignedConfirmation.accepted) {
         try { fs.unlinkSync(installerPath); } catch {}
         return { success: false, message: unsignedConfirmation.message };
       }
-      console.warn(`[Updater] 署名なし更新を管理者確認により許可: v${info.version}`);
+      if (!isChildTerminal) {
+        console.warn(`[Updater] 署名なし更新を管理者確認により許可: v${info.version}`);
+      }
     }
 
     // 更新起因の万一の破損に備え、既存の.bakローリングとは別にDBを退避

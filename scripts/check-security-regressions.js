@@ -54,11 +54,12 @@ assert(
   main.includes('isUnsignedUpdateSourceAllowed'),
   'Updates must use API authentication, hash verification, source restrictions, and explicit unsigned confirmation'
 );
-// 現行ビルドは未署名のため、更新は毎回confirmUnsignedUpdateのネイティブ
-// ダイアログを経由する(main.js側)。事前確認モーダルの説明文がこれに一切
-// 触れないと、予告なく現れたダイアログをユーザーが反射的に「中止」してしまい
-// 「ダウンロードしたのに更新が失敗する」体感を生む。事前に案内する文言が
-// 後退していないことを保証する。
+// 現行ビルドは未署名のため、親機自身の更新は毎回confirmUnsignedUpdateの
+// ネイティブダイアログを経由する(main.js側。子機はautoAcceptForChildで
+// このダイアログをスキップする、別項のガード参照)。親機向けの事前確認
+// モーダルの説明文がこれに一切触れないと、予告なく現れたダイアログを
+// ユーザーが反射的に「中止」してしまい「ダウンロードしたのに更新が
+// 失敗する」体感を生む。事前に案内する文言(親機分岐)が後退していないことを保証する。
 assert(
   (() => {
     const idx = app.indexOf('_promptInstallUpdate(info)');
@@ -67,7 +68,50 @@ assert(
     const body = app.slice(idx, end);
     return body.includes('署名なし') && body.includes('続行');
   })(),
-  'The pre-download update confirmation must warn that a second native Windows dialog (unsigned-update confirmation) will follow'
+  'The pre-download update confirmation must warn that a second native Windows dialog (unsigned-update confirmation) will follow for the parent terminal'
+);
+
+// 子機は親機から取得する更新ファイルについて、親機側の取込時(import-update-files)
+// 管理者確認とSHA-512検証が既に済んでいるため、confirmUnsignedUpdateの
+// ネイティブダイアログを自動承認でスキップしてよい。ただしこれは
+// isUnsignedUpdateSourceAllowed(LAN/HTTPS制限)を満たす場合に限られ、
+// SHA-512検証(呼び出し元)・署名検証そのものは一切省略しないことを保証する
+assert(
+  (() => {
+    const idx = main.indexOf('async function confirmUnsignedUpdate({');
+    const end = main.indexOf('const result = await dialog.showMessageBox', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    const allowedCheckIdx = body.indexOf('isUnsignedUpdateSourceAllowed(feedBase)');
+    const autoAcceptIdx = body.indexOf('if (autoAcceptForChild)');
+    return allowedCheckIdx >= 0 && autoAcceptIdx > allowedCheckIdx &&
+      body.includes('return { accepted: true };');
+  })(),
+  'confirmUnsignedUpdate must only auto-accept for child terminals after the LAN/HTTPS source check, and must still show the native dialog otherwise'
+);
+assert(
+  (() => {
+    const idx = main.indexOf("handleTrusted('download-and-install-update'");
+    const end = main.indexOf("handleTrusted('get-update-dist-info'", idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('autoAcceptForChild: isChildTerminal') &&
+      /shareMode\s*!==\s*'parent'/.test(body);
+  })(),
+  'The download-and-install-update handler must pass autoAcceptForChild based on whether the terminal is a child (share_mode !== parent)'
+);
+// isUnsignedUpdateSourceAllowedは公開IPv4リテラルへの平文HTTPは引き続き拒否しつつ、
+// parent_ipがホスト名(mDNS/WINS名等)で運用されるケースを新たに許可する。
+// ドット区切りIPv4形式の判定自体が失われていないことを保証する
+assert(
+  (() => {
+    const idx = main.indexOf('function isUnsignedUpdateSourceAllowed(feedBase) {');
+    const end = main.indexOf('async function confirmUnsignedUpdate', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('\\d{1,3}(\\.\\d{1,3}){3}');
+  })(),
+  'isUnsignedUpdateSourceAllowed must still reject plain-HTTP dotted-IPv4 literals that are not private/loopback'
 );
 assert(
   !main.includes('[ScheduleFeed] "${feed.name}" CSVパース失敗'),

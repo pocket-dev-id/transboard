@@ -1356,11 +1356,20 @@ const App = {
   },
 
   async _promptInstallUpdate(info) {
+    // 子機が親機から取得する更新は、親機側で取込時に管理者が署名なし確認を
+    // 既に一度通過しているため、子機ごとのWindows確認ダイアログは表示されない
+    // (main.jsのconfirmUnsignedUpdate参照)。親機自身の更新のみ、この後に
+    // もう一つ確認ダイアログが表示される
+    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const isChildTerminal = shareMode === 'client' || shareMode === 'child';
+    const detail = isChildTerminal
+      ? 'ダウンロードと検証が終わると、アプリが自動的に終了してインストールが始まります（数十秒〜数分）。データは更新前に自動バックアップされます。'
+      : 'ダウンロードと検証が終わると、Windowsの確認ダイアログがもう一つ表示されます（配布ファイルが未署名のため）。「署名なしで続行」を選択するとインストールが始まり、アプリが自動的に終了します（数十秒〜数分）。データは更新前に自動バックアップされます。';
     const ok = await UI.confirmModal(
       `TransBoard を v${info.latestVersion} に更新しますか？`,
       {
         title: 'アプリの更新',
-        detail: 'ダウンロードと検証が終わると、Windowsの確認ダイアログがもう一つ表示されます（配布ファイルが未署名のため）。「署名なしで続行」を選択するとインストールが始まり、アプリが自動的に終了します（数十秒〜数分）。データは更新前に自動バックアップされます。',
+        detail,
         confirmLabel: '更新する'
       }
     );
