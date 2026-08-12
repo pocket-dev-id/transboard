@@ -352,9 +352,6 @@ const API = {
 
   /* ---------- マスタ取得 ---------- */
   async getWards()      { return requireDataArray(await this.getAll('wards'), '病棟マスター'); },
-  async getBeds(wardId) {
-    return (await this.getAllBeds()).filter(b => b.ward_id === wardId);
-  },
   async getAllBeds()     { return requireDataArray(await this.getAll('beds'), '病床マスター'); },
   async getBedTypes()    { return requireDataArray(await this.getAll('bed_types'), '病床タイプ'); },
   async getExamRooms()  { return requireDataArray(await this.getAll('exam_rooms'), '検査室マスター'); },
@@ -416,20 +413,6 @@ const API = {
     return (res.data || []).filter(item =>
       item.start_ms != null && item.start_ms >= dayStartMs && item.start_ms < dayEndMs
     );
-  },
-
-  async getTodayEventsForWard(wardId) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayMs = today.getTime();
-    const res = await this.getAll('transfer_events');
-    return res.data.filter(e => {
-      if (e.ward_id !== wardId) return false;
-      // 進行中のイベントは departed_at の有無に関わらず常に含める
-      if (CONFIG.ACTIVE_STATUSES.includes(e.current_status)) return true;
-      // 完了・キャンセルは今日の departed_at を基準にフィルタ
-      return e.departed_at != null && e.departed_at >= todayMs;
-    });
   },
 
   async getExamRoomStatus(roomId) {
@@ -627,19 +610,6 @@ const API = {
   },
 
   /* ---------- 通話 ---------- */
-  async createCall(data) {
-    return this.create('calls', {
-      id: `call-${Date.now()}`,
-      ...data,
-      started_at: Date.now(),
-      status: 'calling',
-    });
-  },
-
-  async updateCall(callId, data) {
-    return this.patch('calls', callId, data);
-  },
-
   async getCallHistory() {
     const res = await this.getAll('calls');
     return res.data.sort((a, b) => b.started_at - a.started_at).slice(0, 20);

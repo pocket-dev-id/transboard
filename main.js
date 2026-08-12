@@ -1298,22 +1298,6 @@ function processAuditWriteRequest(method, bodyStr, isExternal = false, apiToken 
   return { success: true };
 }
 
-function resetAdminPasscodeForLocalRecovery(reason = 'local_recovery') {
-  const db = readDB();
-  db.system_settings = db.system_settings || [];
-  const rec = db.system_settings.find(s => s.id === 'admin_passcode');
-  if (rec) rec.value = '0000';
-  else db.system_settings.push({ id: 'admin_passcode', value: '0000' });
-  appendAuditLog(db, 'PASSCODE_RESET_FOR_RECOVERY', {
-    targetType: 'system_settings',
-    targetId: 'admin_passcode',
-    actorType: 'local_recovery',
-    after: { id: 'admin_passcode', value: '[changed]' },
-    reason,
-  });
-  return writeDB(db);
-}
-
 function readTerminalRole() {
   try {
     if (!fs.existsSync(TERMINAL_ROLE_FILE)) return null;
