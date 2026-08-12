@@ -393,10 +393,6 @@ h1, h2, h3, h4,
   transform: scale(var(--bedmap-zoom, 1));
   transform-origin: top left;
   transition: transform .15s ease;
-  /* 患者名が2行になったカードだけ自然に縦へ伸びるようにし、
-     同じ行の他のカード・廊下セルまで既定のstretchで引き伸ばされて
-     内側に空白ができるのを防ぐ */
-  align-items: start;
 }
 
 /* 病床カード */
@@ -415,7 +411,10 @@ h1, h2, h3, h4,
   gap: 2px;
   touch-action: manipulation;
   /* 病棟物理レイアウト表示(1fr列)は大画面ほど列幅が伸びるため、
-     カードが横に間延びして見えないよう幅の上限を設ける */
+     カードが横に間延びして見えないよう幅の上限を設ける。
+     justify-self が stretch 以外だとグリッドアイテムは内容幅(fit-content)に
+     縮んでしまうため、width:100% で列幅を明示的に埋める */
+  width: 100%;
   max-width: 220px;
   justify-self: center;
 }
