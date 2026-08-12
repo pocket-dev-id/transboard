@@ -49,36 +49,7 @@ Object.assign(Settings, {
       ipListHtml = '<li>デスクトップ環境（Electron）でのみIP表示に対応しています</li>';
     }
 
-    const isClientMode = currentMode === 'client';
-    const modeGuideItems = isClientMode
-      ? [
-          ['fa-plug', '親機への接続', '親機IP・APIトークン・接続テストを確認します。', 'client-config-section'],
-          ['fa-phone-alt', '通話・IC連携', '音声通話・ビデオ通話と患者ICカード紐づけの共有設定を確認します。', 'shared-communication-section'],
-          ['fa-network-wired', '通信状態', '子機として親機に接続できるか確認します。', 'client-config-section'],
-        ]
-      : [
-          ['fa-server', '子機接続の準備', '子機へ伝えるIP、APIトークン、接続機器一覧を確認します。', 'parent-config-section'],
-          ['fa-phone-alt', '通話・IC連携', '音声通話・ビデオ通話と患者ICカード紐づけの共有設定を管理します。', 'shared-communication-section'],
-          ['fa-laptop-medical', '接続端末', '現在接続している子機を確認します。', 'parent-config-section'],
-        ];
-    const modeGuideHtml = `
-      <div class="settings-panel settings-role-guide" style="margin-bottom:16px;">
-        <div class="settings-panel-header" style="margin-bottom:8px;">
-          <h3><i class="fas ${isClientMode ? 'fa-laptop-medical' : 'fa-server'}"></i> ${isClientMode ? '子機でよく使う設定' : '親機でよく使う設定'}</h3>
-        </div>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
-          ${modeGuideItems.map(([icon, title, desc, target]) => `
-            <button class="settings-guide-card" data-scroll-target="${target}" type="button">
-              <i class="fas ${icon}"></i>
-              <span><strong>${title}</strong><small>${desc}</small></span>
-            </button>
-          `).join('')}
-        </div>
-      </div>
-    `;
-
     body.innerHTML = `
-      ${modeGuideHtml}
       ${encStatus && !encStatus.available ? `
       <div class="settings-panel" style="margin-bottom:16px; background:#fef2f2; border:1px solid #fca5a5;">
         <div style="display:flex; align-items:flex-start; gap:10px; padding:4px;">
@@ -258,13 +229,6 @@ Object.assign(Settings, {
         </div>
       </div>
     `;
-
-    body.querySelectorAll('.settings-guide-card').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const target = document.getElementById(btn.dataset.scrollTarget);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    });
 
     if (currentMode === 'parent' && !isStandaloneMode) this._renderDeviceList(body);
 
