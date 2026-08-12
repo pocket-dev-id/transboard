@@ -655,6 +655,11 @@ const App = {
       if (Settings && ['beds', 'map', 'staffs'].includes(Settings._activeTab)) {
         Settings.render();
       }
+      // 通話パネルの病棟発信ボタン一覧は「自分自身の病棟」を除外して描画しているため、
+      // 病棟切り替え後に再描画しないと除外対象が古いままになる
+      if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+        CallPanel._renderCallPanel();
+      }
     });
 
     // タイムライン日付
@@ -1660,6 +1665,13 @@ const App = {
         AppState.currentWardId = AppState.wards[0].id;
       }
       localStorage.setItem('current_ward_id', AppState.currentWardId);
+    }
+    // 通話パネルの病棟発信ボタン一覧はAppState.wardsのスナップショットを
+    // 描画時に固定して持つため、病棟マスタの追加・改名・削除後にここで
+    // 呼び直さないと、一覧が古いまま(削除済み病棟が残る・新規病棟が出ない・
+    // 改名が反映されない)になる
+    if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+      CallPanel._renderCallPanel();
     }
   },
 

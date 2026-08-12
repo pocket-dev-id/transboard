@@ -596,4 +596,45 @@ assert(
   '_drawPalette must derive "unplaced" from the current grid cells, not from bed.map_col alone'
 );
 
+// 通話パネルの病棟発信ボタン一覧は「自分自身の病棟」(CallPanel.getMyId() =
+// AppState.currentWardId)を除外して描画するため、病棟セレクトで切り替えても
+// CallPanel._renderCallPanel()を呼び直さないと除外対象が古いままになり、
+// 切り替え後の病棟が電話ボタンに反映されない
+assert(
+  (() => {
+    const marker = "document.getElementById('ward-select').addEventListener('change', async (e) => {";
+    const idx = app.indexOf(marker);
+    if (idx < 0) return false;
+    const bodyStart = app.indexOf('{', idx + marker.length - 1);
+    let depth = 0, end = -1;
+    for (let i = bodyStart; i < app.length; i++) {
+      if (app[i] === '{') depth++;
+      else if (app[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end < 0) return false;
+    const body = app.slice(bodyStart, end + 1);
+    const assignIdx = body.indexOf('AppState.currentWardId = e.target.value;');
+    const renderIdx = body.indexOf('CallPanel._renderCallPanel()');
+    return assignIdx >= 0 && renderIdx > assignIdx;
+  })(),
+  'The ward-select change handler must re-render CallPanel after updating AppState.currentWardId, otherwise the call panel keeps excluding the previous ward instead of the newly selected one'
+);
+
+// 病棟マスタの追加・改名・削除は syncWardSelect() 経由(masters.js の
+// ward作成/更新/削除ハンドラが呼ぶ)で #ward-select には反映されるが、
+// 通話パネルの病棟発信ボタン一覧は描画時にAppState.wardsのスナップショットを
+// DOMへ固定するため、syncWardSelect自身がCallPanelを再描画しないと
+// 削除済み病棟がボタンに残り続け、新規/改名した病棟は反映されない
+assert(
+  (() => {
+    const idx = app.indexOf('syncWardSelect() {');
+    if (idx < 0) return false;
+    const end = app.indexOf('async loadMasters(', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('CallPanel._renderCallPanel()');
+  })(),
+  'syncWardSelect() must re-render CallPanel so ward master changes (add/rename/delete) propagate to the call panel button list, not just to the #ward-select dropdown'
+);
+
 console.log('Security regression checks passed.');
