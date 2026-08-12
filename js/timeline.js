@@ -112,9 +112,16 @@ const TimelineContextMenu = {
     // ステータス変更クリック
     el.querySelectorAll('[data-to]').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const newStatus = btn.dataset.to;
+        // 破壊的な操作は病床詳細モーダル(js/modal.js)と同じ確認を挟む
+        if (newStatus === 'CANCELLED') {
+          if (!confirm('本当にこの移送をキャンセルしますか？')) return;
+        }
+        if (newStatus === 'RETURNED' && event.current_status === 'IN_EXAM') {
+          if (!confirm('「迎え要」を省略して帰棟完了にします。患者が病床へ戻っていることを確認してください。')) return;
+        }
         this.hide();
         TimelinePopup.hide();
-        const newStatus = btn.dataset.to;
         try {
           await API.updateEventStatus(event.id, newStatus, {}, CONFIG.STATUS_SCOPE.WARD, event.current_status);
           await App.refreshData();

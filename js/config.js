@@ -68,19 +68,6 @@ const CONFIG = {
     CANCELLED: 'fa-times-circle',
   },
 
-  // 状態遷移ルール: key = 現在状態, value = 遷移可能な次状態[]
-  STATUS_TRANSITIONS: {
-    IN_BED: ['MOVING'],
-    DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
-    MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
-    ARRIVED: ['IN_EXAM', 'CANCELLED'],
-    IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED', 'CANCELLED'],
-    NEARLY_DONE: ['PICKUP_REQUIRED', 'CANCELLED'],
-    PICKUP_REQUIRED: ['RETURNED', 'CANCELLED'],
-    RETURNED: [],
-    CANCELLED: [],
-  },
-
   // 「出棟中」扱いの状態
   DEPART_STATUSES: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
 

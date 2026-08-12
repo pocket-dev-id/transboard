@@ -1101,14 +1101,12 @@ const BedModal = {
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
 
     try {
-      const extraFields = {};
-      if (newStatus === 'RETURNED' || newStatus === 'CANCELLED') {
-        extraFields.patient_ic_tag_id = null;
-      }
+      // RETURNED/CANCELLEDでのICカード紐づけ解除はAPI.updateEventStatus側で
+      // 一元的に行われる
       await API.updateEventStatus(
         this.currentEventId,
         newStatus,
-        extraFields,
+        {},
         CONFIG.STATUS_SCOPE.WARD,
         this.currentEventStatus || event.current_status
       );

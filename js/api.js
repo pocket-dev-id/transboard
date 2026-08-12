@@ -375,6 +375,13 @@ const API = {
     return requireDataArray(res, '移送履歴');
   },
 
+  // 検査室一覧グリッド用の病棟横断集計データ。患者情報を含むイベント本体ではなく、
+  // exam_room_id/current_statusだけを専用エンドポイントから取得する。
+  async getExamRoomGridStatus() {
+    const res = await this._fetch('tables/transfer_events/exam-room-grid-status');
+    return requireDataArray(res, '検査室一覧ステータス');
+  },
+
   // 指定病床の過去(帰棟済み/キャンセル)の移送履歴を新しい順で返す。
   // 進行中のイベントは対象外(excludeEventIdは念のための二重防御)
   async getPastEventsForBed(bedId, _wardId, excludeEventId = null) {
@@ -528,10 +535,17 @@ const API = {
   },
 
   async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD, expectedStatus = null, source = null) {
+    // 完了/中止した移送にICカードの紐づけを残さないよう、RETURNED/CANCELLEDでは
+    // patient_ic_tag_idを既定でクリアする。呼び出し元ごとに個別実装すると
+    // タイムライン・carryover等で対応漏れが起きるため、ここに一元化する
+    // (呼び出し元がextraFieldsで明示的に指定していればそちらを優先する)
+    const mergedExtraFields = (newStatus === 'RETURNED' || newStatus === 'CANCELLED')
+      ? { patient_ic_tag_id: null, ...extraFields }
+      : extraFields;
     const result = await this._fetch('status/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId, newStatus, extraFields, scope, expectedStatus, source }),
+      body: JSON.stringify({ eventId, newStatus, extraFields: mergedExtraFields, scope, expectedStatus, source }),
     });
     if (result && result.success === false) {
       const err = new Error(result.message || 'Status update failed');

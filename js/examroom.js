@@ -7,6 +7,7 @@ const ExamRoom = {
   _pendingFlashEventId: null,
   _wardAcknowledgementState: new Map(),
   _notificationHistoryLogs: [],
+  _roomGridStatusCache: [],
 
   async render() {
     // 検査室セレクト初期化
@@ -318,7 +319,10 @@ const ExamRoom = {
       if (historyList) historyList.innerHTML = '';
       container.classList.remove('exam-queue-list-mode');
       if (summaryContainer) summaryContainer.innerHTML = '';
-      container.innerHTML = this._renderRoomGrid();
+      const gridHtml = await this._renderRoomGrid();
+      // 取得待ちの間に個別検査室が選択されていたら、一覧描画で上書きしない
+      if (document.getElementById('exam-room-select')?.value) return;
+      container.innerHTML = gridHtml;
       // グリッドカードのクリックイベント
       container.querySelectorAll('[data-select-room]').forEach(card => {
         card.addEventListener('click', () => {
@@ -845,9 +849,13 @@ const ExamRoom = {
   _bindQueueEvents(container) {
     container.querySelectorAll('[data-exam-action]').forEach(btn => {
       btn.addEventListener('click', () => {
+        // 連打防止: リクエスト中は同じカードの全ボタンを無効化する
+        // (成功時はキューが再描画されるためそのままでよく、失敗時は_updateStatus側で戻す)
+        const card = btn.closest('.exam-queue-card, .exam-queue-row');
+        if (card) card.querySelectorAll('button').forEach(b => (b.disabled = true));
         const eventId = btn.dataset.eventId;
         const newStatus = btn.dataset.examAction;
-        this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null);
+        this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null, card);
       });
     });
 
@@ -859,7 +867,7 @@ const ExamRoom = {
     });
   },
 
-  async _updateStatus(eventId, newStatus, expectedStatus = null) {
+  async _updateStatus(eventId, newStatus, expectedStatus = null, card = null) {
     const event = AppState.activeEvents.find(e => e.id === eventId) ||
                   AppState.todayEvents.find(e => e.id === eventId);
     const currentStatus = expectedStatus || event?.current_status || null;
@@ -876,11 +884,12 @@ const ExamRoom = {
       UI.toast(`${label} に更新しました`, 'success');
       UI.playScanSound(true);
       this._pendingFlashEventId = eventId;
-      
+
       await App.refreshData();
       await this._renderQueue();
     } catch (e) {
       console.error(e);
+      if (card) card.querySelectorAll('button').forEach(b => (b.disabled = false));
       if (await App.handleDataConflict(e)) {
         UI.playScanSound(false);
         return;
@@ -891,13 +900,29 @@ const ExamRoom = {
   },
 
   // ── 全検査室グリッド ──────────────────────────────────
-  _renderRoomGrid() {
+  async _renderRoomGrid() {
     if (!AppState.examRooms || AppState.examRooms.length === 0) {
       return `<div class="empty-state">
         <i class="fas fa-hospital-symbol"></i>
         <p>検査室が登録されていません</p>
         <p style="font-size:11px;margin-top:4px;">設定 → 検査室マスタ から登録してください。</p>
       </div>`;
+    }
+
+    // 検査室は病棟をまたいで共有されるため、病棟横断の専用集計データを使う。
+    // 患者情報を含むイベント本体は取得しない。取得失敗時は直前の成功結果、
+    // 初回失敗時だけ現病棟の状態を最小項目へ縮めてフォールバックする。
+    let allActiveEvents;
+    try {
+      allActiveEvents = await API.getExamRoomGridStatus();
+      this._roomGridStatusCache = allActiveEvents;
+    } catch (e) {
+      allActiveEvents = this._roomGridStatusCache.length > 0
+        ? this._roomGridStatusCache
+        : AppState.activeEvents.map(event => ({
+          exam_room_id: event.exam_room_id,
+          current_status: event.current_status,
+        }));
     }
 
     const activeStatuses = new Set(CONFIG.ACTIVE_STATUSES);
@@ -910,7 +935,7 @@ const ExamRoom = {
     const pickupSet  = new Set(['PICKUP_REQUIRED']);
 
     const cards = AppState.examRooms.map(room => {
-      const events = AppState.activeEvents.filter(
+      const events = allActiveEvents.filter(
         e => e.exam_room_id === room.id && activeStatuses.has(e.current_status)
       );
       const total   = events.length;
@@ -946,8 +971,8 @@ const ExamRoom = {
         </div>`;
     });
 
-    const totalActiveAll = AppState.activeEvents.filter(e => activeStatuses.has(e.current_status)).length;
-    const pickupAll = AppState.activeEvents.filter(e => e.current_status === 'PICKUP_REQUIRED').length;
+    const totalActiveAll = allActiveEvents.filter(e => activeStatuses.has(e.current_status)).length;
+    const pickupAll = allActiveEvents.filter(e => e.current_status === 'PICKUP_REQUIRED').length;
 
     return `
       <div class="examroom-grid-header">
