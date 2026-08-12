@@ -1095,4 +1095,19 @@ assert(
   'ExamRoom._renderRoomGrid must aggregate from the privacy-safe ward-agnostic status summary'
 );
 
+// ARRIVED / NEARLY_DONEを非表示にすると、患者総数は正でも内訳pillが0件に
+// なりうる。その場合に「患者なし」と表示して総数と矛盾させてはならない。
+assert(
+  (() => {
+    const idx = examroom.indexOf('const pillsHtml = pills.length');
+    const end = examroom.indexOf('return `', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = examroom.slice(idx, end);
+    return body.includes('total > 0') &&
+      body.includes('進行中 ${total}名') &&
+      body.indexOf('total > 0') < body.indexOf('患者なし');
+  })(),
+  'Exam room cards must show 患者なし only when total is zero, even if hidden statuses leave no visible breakdown pills'
+);
+
 console.log('Security regression checks passed.');

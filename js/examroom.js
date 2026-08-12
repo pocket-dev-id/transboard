@@ -953,9 +953,13 @@ const ExamRoom = {
       if (inExam > 0) pills.push(`<span class="examroom-pill pill-exam"><i class="fas fa-flask"></i> 検査中 ${inExam}</span>`);
       if (pickup > 0) pills.push(`<span class="examroom-pill pill-pickup"><i class="fas fa-bell"></i> 迎え要 ${pickup}</span>`);
 
+      // ARRIVED / NEARLY_DONE が非表示の場合、その状態の患者は総数には含まれるが
+      // 内訳pillには現れない。「患者なし」は総数0のときだけ表示する。
       const pillsHtml = pills.length
         ? `<div class="examroom-card-pills">${pills.join('')}</div>`
-        : `<div class="examroom-card-empty-note">患者なし</div>`;
+        : total > 0
+          ? `<div class="examroom-card-empty-note">進行中 ${total}名</div>`
+          : `<div class="examroom-card-empty-note">患者なし</div>`;
       return `
         <div class="examroom-card ${urgentClass}" data-select-room="${room.id}" tabindex="0" role="button"
           aria-label="${UI.escapeHTML(room.name)} — 患者${total}名">
