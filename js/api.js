@@ -324,9 +324,9 @@ const API = {
     }));
   },
 
-  async bulkPatch(table, data) {
+  async bulkPatch(table, data, { skipRevisionCheck = false } = {}) {
     const payload = Array.isArray(data)
-      ? data.map(item => addExpectedMasterRevision(table, item?.id, item))
+      ? (skipRevisionCheck ? data : data.map(item => addExpectedMasterRevision(table, item?.id, item)))
       : data;
     return ensureMutationSuccess(await this._fetch(`tables/${table}/bulk`, {
       method: 'PATCH',
