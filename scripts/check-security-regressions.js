@@ -773,4 +773,37 @@ assert(
   'API.bulkPatch must support skipRevisionCheck so map-layout-style bulk saves are not blocked by unrelated concurrent master edits'
 );
 
+// isValidApiTokenはsystem_settingsの1レコードを読むだけで一切
+// ミューテーションしないため、DB全体をディープコピーするreadDB()は不要。
+// この関数は子機からの外部HTTPリクエスト(isExternal=true)の経路で
+// 1リクエストあたり最大3回呼ばれる(HTTPサーバー入口・processDbRequest内の
+// 冗長な再チェック・各書き込みハンドラ)ため、ここがクローンする実装に
+// 戻ると子機接続台数×ポーリング頻度に比例して親機側のCPU負荷が
+// 積み上がる退行になる
+assert(
+  (() => {
+    const idx = main.indexOf('function isValidApiToken(apiToken) {');
+    if (idx < 0) return false;
+    const end = main.indexOf('async function processParentActionRequest', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('readDbShared()') && !/const db = readDB\(\)/.test(body);
+  })(),
+  'isValidApiToken must use the non-cloning readDbShared(), not readDB(), since it never mutates the returned object'
+);
+
+// processDbRequestの冒頭ログは内部IPC・外部HTTP、GET/書き込み問わず毎回
+// 呼ばれる関数のため、5秒間隔のダッシュボードポーリング等の高頻度GETで
+// 無条件に出力すると接続端末数×ポーリング頻度に比例したオーバーヘッドに
+// なる。書き込み系(低頻度・高診断価値)のみログすることを保証する
+assert(
+  (() => {
+    const idx = main.indexOf('console.log(`[DB Request]');
+    if (idx < 0) return false;
+    const before = main.slice(Math.max(0, idx - 120), idx);
+    return before.includes("if (method !== 'GET')");
+  })(),
+  'The [DB Request] log in processDbRequest must be gated to non-GET methods to avoid per-poll logging overhead scaling with connected terminals'
+);
+
 console.log('Security regression checks passed.');

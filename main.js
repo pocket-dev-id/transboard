@@ -3630,7 +3630,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
   const table = urlParts[0];
   const id = urlParts[1];
 
-  console.log(`[DB Request] ${method} tables/${table}${id ? '/' + id : ''}`);
+  // 高頻度・低診断価値なGETポーリング(ダッシュボード5秒間隔等、接続端末数×
+  // ポーリング頻度に比例して呼ばれる)では出力せず、書き込み系のみログする
+  if (method !== 'GET') {
+    console.log(`[DB Request] ${method} tables/${table}${id ? '/' + id : ''}`);
+  }
 
   // テーブル名の許可リストチェック（不正テーブル名インジェクション防止）
   if (!ALLOWED_TABLES.has(table)) {
@@ -5896,7 +5900,12 @@ function ensureApiToken() {
 }
 
 function isValidApiToken(apiToken) {
-  const db = readDB();
+  // system_settingsの1レコードを読むだけで一切ミューテーションしないため、
+  // DB全体をディープコピーするreadDB()ではなく非クローン版で十分。
+  // isExternal経路では複数箇所(HTTPサーバー入口・処理内の冗長な再チェック・
+  // 各ハンドラ)で毎リクエスト呼ばれるため、ここのクローンコストが
+  // 子機ポーリング頻度×接続台数に比例して親機側に積み重なっていた。
+  const db = readDbShared();
   const tokenSetting = (db.system_settings || []).find(s => s.id === 'api_token');
   const expectedToken = String(tokenSetting?.value || '');
   const receivedToken = typeof apiToken === 'string' ? apiToken : '';
