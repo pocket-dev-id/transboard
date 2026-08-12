@@ -553,4 +553,47 @@ assert(
   '_setConnectionStatus must debounce new disconnect signals (require 2 consecutive failures) instead of showing the banner on a single transient failure'
 );
 
+// 病床マップエディタで列・行を減らしたとき、範囲外になったセルを_grid.cellsに
+// 残したままにすると、その病床は「配置済み」扱いのままエディタにもダッシュボードにも
+// 表示されず（どちらも c < cols / r < rows でしか描画しない）、パレットにも戻らないため
+// 二度と再配置できなくなる。縮小時とエディタ起動時の両方で範囲外セルを取り除き、
+// 該当病床を未配置へ戻すことを保証する
+const masters = read('js/settings/masters.js');
+assert(
+  (() => {
+    const idx = masters.indexOf('_pruneOutOfRangeCells()');
+    if (idx < 0) return false;
+    const end = masters.indexOf('_bedsOutsideRange', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = masters.slice(idx, end);
+    // 範囲外判定と、病床を未配置へ戻す処理の両方が必要
+    return body.includes('col < g.cols && row < g.rows') &&
+      body.includes('bed.map_col = null') &&
+      body.includes('delete g.cells[key]');
+  })() &&
+  // 縮小ボタンは範囲外セルを刈る_resizeGrid経由でなければならない
+  /map-size-down-col'\)\.onclick\s*=\s*\(\)\s*=>\s*this\._resizeGrid\(/.test(masters) &&
+  /map-size-down-row'\)\.onclick\s*=\s*\(\)\s*=>\s*this\._resizeGrid\(/.test(masters) &&
+  masters.includes('this._pruneOutOfRangeCells();\n    this._drawMapEditor();') &&
+  // 既存データ救済: エディタ起動時にも刈る
+  masters.includes('const recovered = this._pruneOutOfRangeCells();'),
+  'The bed map editor must drop out-of-range cells (on shrink and on open) and return those beds to the unplaced palette, otherwise they become permanently unreachable'
+);
+
+// パレットの「未配置」判定はグリッドの実状態を基準にする必要がある。map_colだけを
+// 見ていると、レイアウトJSON(system_settings)と病床マスタがずれた病床（範囲外に
+// 取り残された等）がパレットにもグリッドにも現れず、再配置できなくなる。
+// これは保存時にmap_colをnullにする条件(_saveMapLayout)とも一致していなければならない
+assert(
+  (() => {
+    const idx = masters.indexOf('_drawPalette()');
+    if (idx < 0) return false;
+    const end = masters.indexOf('unplaced.length === 0', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = masters.slice(idx, end);
+    return body.includes('placedBedIds') && body.includes('!placedBedIds.has(b.id)');
+  })(),
+  '_drawPalette must derive "unplaced" from the current grid cells, not from bed.map_col alone'
+);
+
 console.log('Security regression checks passed.');
