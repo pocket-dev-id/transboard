@@ -116,10 +116,10 @@ const CallPanel = {
       `).join('');
 
     body.innerHTML = `
-      <div class="call-section-title"><i class="fas fa-hospital"></i> 病棟へ発信 (WebRTC / アナウンス)</div>
+      <div class="call-section-title"><i class="fas fa-hospital"></i> 病棟へ発信 (通話 / アナウンス)</div>
       <div class="call-room-list">${wardBtns || '<div class="text-muted text-sm">病棟データ読込中...</div>'}</div>
       <div class="divider"></div>
-      <div class="call-section-title"><i class="fas fa-phone-alt"></i> 検査室へ発信 (WebRTC / アナウンス)</div>
+      <div class="call-section-title"><i class="fas fa-phone-alt"></i> 検査室へ発信 (通話 / アナウンス)</div>
       <div class="call-room-list">${roomBtns || '<div class="text-muted text-sm">検査室データ読込中...</div>'}</div>
       <div class="divider"></div>
       <div class="call-history-title" style="display:flex; justify-content:space-between; align-items:center;">
@@ -417,12 +417,12 @@ const CallPanel = {
           <!-- 音声通話を開始するボタン -->
           <button class="btn btn-success" id="webrtc-btn-start-voice" style="padding: 12px; font-size: 14px; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: var(--shadow-sm); margin-bottom: 8px;">
             <i class="fas fa-phone-alt" style="font-size: 15px;"></i>
-            <span>音声通話を開始 (WebRTC)</span>
+            <span>音声通話を開始</span>
           </button>
           <!-- ビデオ通話を開始するボタン -->
           <button class="btn btn-primary" id="webrtc-btn-start-video" style="padding: 12px; font-size: 14px; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: var(--shadow-sm);">
             <i class="fas fa-video" style="font-size: 15px;"></i>
-            <span>ビデオ通話を開始 (WebRTC)</span>
+            <span>ビデオ通話を開始</span>
           </button>
     ` : `
           <!-- 無効化時の表示 -->
@@ -471,9 +471,6 @@ const CallPanel = {
                 style="white-space:nowrap;padding:6px 12px;">
                 <i class="fas fa-paper-plane"></i> 送信
               </button>
-            </div>
-            <div style="font-size:10.5px; color:#94a3b8; margin-bottom:8px;">
-              <i class="fas fa-shield-alt"></i> ネットワーク上で暗号化されずに送信されます。患者名など個人情報の入力は避けてください。
             </div>
             <div style="display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; padding-right: 4px;">
               ${templateBtns}

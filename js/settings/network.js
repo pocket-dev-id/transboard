@@ -53,12 +53,12 @@ Object.assign(Settings, {
     const modeGuideItems = isClientMode
       ? [
           ['fa-plug', '親機への接続', '親機IP・APIトークン・接続テストを確認します。', 'client-config-section'],
-          ['fa-phone-alt', '通話・IC連携', 'WebRTC通話と患者ICカード紐づけの共有設定を確認します。', 'shared-communication-section'],
+          ['fa-phone-alt', '通話・IC連携', '音声通話・ビデオ通話と患者ICカード紐づけの共有設定を確認します。', 'shared-communication-section'],
           ['fa-network-wired', '通信状態', '子機として親機に接続できるか確認します。', 'client-config-section'],
         ]
       : [
           ['fa-server', '子機接続の準備', '子機へ伝えるIP、APIトークン、接続機器一覧を確認します。', 'parent-config-section'],
-          ['fa-phone-alt', '通話・IC連携', 'WebRTC通話と患者ICカード紐づけの共有設定を管理します。', 'shared-communication-section'],
+          ['fa-phone-alt', '通話・IC連携', '音声通話・ビデオ通話と患者ICカード紐づけの共有設定を管理します。', 'shared-communication-section'],
           ['fa-laptop-medical', '接続端末', '現在接続している子機を確認します。', 'parent-config-section'],
         ];
     const modeGuideHtml = `
@@ -203,12 +203,12 @@ Object.assign(Settings, {
           <!-- WebRTC通話機能の有効/無効設定 -->
           <div id="shared-communication-section" style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
-              <i class="fas fa-phone-alt"></i> WebRTC音声通話機能の設定
+              <i class="fas fa-phone-alt"></i> 音声通話・ビデオ通話機能の設定
               <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-enable-webrtc-call" ${isWebRtcEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-              WebRTC音声通話機能を使用する
+              音声通話・ビデオ通話機能を使用する
             </label>
             <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
               チェックを外すと、画面間のリアルタイム音声通話が無効になります。簡易定型アナウンス（音声合成）や内線番号表示のみを利用できます。
