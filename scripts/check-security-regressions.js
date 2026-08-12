@@ -260,6 +260,14 @@ assert(
 );
 
 assert(
+  examroom.includes("this._eventWardById = new Map(relevant.map(event => [String(event.id), String(event.ward_id || '')]))") &&
+  examroom.includes("const wardId = this._eventWardById?.get(String(btn.dataset.eventId || '')) || ''") &&
+  examroom.includes('String(w.id) === wardId') &&
+  !examroom.includes('AppState.wards.find(w => w.id === AppState.currentWardId)'),
+  'Exam-room ward calls must target the event ward rather than the currently selected ward'
+);
+
+assert(
   priority.includes('UI.escapeHTML(examType.name)') &&
   priority.includes('UI.escapeHTML(examRoom.name)'),
   'Priority labels must be HTML-escaped'
