@@ -334,12 +334,13 @@ h1, h2, h3, h4,
   margin-bottom: 16px;
 }
 #page-ward-dashboard #dashboard-content { gap: 10px; margin-bottom: 10px; }
-/* 病床マップは右列3枚分の高さいっぱいに、優先対応一覧・スタッフ稼働状況・通知履歴は
-   右列に独立したカードとして縦に並べる（互いのスクロール/高さに影響しない） */
-#bed-map-area { grid-column: 1; grid-row: 1 / span 3; }
+/* 病床マップは右列4枚分の高さいっぱいに、優先対応一覧・スタッフ稼働状況・通知履歴・
+   申し送りは右列に独立したカードとして縦に並べる（互いのスクロール/高さに影響しない） */
+#bed-map-area { grid-column: 1; grid-row: 1 / span 4; }
 #priority-panel { grid-column: 2; grid-row: 1; }
 #staff-status-area { grid-column: 2; grid-row: 2; }
 #notification-history-area { grid-column: 2; grid-row: 3; }
+#handover-area { grid-column: 2; grid-row: 4; }
 
 /* ---------- パネル共通 ---------- */
 .panel-header {
@@ -721,14 +722,15 @@ h1, h2, h3, h4,
 .notification-history-item.status-RETURNED { border-left-color: #16a34a; }
 .notification-history-item.status-RETURNED .notification-history-icon { color: #16a34a; }
 
-/* ---------- 申し送りメモ板 ---------- */
+/* ---------- 申し送りメモ板（右列の他パネルと同じく独立スクロール） ---------- */
 #handover-area {
   background: var(--clr-surface);
   border: 1px solid var(--clr-border);
   border-radius: var(--radius-lg);
   padding: 16px;
   box-shadow: var(--shadow-sm);
-  margin-bottom: 16px;
+  overflow-y: auto;
+  max-height: 220px;
 }
 .handover-badge {
   display: inline-flex;
@@ -2830,7 +2832,7 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 @media (max-width: 1200px) {
   #dashboard-content { grid-template-columns: 1fr; }
   #priority-panel { max-height: 300px; }
-  #bed-map-area, #priority-panel, #staff-status-area, #notification-history-area { grid-column: auto; grid-row: auto; }
+  #bed-map-area, #priority-panel, #staff-status-area, #notification-history-area, #handover-area { grid-column: auto; grid-row: auto; }
 }
 @media (max-width: 900px) {
   #bed-map-grid { grid-template-columns: repeat(4, 1fr); }
