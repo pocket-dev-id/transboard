@@ -76,6 +76,12 @@ assert(
 // ネイティブダイアログを自動承認でスキップしてよい。ただしこれは
 // isUnsignedUpdateSourceAllowed(LAN/HTTPS制限)を満たす場合に限られ、
 // SHA-512検証(呼び出し元)・署名検証そのものは一切省略しないことを保証する
+// isUnsignedUpdateSourceAllowedはホスト名運用のparent_ipも通すため、子機の
+// 無人自動承認をそのゲートだけに委ねると、形式上は院内LANかどうか判別できない
+// ホスト名の配信元でも人手を介さず承認されてしまう。自動承認は
+// isStronglyTrustedUpdateSource(HTTPS/localhost/プライベートIPv4のみ)を
+// 満たす場合に限定し、ホスト名運用の場合は子機であっても引き続き
+// ダイアログ確認を求める(更新自体がブロックされるわけではない)ことを保証する
 assert(
   (() => {
     const idx = main.indexOf('async function confirmUnsignedUpdate({');
@@ -83,11 +89,29 @@ assert(
     if (idx < 0 || end < 0 || end <= idx) return false;
     const body = main.slice(idx, end);
     const allowedCheckIdx = body.indexOf('isUnsignedUpdateSourceAllowed(feedBase)');
-    const autoAcceptIdx = body.indexOf('if (autoAcceptForChild)');
+    const autoAcceptIdx = body.indexOf('if (autoAcceptForChild && isStronglyTrustedUpdateSource(feedBase))');
     return allowedCheckIdx >= 0 && autoAcceptIdx > allowedCheckIdx &&
       body.includes('return { accepted: true };');
   })(),
-  'confirmUnsignedUpdate must only auto-accept for child terminals after the LAN/HTTPS source check, and must still show the native dialog otherwise'
+  'confirmUnsignedUpdate must only auto-accept for child terminals when the source is strongly trusted (isStronglyTrustedUpdateSource), and must still show the native dialog otherwise'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function isStronglyTrustedUpdateSource(feedBase) {');
+    if (idx < 0) return false;
+    const end = main.indexOf('async function confirmUnsignedUpdate', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    // ホスト名(ドット区切りIPv4でない値)を許可する分岐が無いこと、
+    // つまりisUnsignedUpdateSourceAllowedのようなホスト名フォールバックが
+    // 混入していないことを確認する
+    return body.includes("source.protocol === 'https:'") &&
+      body.includes("source.hostname === 'localhost'") &&
+      body.includes('isPrivateOrLoopbackIpv4(source.hostname)') &&
+      !body.includes('dotted-IPv4') &&
+      !/return\s*!\s*\/\^/.test(body);
+  })(),
+  'isStronglyTrustedUpdateSource must only accept https/localhost/private-IPv4 sources, without the hostname fallback used by isUnsignedUpdateSourceAllowed'
 );
 assert(
   (() => {

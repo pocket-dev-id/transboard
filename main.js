@@ -4805,6 +4805,14 @@ $thumbprint = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Thumb
   }
 }
 
+// 未署名更新を「そもそも許可するか」のゆるいゲート。公開IPv4アドレスへの
+// 平文HTTP（中間者攻撃を受けやすい典型例）だけを明確に拒否し、ホスト名
+// （形式だけでは院内LANか公開ホストか判別できない）は通す。
+// parent_ip は機器名・mDNS/WINS名等で運用されることもあり、ドット区切り
+// IPv4の見た目チェックだけだと一律で拒否され、子機側で回復手段が無いまま
+// 更新が永久にブロックされてしまう。ここを通過しても即座に無条件で
+// 許可されるわけではなく、この先で人手のダイアログ確認（もしくは
+// isStronglyTrustedUpdateSourceを満たす場合のみ子機の自動承認）を経る。
 function isUnsignedUpdateSourceAllowed(feedBase) {
   if (!feedBase) return true;
   try {
@@ -4814,15 +4822,27 @@ function isUnsignedUpdateSourceAllowed(feedBase) {
         isPrivateOrLoopbackIpv4(source.hostname)) {
       return true;
     }
-    // parent_ip はホスト名（機器名・mDNS/WINS名等）で運用されることもあり、
-    // その場合はドット区切りIPv4の見た目チェックに掛からず一律で拒否されてしまう。
-    // feedBase はここまでbuildUpdateFeedBase()がsystem_settings.parent_ip
-    // （またはループバック）からのみ組み立てており、ユーザー入力や外部リンクから
-    // 任意のホストを指すことはできない。この関数が本来防ぎたいのは「公開インターネット上の
-    // IPアドレスに対する平文HTTPでの中間者攻撃」であり、ドット区切りIPv4literalでない
-    // （＝名前解決に依存する、院内LAN内でのみ意味を持つ）ホスト名はその攻撃対象にならない
-    // ため許可する。
     return !/^\d{1,3}(\.\d{1,3}){3}$/.test(source.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// 子機の自動承認に使う、より厳格な判定。HTTPS・localhost・プライベートIPv4
+// アドレスなど「形式から明確に院内LAN/暗号化通信と分かるもの」のみを対象とし、
+// ホスト名（parent_ipが機器名等で運用されているケース）はここでは対象外とする。
+// ホスト名は文字列の形だけでは実際に院内LAN上のものか判別できないため
+// （isUnsignedUpdateSourceAllowedで一律拒否はしないが）、子機であっても
+// 人手のダイアログ確認を残す。これにより、子機の自動承認は「明確に安全な
+// 経路」に限定しつつ、ホスト名運用の場合でも従来のように更新自体が
+// 完全にブロックされることはない（人手で1回確認すれば通せる）。
+function isStronglyTrustedUpdateSource(feedBase) {
+  if (!feedBase) return true;
+  try {
+    const source = new URL(feedBase);
+    return source.protocol === 'https:' ||
+      source.hostname === 'localhost' ||
+      isPrivateOrLoopbackIpv4(source.hostname);
   } catch {
     return false;
   }
@@ -4842,7 +4862,12 @@ async function confirmUnsignedUpdate({ version, fileName, sha512, feedBase = nul
   // 実質的な安全性向上を伴わない手間であり、無人稼働中の子機で誤って
   // 「更新を中止」を押してしまう(＝更新が終わらない)主要因になっていた。
   // 子機ではこの人手による再確認を省略し、自動的に許可する。
-  if (autoAcceptForChild) {
+  // ただし、この自動承認は isStronglyTrustedUpdateSource を満たす場合のみに
+  // 限定する。parent_ipがホスト名で運用されている等、形式からは院内LANかを
+  // 判別できないケースでは、子機であっても引き続き人手のダイアログ確認を求める
+  // (isUnsignedUpdateSourceAllowed自体はホスト名も通すため、更新自体が完全に
+  // ブロックされることはないが、無人での自動承認はしない)。
+  if (autoAcceptForChild && isStronglyTrustedUpdateSource(feedBase)) {
     console.warn(`[Updater] 子機更新: 親機で検証済みの配布ファイルのため署名なし確認をスキップして続行します: v${version || '?'}`);
     return { accepted: true };
   }
