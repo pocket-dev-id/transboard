@@ -412,16 +412,23 @@ const Timeline = {
       const feedsById = new Map(
         (AppState.scheduleFeeds || []).map(feed => [String(feed.id), feed])
       );
-      // ward_ids が空/未設定 = 全病棟に表示。特定病棟指定時は一致するものだけ表示。
       // フィードが無効化(is_active=false)された場合は取り込み済みアイテムも
       // 非表示にする(bedmap.jsのis_activeフィルタと同じ考え方。
       // show_on_bed_mapは「病床マップ表示」専用設定のためここでは見ない)
       schedItems = allItems.filter(item => {
-        if (item.ward_ids?.length && !item.ward_ids.includes(wardId)) return false;
         const feedId = item?.feed_id == null ? '' : String(item.feed_id);
         const feed = feedId ? feedsById.get(feedId) : null;
         if (feedId && !feed) return false;
         if (feed?.is_active === false) return false;
+        // ward_ids が空/未設定 = 全病棟に表示。特定病棟指定時は一致するものだけ表示。
+        // 病床マップ(js/bedmap.js)と同じ優先順位: フィードの現在のward_ids
+        // 設定を優先し、無ければアイテムのインポート時スナップショットへ
+        // フォールバックする(管理者がフィード保存後に病棟制限を変更しても、
+        // 次の再取り込みを待たずに即座に反映されるようにするため)
+        const wardIds = Array.isArray(feed?.ward_ids)
+          ? feed.ward_ids
+          : (Array.isArray(item?.ward_ids) ? item.ward_ids : []);
+        if (wardIds.length > 0 && wardId && !wardIds.includes(wardId)) return false;
         return true;
       });
     } catch(e) {}
@@ -478,7 +485,14 @@ const Timeline = {
     const unlinkedSchedItems = [];
     schedItems.forEach(item => {
       if (item.identifier) {
-        const matchBed = AppState.beds.find(b => b.patient_id && b.patient_id.trim() === item.identifier.trim());
+        // 病床マップ(js/bedmap.js)は病床一覧自体が現在病棟で絞り込み済みのため、
+        // 他病棟の患者に予定が紐付くことは構造的にあり得ない。ここも同様に
+        // 現在病棟の病床だけを対象にしないと、他病棟の在床患者とidentifierが
+        // 偶然一致した場合に、その病床の予定行が現在のタイムラインへ
+        // 紛れ込んで表示されてしまう
+        const matchBed = AppState.beds.find(b =>
+          b.ward_id === AppState.currentWardId && b.patient_id && b.patient_id.trim() === item.identifier.trim()
+        );
         if (matchBed) {
           if (!bedScheduleMap[matchBed.id]) bedScheduleMap[matchBed.id] = [];
           bedScheduleMap[matchBed.id].push(item);
