@@ -1779,27 +1779,33 @@ function scanAndImportScheduleFolder(watchDir, feed) {
   });
 }
 
+// 時刻部分の区切り文字は現場のCSV/機器出力によって : (半角/全角) と . が
+// 混在するため、いずれも許容する（例: 13:05:30 / 13：05 / 13.05.30 / 13.05）
+const SCHEDULE_TIME_RE_SRC = '(\\d{1,2})[：:.](\\d{2})(?:[：:.](\\d{2}))?';
+
 function parseScheduleDatetimeMs(dateStr, timeStr) {
   if (!dateStr) return null;
   const combined = timeStr ? `${dateStr.trim()} ${timeStr.trim()}` : dateStr.trim();
 
   // ISO形式 or ブラウザ互換形式を試みる
+  // (ドット区切り時刻は Date コンストラクタでは常に Invalid Date になるため、
+  // ここで誤った日時が拾われる心配はない)
   let d = new Date(combined);
   if (!isNaN(d.getTime())) return d.getTime();
 
-  // YYYY/MM/DD HH:mm or YYYY-MM-DD HH:mm
-  const m1 = combined.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[\s　T]+(\d{1,2})[：:](\d{2}))?/);
+  // YYYY/MM/DD HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
+  const m1 = combined.match(new RegExp(`^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})(?:[\\s　T]+${SCHEDULE_TIME_RE_SRC})?`));
   if (m1) {
-    const [, y, mo, dy, h = '0', mi = '0'] = m1;
-    d = new Date(Number(y), Number(mo) - 1, Number(dy), Number(h), Number(mi));
+    const [, y, mo, dy, h = '0', mi = '0', se = '0'] = m1;
+    d = new Date(Number(y), Number(mo) - 1, Number(dy), Number(h), Number(mi), Number(se));
     if (!isNaN(d.getTime())) return d.getTime();
   }
 
-  // MM/DD/YYYY HH:mm
-  const m2 = combined.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  // MM/DD/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
+  const m2 = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
   if (m2) {
-    const [, mo, dy, y, h = '0', mi = '0'] = m2;
-    d = new Date(Number(y), Number(mo) - 1, Number(dy), Number(h), Number(mi));
+    const [, mo, dy, y, h = '0', mi = '0', se = '0'] = m2;
+    d = new Date(Number(y), Number(mo) - 1, Number(dy), Number(h), Number(mi), Number(se));
     if (!isNaN(d.getTime())) return d.getTime();
   }
 
