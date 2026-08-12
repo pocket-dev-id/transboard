@@ -533,26 +533,105 @@ Object.assign(Settings, {
     };
     window.addEventListener('keydown', this._mapKeydownHandler);
 
+    // 既存データの救済: 過去に列・行を減らしたことで範囲外に取り残された病床を
+    // 未配置へ戻す。この時点ではメモリ上の状態を直すだけで、確定するのは
+    // 「配置を保存」を押したときなので、開いただけで勝手に保存されることはない。
+    const recovered = this._pruneOutOfRangeCells();
+
     this._drawMapEditor();
     this._drawPalette();
+
+    if (recovered.length > 0) {
+      const names = recovered
+        .map(b => b.bed_number)
+        .sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }))
+        .join('、');
+      UI.toast(`マップ範囲外にあった ${recovered.length} 件の病床（${names}）を未配置に戻しました。配置し直して「配置を保存」してください。`, 'warning', 12000);
+    }
 
     document.getElementById('map-undo').onclick = () => this._undo();
     document.getElementById('map-redo').onclick = () => this._redo();
 
-    document.getElementById('map-size-up-col').onclick   = () => { this._saveStateToHistory(); this._grid.cols = Math.min(20, this._grid.cols + 1); this._drawMapEditor(); };
-    document.getElementById('map-size-down-col').onclick = () => { this._saveStateToHistory(); this._grid.cols = Math.max(4, this._grid.cols - 1);  this._drawMapEditor(); };
-    document.getElementById('map-size-up-row').onclick   = () => { this._saveStateToHistory(); this._grid.rows = Math.min(16, this._grid.rows + 1); this._drawMapEditor(); };
-    document.getElementById('map-size-down-row').onclick = () => { this._saveStateToHistory(); this._grid.rows = Math.max(2, this._grid.rows - 1);  this._drawMapEditor(); };
+    document.getElementById('map-size-up-col').onclick   = () => this._resizeGrid(Math.min(20, this._grid.cols + 1), this._grid.rows);
+    document.getElementById('map-size-down-col').onclick = () => this._resizeGrid(Math.max(4, this._grid.cols - 1),  this._grid.rows);
+    document.getElementById('map-size-up-row').onclick   = () => this._resizeGrid(this._grid.cols, Math.min(16, this._grid.rows + 1));
+    document.getElementById('map-size-down-row').onclick = () => this._resizeGrid(this._grid.cols, Math.max(2, this._grid.rows - 1));
     document.getElementById('map-save-all').onclick = () => this._saveMapLayout();
+  },
+
+  // グリッドの現在の行数・列数の外に出たセルを取り除く。
+  // 病床が置かれていたセルは未配置(map_col/map_row = null)へ戻すことで、
+  // パレットから再配置できる状態にする(_onDropの消去処理と同じ扱い)。
+  // 戻り値: 未配置へ戻した病床の配列
+  _pruneOutOfRangeCells() {
+    const g = this._grid;
+    const freedBeds = [];
+    for (const key of Object.keys(g.cells)) {
+      const [col, row] = key.split(',').map(Number);
+      if (col < g.cols && row < g.rows) continue;
+      const cell = g.cells[key];
+      if (cell?.bedId) {
+        const bed = AppState.getBedById(cell.bedId);
+        if (bed) {
+          bed.map_col = null;
+          bed.map_row = null;
+          freedBeds.push(bed);
+        }
+      }
+      delete g.cells[key];
+    }
+    return freedBeds;
+  },
+
+  // 指定サイズへ縮小したときに未配置へ戻ることになる病床を、実際に縮小する前に調べる
+  _bedsOutsideRange(cols, rows) {
+    return Object.entries(this._grid.cells)
+      .filter(([key, cell]) => {
+        if (!cell?.bedId) return false;
+        const [col, row] = key.split(',').map(Number);
+        return col >= cols || row >= rows;
+      })
+      .map(([, cell]) => AppState.getBedById(cell.bedId))
+      .filter(Boolean);
+  },
+
+  // 縮小によって病床が範囲外になる場合は確認を取ってから縮小する
+  async _resizeGrid(nextCols, nextRows) {
+    const affected = this._bedsOutsideRange(nextCols, nextRows);
+    if (affected.length > 0) {
+      const names = affected
+        .map(b => b.bed_number)
+        .sort((a, b) => a.localeCompare(b, 'ja', { numeric: true }))
+        .join('、');
+      const ok = await UI.confirmModal(`縮小すると ${affected.length} 件の病床が範囲外になります。`, {
+        title: '範囲外になる病床があります',
+        detail: `対象: ${names}。これらの病床は未配置に戻り、パレットから再配置できます（この操作は「元に戻す」で取り消せます）。`,
+        type: 'warning',
+        confirmLabel: '未配置に戻して縮小',
+      });
+      if (!ok) return;
+    }
+    this._saveStateToHistory();
+    this._grid.cols = nextCols;
+    this._grid.rows = nextRows;
+    this._pruneOutOfRangeCells();
+    this._drawMapEditor();
+    this._drawPalette();
   },
 
   _drawPalette() {
     const el = document.getElementById('palette-beds');
     if (!el) return;
     const wardId = AppState.currentWardId;
-    // 未配置 = map_col が null の病床
+    // 未配置 = 現在のグリッドに置かれていない病床。
+    // map_col ではなくグリッドの実状態を基準にすることで、レイアウト情報と
+    // 病床マスタがずれている場合（範囲外・削除済み等）でも取りこぼさない。
+    // これは保存時(_saveMapLayout)に map_col を null にする条件とも一致する。
+    const placedBedIds = new Set(
+      Object.values(this._grid.cells).map(c => c?.bedId).filter(Boolean)
+    );
     const unplaced = AppState.beds.filter(b =>
-      b.ward_id === wardId && (b.map_col === null || b.map_col === undefined)
+      b.ward_id === wardId && !placedBedIds.has(b.id)
     ).sort((a, b) => a.bed_number.localeCompare(b.bed_number, 'ja', { numeric: true }));
 
     if (unplaced.length === 0) {
