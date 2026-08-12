@@ -289,7 +289,7 @@ const HistoryView = {
       });
 
       const csvContent = [headers, ...rows]
-        .map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+        .map(r => r.map(val => `"${UI.sanitizeCsvValue(val).replace(/"/g, '""')}"`).join(','))
         .join('\n');
 
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]); // UTF-8 Excel BOM
@@ -518,7 +518,7 @@ const ExamStats = {
       });
 
       const csvContent = [headers, ...rows]
-        .map(r => r.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','))
+        .map(r => r.map(val => `"${UI.sanitizeCsvValue(val).replace(/"/g, '""')}"`).join(','))
         .join('\n');
       const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
       const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
