@@ -318,7 +318,10 @@ const ExamRoom = {
       if (historyList) historyList.innerHTML = '';
       container.classList.remove('exam-queue-list-mode');
       if (summaryContainer) summaryContainer.innerHTML = '';
-      container.innerHTML = this._renderRoomGrid();
+      const gridHtml = await this._renderRoomGrid();
+      // 取得待ちの間に個別検査室が選択されていたら、一覧描画で上書きしない
+      if (document.getElementById('exam-room-select')?.value) return;
+      container.innerHTML = gridHtml;
       // グリッドカードのクリックイベント
       container.querySelectorAll('[data-select-room]').forEach(card => {
         card.addEventListener('click', () => {
@@ -896,13 +899,25 @@ const ExamRoom = {
   },
 
   // ── 全検査室グリッド ──────────────────────────────────
-  _renderRoomGrid() {
+  async _renderRoomGrid() {
     if (!AppState.examRooms || AppState.examRooms.length === 0) {
       return `<div class="empty-state">
         <i class="fas fa-hospital-symbol"></i>
         <p>検査室が登録されていません</p>
         <p style="font-size:11px;margin-top:4px;">設定 → 検査室マスタ から登録してください。</p>
       </div>`;
+    }
+
+    // 検査室は病棟をまたいで共有されるため(例: CT室は全病棟共通)、現在の病棟に
+    // スコープされたAppState.activeEventsだけでは他病棟の患者が集計に出てこない。
+    // 個別検査室ビュー(API.getExamRoomStatus)と同じく病棟非依存のデータを取得する。
+    // 取得失敗時は直前まで表示していたAppState.activeEvents(現病棟分のみ)に
+    // フォールバックし、一覧が完全に描画できなくなることは避ける
+    let allActiveEvents;
+    try {
+      allActiveEvents = await API.getAllActiveTransferEvents();
+    } catch (e) {
+      allActiveEvents = AppState.activeEvents;
     }
 
     const activeStatuses = new Set(CONFIG.ACTIVE_STATUSES);
@@ -915,7 +930,7 @@ const ExamRoom = {
     const pickupSet  = new Set(['PICKUP_REQUIRED']);
 
     const cards = AppState.examRooms.map(room => {
-      const events = AppState.activeEvents.filter(
+      const events = allActiveEvents.filter(
         e => e.exam_room_id === room.id && activeStatuses.has(e.current_status)
       );
       const total   = events.length;
@@ -951,8 +966,8 @@ const ExamRoom = {
         </div>`;
     });
 
-    const totalActiveAll = AppState.activeEvents.filter(e => activeStatuses.has(e.current_status)).length;
-    const pickupAll = AppState.activeEvents.filter(e => e.current_status === 'PICKUP_REQUIRED').length;
+    const totalActiveAll = allActiveEvents.filter(e => activeStatuses.has(e.current_status)).length;
+    const pickupAll = allActiveEvents.filter(e => e.current_status === 'PICKUP_REQUIRED').length;
 
     return `
       <div class="examroom-grid-header">

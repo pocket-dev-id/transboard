@@ -1064,4 +1064,29 @@ assert(
   'js/config.js must not reintroduce the unused STATUS_TRANSITIONS table (it drifted from the real transition tables, e.g. a phantom IN_BED entry)'
 );
 
+// 検査室は病棟をまたいで共有されるため、検査室一覧グリッドは現在の病棟に
+// スコープされたAppState.activeEventsではなく、病棟非依存の全進行中イベントを
+// 使わなければならない(さもないと他病棟の患者が一覧に反映されない)
+assert(
+  api.includes('async getAllActiveTransferEvents()') &&
+    (() => {
+      const idx = api.indexOf('async getAllActiveTransferEvents()');
+      const end = api.indexOf('},', idx);
+      const body = api.slice(idx, end);
+      return body.includes("active_only: 'true'") && !body.includes('ward_id');
+    })(),
+  'js/api.js must expose a ward-agnostic getAllActiveTransferEvents() (active_only=true, no ward_id) for cross-ward exam room aggregation'
+);
+assert(
+  (() => {
+    const idx = examroom.indexOf('async _renderRoomGrid()');
+    if (idx < 0) return false;
+    const end = examroom.indexOf('\n  },\n', idx);
+    const body = examroom.slice(idx, end);
+    return body.includes('API.getAllActiveTransferEvents()') &&
+      !body.includes('AppState.activeEvents.filter(');
+  })(),
+  'ExamRoom._renderRoomGrid must aggregate from the ward-agnostic API.getAllActiveTransferEvents(), not the ward-scoped AppState.activeEvents (exam rooms are shared across wards)'
+);
+
 console.log('Security regression checks passed.');

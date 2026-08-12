@@ -375,6 +375,14 @@ const API = {
     return requireDataArray(res, '移送履歴');
   },
 
+  // 病棟を問わない進行中の全移送イベント。検査室は病棟をまたいで共有されるため、
+  // 検査室一覧グリッド(ExamRoom._renderRoomGrid)の集計にはward_idで絞り込んだ
+  // AppState.activeEventsではなく、この病棟非依存の一覧を使う
+  async getAllActiveTransferEvents() {
+    const res = await this.getAll('transfer_events', { active_only: 'true' });
+    return requireDataArray(res, '進行中の移送一覧');
+  },
+
   // 指定病床の過去(帰棟済み/キャンセル)の移送履歴を新しい順で返す。
   // 進行中のイベントは対象外(excludeEventIdは念のための二重防御)
   async getPastEventsForBed(bedId, _wardId, excludeEventId = null) {
