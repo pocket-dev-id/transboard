@@ -2260,43 +2260,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 }
 .settings-category-banner i { font-size: 14px; flex-shrink: 0; }
 
-.settings-guide-card {
-  border: 1px solid var(--clr-border);
-  background: #f8fafc;
-  border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--clr-text);
-  cursor: pointer;
-  text-align: left;
-  min-height: 72px;
-}
-.settings-guide-card:hover {
-  border-color: #93c5fd;
-  background: #eff6ff;
-}
-.settings-guide-card i {
-  color: var(--clr-primary-dark);
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-.settings-guide-card span {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.settings-guide-card strong {
-  font-size: 12.5px;
-  line-height: 1.25;
-}
-.settings-guide-card small {
-  color: var(--clr-text-muted);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 .settings-panel {
   background: var(--clr-surface);
   border: 1px solid var(--clr-border);
