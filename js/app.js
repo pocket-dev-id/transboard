@@ -655,6 +655,11 @@ const App = {
       if (Settings && ['beds', 'map', 'staffs'].includes(Settings._activeTab)) {
         Settings.render();
       }
+      // 通話パネルの病棟発信ボタン一覧は「自分自身の病棟」を除外して描画しているため、
+      // 病棟切り替え後に再描画しないと除外対象が古いままになる
+      if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+        CallPanel._renderCallPanel();
+      }
     });
 
     // タイムライン日付
