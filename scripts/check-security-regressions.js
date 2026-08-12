@@ -835,4 +835,36 @@ assert(
   'Timeline schedule item fetch must look up the parent feed and hide items whose feed has is_active === false'
 );
 
+// タイムラインのward_idsフィルタは病床マップ(js/bedmap.js)と同じく
+// フィードの現在の設定を優先しなければならない。アイテムのインポート時
+// スナップショット(item.ward_ids)だけを見ると、管理者がフィード保存後に
+// 病棟制限を変更しても次の再取り込みまで反映されず、病床マップとの
+// 表示件数が食い違う
+assert(
+  (() => {
+    const idx = timeline.indexOf('const feedsById = new Map(');
+    const end = timeline.indexOf('this._scheduleItems = schedItems;', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return /Array\.isArray\(feed\?\.ward_ids\)\s*\n\s*\?\s*feed\.ward_ids/.test(body);
+  })(),
+  'Timeline schedule item filter must prefer the feed\'s current ward_ids over the stale per-item snapshot, matching bedmap.js'
+);
+
+// タイムラインの患者ID連携(病床紐付け)は現在病棟にスコープしなければ
+// ならない。病棟を問わず検索すると、他病棟の在床患者とidentifierが
+// 偶然一致した場合に、その病床の予定行が現在のタイムラインへ紛れ込んで
+// 表示されてしまう(病床マップは病床一覧自体が現在病棟で絞り込み済みの
+// ため、この問題が構造的に起きない)
+assert(
+  (() => {
+    const idx = timeline.indexOf('schedItems.forEach(item => {');
+    const end = timeline.indexOf('unlinkedSchedItems.push(item);', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes('b.ward_id === AppState.currentWardId');
+  })(),
+  'Timeline bed-linking must scope the bed search to AppState.currentWardId, otherwise a same-identifier patient in another ward leaks into this ward\'s timeline'
+);
+
 console.log('Security regression checks passed.');
