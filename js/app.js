@@ -1666,6 +1666,13 @@ const App = {
       }
       localStorage.setItem('current_ward_id', AppState.currentWardId);
     }
+    // 通話パネルの病棟発信ボタン一覧はAppState.wardsのスナップショットを
+    // 描画時に固定して持つため、病棟マスタの追加・改名・削除後にここで
+    // 呼び直さないと、一覧が古いまま(削除済み病棟が残る・新規病棟が出ない・
+    // 改名が反映されない)になる
+    if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+      CallPanel._renderCallPanel();
+    }
   },
 
   async loadMasters({ silent = false, loadHandover = true } = {}) {

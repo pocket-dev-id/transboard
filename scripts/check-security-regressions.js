@@ -620,4 +620,21 @@ assert(
   'The ward-select change handler must re-render CallPanel after updating AppState.currentWardId, otherwise the call panel keeps excluding the previous ward instead of the newly selected one'
 );
 
+// 病棟マスタの追加・改名・削除は syncWardSelect() 経由(masters.js の
+// ward作成/更新/削除ハンドラが呼ぶ)で #ward-select には反映されるが、
+// 通話パネルの病棟発信ボタン一覧は描画時にAppState.wardsのスナップショットを
+// DOMへ固定するため、syncWardSelect自身がCallPanelを再描画しないと
+// 削除済み病棟がボタンに残り続け、新規/改名した病棟は反映されない
+assert(
+  (() => {
+    const idx = app.indexOf('syncWardSelect() {');
+    if (idx < 0) return false;
+    const end = app.indexOf('async loadMasters(', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('CallPanel._renderCallPanel()');
+  })(),
+  'syncWardSelect() must re-render CallPanel so ward master changes (add/rename/delete) propagate to the call panel button list, not just to the #ward-select dropdown'
+);
+
 console.log('Security regression checks passed.');
