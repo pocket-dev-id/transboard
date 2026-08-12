@@ -2,7 +2,30 @@
  * TransBoard - UI共通ユーティリティ
  */
 
+// CSVを表計算ソフトで開いた際の数式評価を防ぐ。数値リテラルは分析用途を
+// 損なわないよう維持し、それ以外の危険な先頭文字には'を前置する。
+function sanitizeCsvValue(value) {
+  const text = String(value ?? '');
+  const trimmed = text.trim();
+  const numericLiteral = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+  if (numericLiteral.test(trimmed)) return text;
+
+  const startsDangerously = /^[\t\r\n]|^\s*[=+\-@]/.test(text);
+  const alreadyQuotedDangerousValue = /^'(?=[\t\r\n])|^'(?='?\s*[=+\-@])/.test(text);
+  return startsDangerously || alreadyQuotedDangerousValue ? `'${text}` : text;
+}
+
+// マスタCSVの再取込時に、上の関数が付けた保護用'を1文字だけ戻す。
+// 元から'=...だった値は出力時に''=...となるため、往復後も元の値を保てる。
+function restoreSanitizedCsvValue(value) {
+  const text = String(value ?? '');
+  return /^'(?=[\t\r\n])|^'(?='?\s*[=+\-@])/.test(text) ? text.slice(1) : text;
+}
+
 const UI = {
+  sanitizeCsvValue,
+  restoreSanitizedCsvValue,
+
   EXAM_ROOM_ICON_PRESETS: [
     { icon: 'fa-x-ray', label: 'X線/CT' },
     { icon: 'fa-magnet', label: 'MRI' },

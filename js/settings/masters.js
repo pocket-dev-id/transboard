@@ -1534,7 +1534,7 @@ Object.assign(Settings, {
   _generateCSV(headers, rows) {
     const escapeField = (val) => {
       if (val === null || val === undefined) return '';
-      let str = String(val);
+      const str = UI.sanitizeCsvValue(val);
       if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
         return '"' + str.replace(/"/g, '""') + '"';
       }
@@ -1624,6 +1624,7 @@ Object.assign(Settings, {
                 headers.forEach(h => {
                   const idx = csvHeaders.indexOf(h);
                    let val = idx >= 0 && row[idx] !== undefined ? row[idx].trim() : '';
+                   val = UI.restoreSanitizedCsvValue(val);
                    const rawValue = val;
                   
                   // Convert fields to expected types
