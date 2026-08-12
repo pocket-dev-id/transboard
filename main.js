@@ -4805,7 +4805,38 @@ $thumbprint = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Thumb
   }
 }
 
+// 未署名更新を「そもそも許可するか」のゆるいゲート。公開IPv4アドレスへの
+// 平文HTTP（中間者攻撃を受けやすい典型例）だけを明確に拒否し、ホスト名
+// （形式だけでは院内LANか公開ホストか判別できない）は通す。
+// parent_ip は機器名・mDNS/WINS名等で運用されることもあり、ドット区切り
+// IPv4の見た目チェックだけだと一律で拒否され、子機側で回復手段が無いまま
+// 更新が永久にブロックされてしまう。ここを通過しても即座に無条件で
+// 許可されるわけではなく、この先で人手のダイアログ確認（もしくは
+// isStronglyTrustedUpdateSourceを満たす場合のみ子機の自動承認）を経る。
 function isUnsignedUpdateSourceAllowed(feedBase) {
+  if (!feedBase) return true;
+  try {
+    const source = new URL(feedBase);
+    if (source.protocol === 'https:' ||
+        source.hostname === 'localhost' ||
+        isPrivateOrLoopbackIpv4(source.hostname)) {
+      return true;
+    }
+    return !/^\d{1,3}(\.\d{1,3}){3}$/.test(source.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// 子機の自動承認に使う、より厳格な判定。HTTPS・localhost・プライベートIPv4
+// アドレスなど「形式から明確に院内LAN/暗号化通信と分かるもの」のみを対象とし、
+// ホスト名（parent_ipが機器名等で運用されているケース）はここでは対象外とする。
+// ホスト名は文字列の形だけでは実際に院内LAN上のものか判別できないため
+// （isUnsignedUpdateSourceAllowedで一律拒否はしないが）、子機であっても
+// 人手のダイアログ確認を残す。これにより、子機の自動承認は「明確に安全な
+// 経路」に限定しつつ、ホスト名運用の場合でも従来のように更新自体が
+// 完全にブロックされることはない（人手で1回確認すれば通せる）。
+function isStronglyTrustedUpdateSource(feedBase) {
   if (!feedBase) return true;
   try {
     const source = new URL(feedBase);
@@ -4817,12 +4848,28 @@ function isUnsignedUpdateSourceAllowed(feedBase) {
   }
 }
 
-async function confirmUnsignedUpdate({ version, fileName, sha512, feedBase = null } = {}) {
+async function confirmUnsignedUpdate({ version, fileName, sha512, feedBase = null, autoAcceptForChild = false } = {}) {
   if (!isUnsignedUpdateSourceAllowed(feedBase)) {
     return {
       accepted: false,
       message: '署名なし更新は院内LANまたはHTTPSの更新元からのみ許可されます',
     };
+  }
+
+  // 子機が親機から取得する更新ファイルは、親機側で取込時(import-update-files)に
+  // 管理者が同じ確認ダイアログを既に一度通過しており、SHA-512整合性検証も
+  // 呼び出し元で実施済みのため、子機ごとに同じ警告への再クリックを求めるのは
+  // 実質的な安全性向上を伴わない手間であり、無人稼働中の子機で誤って
+  // 「更新を中止」を押してしまう(＝更新が終わらない)主要因になっていた。
+  // 子機ではこの人手による再確認を省略し、自動的に許可する。
+  // ただし、この自動承認は isStronglyTrustedUpdateSource を満たす場合のみに
+  // 限定する。parent_ipがホスト名で運用されている等、形式からは院内LANかを
+  // 判別できないケースでは、子機であっても引き続き人手のダイアログ確認を求める
+  // (isUnsignedUpdateSourceAllowed自体はホスト名も通すため、更新自体が完全に
+  // ブロックされることはないが、無人での自動承認はしない)。
+  if (autoAcceptForChild && isStronglyTrustedUpdateSource(feedBase)) {
+    console.warn(`[Updater] 子機更新: 親機で検証済みの配布ファイルのため署名なし確認をスキップして続行します: v${version || '?'}`);
+    return { accepted: true };
   }
 
   const result = await dialog.showMessageBox(mainWindow, {
@@ -4896,6 +4943,8 @@ handleTrusted('check-for-update', async (event, { parentIp } = {}) => {
 handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
     const feedBase = buildUpdateFeedBase(parentIp);
+    const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
+    const isChildTerminal = shareMode !== 'parent';
     const ymlText = await httpGetText(`${feedBase}/latest.yml`, {
       headers: getUpdateRequestHeaders(),
     });
@@ -4932,12 +4981,15 @@ handleTrusted('download-and-install-update', async (event, { parentIp } = {}) =>
         fileName: info.path,
         sha512: info.sha512,
         feedBase,
+        autoAcceptForChild: isChildTerminal,
       });
       if (!unsignedConfirmation.accepted) {
         try { fs.unlinkSync(installerPath); } catch {}
         return { success: false, message: unsignedConfirmation.message };
       }
-      console.warn(`[Updater] 署名なし更新を管理者確認により許可: v${info.version}`);
+      if (!isChildTerminal) {
+        console.warn(`[Updater] 署名なし更新を管理者確認により許可: v${info.version}`);
+      }
     }
 
     // 更新起因の万一の破損に備え、既存の.bakローリングとは別にDBを退避
