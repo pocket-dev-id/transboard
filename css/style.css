@@ -393,6 +393,10 @@ h1, h2, h3, h4,
   transform: scale(var(--bedmap-zoom, 1));
   transform-origin: top left;
   transition: transform .15s ease;
+  /* 患者名が2行になったカードだけ自然に縦へ伸びるようにし、
+     同じ行の他のカード・廊下セルまで既定のstretchで引き伸ばされて
+     内側に空白ができるのを防ぐ */
+  align-items: start;
 }
 
 /* 病床カード */
