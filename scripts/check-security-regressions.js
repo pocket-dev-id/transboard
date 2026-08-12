@@ -935,30 +935,20 @@ assert(
 // 発生しうる。isExternalを問わず一律拒否することを保証する
 assert(
   (() => {
-    const patchIdx = main.indexOf("const index = list.findIndex(x => String(x.id) === String(id));");
-    const patchEnd = main.indexOf('let expectedStatus = null;', patchIdx);
-    if (patchIdx < 0 || patchEnd < 0) return false;
-    const patchBody = main.slice(patchIdx, patchEnd);
-    const patchGuarded =
-      patchBody.includes("Object.prototype.hasOwnProperty.call(data, 'current_status')") &&
-      patchBody.includes("Use status/update for status changes") &&
-      !/isExternal\s*&&\s*\n\s*table === 'transfer_events'/.test(patchBody);
-
-    const bulkIdx = main.indexOf("if (table === 'transfer_events') {\n        // current_statusの変更は");
-    const bulkEnd = main.indexOf('const simulated = list.map', bulkIdx);
-    if (bulkIdx < 0 || bulkEnd < 0) return false;
-    const bulkBody = main.slice(bulkIdx, bulkEnd);
+    const postIdx = main.indexOf("if (method === 'POST') {");
+    const patchIdx = main.indexOf("if (method === 'PUT' || method === 'PATCH') {", postIdx);
+    const deleteIdx = main.indexOf("if (method === 'DELETE') {", patchIdx);
+    if (postIdx < 0 || patchIdx < 0 || deleteIdx < 0) return false;
+    const postBody = main.slice(postIdx, patchIdx);
+    const patchBody = main.slice(patchIdx, deleteIdx);
+    const directGuard = /if\s*\(\s*table === 'transfer_events'\s*&&\s*Object\.prototype\.hasOwnProperty\.call\(data, 'current_status'\)\s*\)/;
+    const postGuarded = directGuard.test(postBody) &&
+      postBody.includes('Use status/update for status changes');
+    const patchGuarded = directGuard.test(patchBody) &&
+      patchBody.includes('Use status/update for status changes');
     const bulkGuarded =
-      bulkBody.includes("bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))") &&
-      !bulkBody.includes('isExternal &&');
-
-    const postIdx = main.indexOf('if (index !== -1) {\n      // current_statusの変更は');
-    const postEnd = main.indexOf("list[index] = { ...list[index], ...data };\n      console.log", postIdx);
-    if (postIdx < 0 || postEnd < 0) return false;
-    const postBody = main.slice(postIdx, postEnd);
-    const postGuarded =
-      postBody.includes("Object.prototype.hasOwnProperty.call(data, 'current_status')") &&
-      !postBody.includes('isExternal &&');
+      patchBody.includes("bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))") &&
+      !/isExternal\s*&&[^\n]*bulkData\.some/.test(patchBody);
 
     return patchGuarded && bulkGuarded && postGuarded;
   })(),
@@ -1012,7 +1002,7 @@ assert(
 assert(
   (() => {
     const idx = timeline.indexOf("el.querySelectorAll('[data-to]').forEach(btn => {");
-    const end = timeline.indexOf('this.hide();\n        TimelinePopup.hide();\n        try {', idx);
+    const end = timeline.indexOf('try {', idx);
     if (idx < 0 || end < 0) return false;
     const body = timeline.slice(idx, end);
     return body.includes("newStatus === 'CANCELLED'") &&
@@ -1064,18 +1054,33 @@ assert(
   'js/config.js must not reintroduce the unused STATUS_TRANSITIONS table (it drifted from the real transition tables, e.g. a phantom IN_BED entry)'
 );
 
-// 検査室は病棟をまたいで共有されるため、検査室一覧グリッドは現在の病棟に
-// スコープされたAppState.activeEventsではなく、病棟非依存の全進行中イベントを
-// 使わなければならない(さもないと他病棟の患者が一覧に反映されない)
+// 検査室は病棟をまたいで共有されるため病棟横断集計が必要だが、一覧に患者情報は
+// 不要。専用APIはexam_room_id/current_statusだけを返し、イベント本体を露出しない。
 assert(
-  api.includes('async getAllActiveTransferEvents()') &&
+  (() => {
+    const idx = main.indexOf("id === 'exam-room-grid-status'");
+    const end = main.indexOf("id === 'exam-room-status'", idx);
+    if (idx < 0 || end < 0) return false;
+    const body = main.slice(idx, end);
+    return body.includes('ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
+      body.includes('exam_room_id: event.exam_room_id') &&
+      body.includes('current_status: event.current_status') &&
+      !body.includes('...event') &&
+      !body.includes('patient_') &&
+      !body.includes('bed_id');
+  })(),
+  'Exam room grid endpoint must return only active exam_room_id/current_status summaries without patient or bed data'
+);
+assert(
+  api.includes('async getExamRoomGridStatus()') &&
     (() => {
-      const idx = api.indexOf('async getAllActiveTransferEvents()');
+      const idx = api.indexOf('async getExamRoomGridStatus()');
       const end = api.indexOf('},', idx);
       const body = api.slice(idx, end);
-      return body.includes("active_only: 'true'") && !body.includes('ward_id');
+      return body.includes('tables/transfer_events/exam-room-grid-status') &&
+        !body.includes('getAllActiveTransferEvents');
     })(),
-  'js/api.js must expose a ward-agnostic getAllActiveTransferEvents() (active_only=true, no ward_id) for cross-ward exam room aggregation'
+  'js/api.js must use the minimal exam-room-grid-status endpoint for cross-ward aggregation'
 );
 assert(
   (() => {
@@ -1083,10 +1088,11 @@ assert(
     if (idx < 0) return false;
     const end = examroom.indexOf('\n  },\n', idx);
     const body = examroom.slice(idx, end);
-    return body.includes('API.getAllActiveTransferEvents()') &&
+    return body.includes('API.getExamRoomGridStatus()') &&
+      !body.includes('API.getAllActiveTransferEvents()') &&
       !body.includes('AppState.activeEvents.filter(');
   })(),
-  'ExamRoom._renderRoomGrid must aggregate from the ward-agnostic API.getAllActiveTransferEvents(), not the ward-scoped AppState.activeEvents (exam rooms are shared across wards)'
+  'ExamRoom._renderRoomGrid must aggregate from the privacy-safe ward-agnostic status summary'
 );
 
 console.log('Security regression checks passed.');

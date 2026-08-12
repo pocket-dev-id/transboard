@@ -7,6 +7,7 @@ const ExamRoom = {
   _pendingFlashEventId: null,
   _wardAcknowledgementState: new Map(),
   _notificationHistoryLogs: [],
+  _roomGridStatusCache: [],
 
   async render() {
     // 検査室セレクト初期化
@@ -908,16 +909,20 @@ const ExamRoom = {
       </div>`;
     }
 
-    // 検査室は病棟をまたいで共有されるため(例: CT室は全病棟共通)、現在の病棟に
-    // スコープされたAppState.activeEventsだけでは他病棟の患者が集計に出てこない。
-    // 個別検査室ビュー(API.getExamRoomStatus)と同じく病棟非依存のデータを取得する。
-    // 取得失敗時は直前まで表示していたAppState.activeEvents(現病棟分のみ)に
-    // フォールバックし、一覧が完全に描画できなくなることは避ける
+    // 検査室は病棟をまたいで共有されるため、病棟横断の専用集計データを使う。
+    // 患者情報を含むイベント本体は取得しない。取得失敗時は直前の成功結果、
+    // 初回失敗時だけ現病棟の状態を最小項目へ縮めてフォールバックする。
     let allActiveEvents;
     try {
-      allActiveEvents = await API.getAllActiveTransferEvents();
+      allActiveEvents = await API.getExamRoomGridStatus();
+      this._roomGridStatusCache = allActiveEvents;
     } catch (e) {
-      allActiveEvents = AppState.activeEvents;
+      allActiveEvents = this._roomGridStatusCache.length > 0
+        ? this._roomGridStatusCache
+        : AppState.activeEvents.map(event => ({
+          exam_room_id: event.exam_room_id,
+          current_status: event.current_status,
+        }));
     }
 
     const activeStatuses = new Set(CONFIG.ACTIVE_STATUSES);

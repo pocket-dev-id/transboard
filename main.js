@@ -3772,6 +3772,20 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       return { success: true, activeEvents, todayEvents, recentStatusLogs };
     }
 
+    // 検査室一覧の件数集計専用。検査室は病棟横断で共有されるが、一覧表示に
+    // 患者名・患者ID・病床・イベントIDは不要なため、最小限の項目だけを返す。
+    // transfer_events全件をrendererへ渡すと、別病棟の患者情報まで露出する。
+    if (table === 'transfer_events' && id === 'exam-room-grid-status') {
+      return {
+        data: list
+          .filter(event => ACTIVE_TRANSFER_STATUSES.has(event.current_status))
+          .map(event => ({
+            exam_room_id: event.exam_room_id || null,
+            current_status: event.current_status,
+          })),
+      };
+    }
+
     if (table === 'transfer_events' && id === 'exam-room-status') {
       const examRoomId = String(searchParams.get('exam_room_id') || '');
       const todayMs = Number(searchParams.get('today_ms') || 0);
