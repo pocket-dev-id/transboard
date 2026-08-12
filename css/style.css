@@ -243,12 +243,22 @@ h1, h2, h3, h4,
   gap: 8px;
   margin-bottom: 10px;
 }
-#page-ward-dashboard #summary-bar { gap: 6px; margin-bottom: 6px; }
-#page-ward-dashboard .summary-card { min-height: 36px; padding: 3px 8px; }
-#page-ward-dashboard .summary-icon { width: 22px; height: 22px; font-size: 11px; }
+/* 病棟ダッシュボードは病床マップの表示面積を最優先するため、上部の情報帯を
+   徹底的に薄くする。情報量は一切減らさず、数値・ラベル・補足を縦積みから
+   横並び(baseline揃え)へ変えることで1枚あたりの行数を減らしている */
+#page-ward-dashboard #summary-bar { gap: 6px; margin-bottom: 4px; }
+#page-ward-dashboard .summary-card { min-height: 0; padding: 2px 8px; gap: 6px; }
+#page-ward-dashboard .summary-icon { width: 20px; height: 20px; font-size: 10px; }
+#page-ward-dashboard .summary-body {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 5px;
+  min-width: 0;
+}
 #page-ward-dashboard .summary-value { font-size: 16px; }
 #page-ward-dashboard .summary-label { margin-top: 0; font-size: 9.5px; }
-#page-ward-dashboard .summary-subtext { margin-top: 1px; font-size: 9.5px; }
+#page-ward-dashboard .summary-subtext { margin-top: 0; font-size: 9.5px; }
 .summary-card {
   display: flex;
   align-items: center;
@@ -306,7 +316,7 @@ h1, h2, h3, h4,
   font-size: 12px;
   color: var(--clr-text);
 }
-#page-ward-dashboard #kpi-strip { gap: 4px 12px; margin-bottom: 6px; padding: 4px 10px; font-size: 11px; }
+#page-ward-dashboard #kpi-strip { gap: 2px 12px; margin-bottom: 4px; padding: 2px 10px; font-size: 11px; }
 #page-ward-dashboard #kpi-strip .kpi-item b { font-size: 13px; }
 #kpi-strip:empty { display: none; }
 .kpi-item { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
@@ -357,6 +367,13 @@ h1, h2, h3, h4,
   padding: 16px;
   box-shadow: var(--shadow-sm);
 }
+/* 病床マップの表示面積を稼ぐため、病棟ダッシュボードでは
+   パネルの余白とヘッダー下のマージンを詰める */
+#page-ward-dashboard #bed-map-area { padding: 8px 10px 10px; }
+#page-ward-dashboard #bed-map-area .panel-header { margin-bottom: 5px; }
+/* 同期・取り込み・接続端末の情報バーは常時表示の補助情報のため最小限の高さにする
+   (バー自体の余白はindex.htmlのインラインスタイル側で調整している) */
+#page-ward-dashboard #sync-info-bar .device-presence-chip { min-height: 0; padding: 0 7px; }
 .legend {
   display: flex;
   gap: 6px;
