@@ -528,10 +528,17 @@ const API = {
   },
 
   async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD, expectedStatus = null, source = null) {
+    // 完了/中止した移送にICカードの紐づけを残さないよう、RETURNED/CANCELLEDでは
+    // patient_ic_tag_idを既定でクリアする。呼び出し元ごとに個別実装すると
+    // タイムライン・carryover等で対応漏れが起きるため、ここに一元化する
+    // (呼び出し元がextraFieldsで明示的に指定していればそちらを優先する)
+    const mergedExtraFields = (newStatus === 'RETURNED' || newStatus === 'CANCELLED')
+      ? { patient_ic_tag_id: null, ...extraFields }
+      : extraFields;
     const result = await this._fetch('status/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId, newStatus, extraFields, scope, expectedStatus, source }),
+      body: JSON.stringify({ eventId, newStatus, extraFields: mergedExtraFields, scope, expectedStatus, source }),
     });
     if (result && result.success === false) {
       const err = new Error(result.message || 'Status update failed');

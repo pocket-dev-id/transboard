@@ -100,12 +100,15 @@ const CarryoverModal = {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
+      const target = items.find(x => x.id === eventId);
       // 帰棟完了も通常の遷移ルールを必ず通す。進行中状態からの強制帰棟は許可しない。
       if (action === 'RETURNED') {
-        const target = items.find(x => x.id === eventId);
         await API.updateEventStatus(eventId, 'RETURNED', {}, CONFIG.STATUS_SCOPE.WARD, target?.current_status || null);
       } else {
-        await API.updateEventStatus(eventId, action);
+        // CANCELLEDはどの状態からも遷移可能なため、expectedStatusを省略すると
+        // 他端末が既に進めていたイベントも検知されずキャンセルされてしまう。
+        // RETURNED分岐と同じくexpectedStatusを渡して衝突検知させる
+        await API.updateEventStatus(eventId, action, {}, CONFIG.STATUS_SCOPE.WARD, target?.current_status || null);
       }
       UI.toast(action === 'RETURNED' ? '帰棟完了にしました' : '移送をキャンセルしました', 'success');
       // 盤面へ反映

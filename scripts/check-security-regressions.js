@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
 
@@ -9,6 +10,31 @@ function read(relativePath) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+// ソース中の「NAME = {」または「NAME: {」で始まるオブジェクトリテラルを
+// 波括弧の対応を数えて抽出し、安全にvmで評価してプレーンオブジェクトとして返す。
+// 状態遷移表のようにクライアント/サーバーで独立に手書き複製されている定数を
+// 比較する回帰ガードで使う
+function extractObjectLiteral(src, marker) {
+  const markerIdx = src.indexOf(marker);
+  if (markerIdx < 0) throw new Error('marker not found: ' + marker);
+  const braceStart = src.indexOf('{', markerIdx);
+  let depth = 0;
+  for (let i = braceStart; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        const literal = src.slice(braceStart, i + 1);
+        const sandbox = { module: { exports: null } };
+        vm.createContext(sandbox);
+        vm.runInContext(`module.exports = ${literal};`, sandbox, { filename: 'extract-object-literal.js' });
+        return sandbox.module.exports;
+      }
+    }
+  }
+  throw new Error('unbalanced braces for: ' + marker);
 }
 
 const main = read('main.js');
@@ -27,6 +53,8 @@ const importNotify = read('js/settings/import-notify.js');
 const terminalAccess = read('js/settings/terminal-access.js');
 const styles = read('css/style.css');
 const modal = read('js/modal.js');
+const carryover = read('js/carryover.js');
+const examroom = read('js/examroom.js');
 
 assert(!main.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
 assert(!/\bexecSync\s*\(/.test(main), 'Shell command strings must not use execSync');
@@ -275,9 +303,12 @@ assert(
   'Status updates must reject unknown states and must not bypass transition validation via a client maintenance flag'
 );
 assert(
-  main.includes("changed_by: payload.source === 'ic_scan'") ||
-  main.includes("changed_by: ['ic_scan', 'maintenance'].includes(payload.source)"),
-  'Status history must preserve the operation source instead of always recording UI操作'
+  main.includes("const statusActor = isExternal") &&
+  main.includes("? 'child_api'") &&
+  main.includes("['ic_scan', 'maintenance'].includes(payload.source)") &&
+  main.includes('changed_by: statusActor') &&
+  main.includes('actorType: statusActor'),
+  'Status history must preserve trusted local operation sources while forcing external requests to child_api'
 );
 assert(
   !main.includes('if (hidden.has(status))') &&
@@ -894,6 +925,143 @@ assert(
     return body.includes('b.ward_id === AppState.currentWardId');
   })(),
   'Timeline bed-linking must scope the bed search to AppState.currentWardId, otherwise a same-identifier patient in another ward leaks into this ward\'s timeline'
+);
+
+// current_statusの変更はstatus/update(processStatusUpdateRequest)の1経路に
+// 集約しなければならない。単体PATCH・一括PATCH・POST-as-updateのいずれかが
+// current_status変更を素通しにすると、スコープ別ルールではなく緩い判定
+// (またはノーチェック)のみで通ってしまい、タイムスタンプ・
+// transfer_status_logs行・監査ログ・音声通知の副作用も伴わない状態変更が
+// 発生しうる。isExternalを問わず一律拒否することを保証する
+assert(
+  (() => {
+    const patchIdx = main.indexOf("const index = list.findIndex(x => String(x.id) === String(id));");
+    const patchEnd = main.indexOf('let expectedStatus = null;', patchIdx);
+    if (patchIdx < 0 || patchEnd < 0) return false;
+    const patchBody = main.slice(patchIdx, patchEnd);
+    const patchGuarded =
+      patchBody.includes("Object.prototype.hasOwnProperty.call(data, 'current_status')") &&
+      patchBody.includes("Use status/update for status changes") &&
+      !/isExternal\s*&&\s*\n\s*table === 'transfer_events'/.test(patchBody);
+
+    const bulkIdx = main.indexOf("if (table === 'transfer_events') {\n        // current_statusの変更は");
+    const bulkEnd = main.indexOf('const simulated = list.map', bulkIdx);
+    if (bulkIdx < 0 || bulkEnd < 0) return false;
+    const bulkBody = main.slice(bulkIdx, bulkEnd);
+    const bulkGuarded =
+      bulkBody.includes("bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))") &&
+      !bulkBody.includes('isExternal &&');
+
+    const postIdx = main.indexOf('if (index !== -1) {\n      // current_statusの変更は');
+    const postEnd = main.indexOf("list[index] = { ...list[index], ...data };\n      console.log", postIdx);
+    if (postIdx < 0 || postEnd < 0) return false;
+    const postBody = main.slice(postIdx, postEnd);
+    const postGuarded =
+      postBody.includes("Object.prototype.hasOwnProperty.call(data, 'current_status')") &&
+      !postBody.includes('isExternal &&');
+
+    return patchGuarded && bulkGuarded && postGuarded;
+  })(),
+  'Single-record PATCH, bulk PATCH, and POST-as-update for transfer_events must reject current_status changes regardless of isExternal, forcing all status transitions through status/update'
+);
+
+// 新規transfer_events作成時、current_statusが指定されていれば既知の状態値
+// (進行中の状態＋終端状態)であることを検証する。任意の文字列(例:
+// クライアント側の派生疑似ステータスIN_BED)を許すと、その後どの遷移
+// ルールにも合致せず永久に動かせないレコードが作られてしまう
+assert(
+  (() => {
+    const idx = main.indexOf('const KNOWN_TRANSFER_STATUSES');
+    if (idx < 0) return false;
+    return main.includes("!KNOWN_TRANSFER_STATUSES.has(data.current_status)") &&
+      main.includes('Invalid current_status');
+  })(),
+  'transfer_events creation via generic POST must validate current_status against KNOWN_TRANSFER_STATUSES'
+);
+
+// carryover.jsのCANCELLED操作もRETURNED操作と同様にexpectedStatusを
+// 渡さなければならない。CANCELLEDはどの状態からも遷移可能なため、
+// 渡し忘れると他端末が既に進めたイベントを検知なくキャンセルできてしまう
+assert(
+  (() => {
+    const idx = carryover.indexOf("await API.updateEventStatus(eventId, action");
+    if (idx < 0) return false;
+    const lineEnd = carryover.indexOf(');', idx);
+    const call = carryover.slice(idx, lineEnd);
+    return call.includes('target?.current_status');
+  })(),
+  "carryover.js's CANCELLED action must pass expectedStatus (target?.current_status) to detect conflicts, matching the RETURNED branch"
+);
+
+// ICカード紐づけ解除(RETURNED/CANCELLED時)はAPI.updateEventStatusに
+// 一元化し、呼び出し元(タイムライン・carryover等)ごとの対応漏れを防ぐ
+assert(
+  (() => {
+    const idx = api.indexOf('async updateEventStatus(');
+    const end = api.indexOf('return result;', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = api.slice(idx, end);
+    return body.includes("newStatus === 'RETURNED' || newStatus === 'CANCELLED'") &&
+      body.includes('patient_ic_tag_id: null');
+  })(),
+  'API.updateEventStatus must centrally clear patient_ic_tag_id for RETURNED/CANCELLED so all callers (timeline, carryover, modal) get consistent behavior'
+);
+
+// タイムラインの右クリックメニューは病床詳細モーダルと同じ破壊的操作の
+// 確認(キャンセル・迎え要省略の帰棟完了)を経なければならない
+assert(
+  (() => {
+    const idx = timeline.indexOf("el.querySelectorAll('[data-to]').forEach(btn => {");
+    const end = timeline.indexOf('this.hide();\n        TimelinePopup.hide();\n        try {', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes("newStatus === 'CANCELLED'") &&
+      body.includes("newStatus === 'RETURNED' && event.current_status === 'IN_EXAM'") &&
+      (body.match(/confirm\(/g) || []).length === 2;
+  })(),
+  'Timeline context menu must confirm CANCELLED and skip-to-RETURNED transitions like the bed detail modal'
+);
+
+// 検査室の操作ボタンは連打防止のため、リクエスト中は同じカードの
+// 全ボタンを無効化しなければならない
+assert(
+  (() => {
+    const idx = examroom.indexOf("_bindQueueEvents(container) {");
+    const end = examroom.indexOf('_updateStatus(eventId, newStatus,', idx);
+    if (idx < 0 || end < 0) return false;
+    const body = examroom.slice(idx, end);
+    return body.includes("card.querySelectorAll('button').forEach(b => (b.disabled = true))");
+  })(),
+  'Exam room action buttons must disable the whole card while a status update is in flight to prevent double-submit'
+);
+
+// js/config.jsのACTION_BUTTONS/EXAM_ROOM_ACTIONSとmain.jsの
+// WARD_STATUS_ACTIONS/EXAM_STATUS_ACTIONSは独立した手書きの複製であり、
+// 共通の情報源が無い。片方だけ変更されてずれるとクライアントが提示する
+// ボタンとサーバーが許可する遷移が食い違いかねないため、from→toの
+// 集合が完全に一致することを保証する
+assert(
+  (() => {
+    const wardActions = extractObjectLiteral(main, 'const WARD_STATUS_ACTIONS = {');
+    const examActions = extractObjectLiteral(main, 'const EXAM_STATUS_ACTIONS = {');
+    const actionButtons = extractObjectLiteral(config, 'ACTION_BUTTONS: {');
+    const examRoomActions = extractObjectLiteral(config, 'EXAM_ROOM_ACTIONS: {');
+    const toSets = obj => Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [k, (v || []).map(a => a.toStatus).sort()])
+    );
+    const sortedWard = Object.fromEntries(Object.entries(wardActions).map(([k, v]) => [k, [...v].sort()]));
+    const sortedExam = Object.fromEntries(Object.entries(examActions).map(([k, v]) => [k, [...v].sort()]));
+    return JSON.stringify(sortedWard) === JSON.stringify(toSets(actionButtons)) &&
+      JSON.stringify(sortedExam) === JSON.stringify(toSets(examRoomActions));
+  })(),
+  'js/config.js ACTION_BUTTONS/EXAM_ROOM_ACTIONS must have the exact same from->to status sets as main.js WARD_STATUS_ACTIONS/EXAM_STATUS_ACTIONS'
+);
+
+// 未使用かつ実態(サーバーの状態機械にIN_BEDは存在しない)と矛盾する
+// STATUS_TRANSITIONS表が復活していないことを保証する
+assert(
+  !config.includes('STATUS_TRANSITIONS'),
+  'js/config.js must not reintroduce the unused STATUS_TRANSITIONS table (it drifted from the real transition tables, e.g. a phantom IN_BED entry)'
 );
 
 console.log('Security regression checks passed.');

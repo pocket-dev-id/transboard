@@ -2813,6 +2813,11 @@ const ACTIVE_TRANSFER_STATUSES = new Set([
   'NEARLY_DONE',
   'PICKUP_REQUIRED',
 ]);
+// 新規transfer_events作成時のcurrent_status検証用。ACTIVE_TRANSFER_STATUSES
+// (進行中の状態)に終端状態(RETURNED/CANCELLED)を加えた全既知状態の集合。
+// デモデータ投入(js/demo.js)は意図的に様々な終端状態でイベントを作成するため
+// 特定の初期値には絞らず、既知の状態値かどうかだけを検証する
+const KNOWN_TRANSFER_STATUSES = new Set([...ACTIVE_TRANSFER_STATUSES, 'RETURNED', 'CANCELLED']);
 const HIDEABLE_TRANSFER_STATUSES = new Set(['ARRIVED', 'NEARLY_DONE']);
 const WARD_ACKNOWLEDGEMENT_STATUSES = new Set(['ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED']);
 const WARD_STATUS_ACTIONS = {
@@ -2845,13 +2850,6 @@ function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIO
   // スキップすると、UIと履歴の意味が一致しなくなるため、遷移規則は
   // 常に明示的な1段階遷移として評価する。
   return [...(actionMap[fromStatus] || [])];
-}
-
-function isTransferStatusTransitionAllowed(fromStatus, toStatus, db) {
-  if (!fromStatus || !toStatus) return false;
-  if (fromStatus === toStatus) return true;
-  return getAllowedTransferTargets(fromStatus, db, WARD_STATUS_ACTIONS).includes(toStatus) ||
-    getAllowedTransferTargets(fromStatus, db, EXAM_STATUS_ACTIONS).includes(toStatus);
 }
 
 function isScopedTransferStatusTransitionAllowed(fromStatus, toStatus, db, scope = 'ward') {
@@ -3365,6 +3363,12 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   }
 
   const now = Date.now();
+  // HTTP経由の子機はpayload.sourceを任意に指定できるため、外部要求の
+  // 操作者種別は必ずchild_apiに固定する。ic_scan/maintenanceは信頼済みの
+  // ローカルIPCから明示された場合だけ履歴へ記録する。
+  const statusActor = isExternal
+    ? 'child_api'
+    : (['ic_scan', 'maintenance'].includes(payload.source) ? payload.source : 'local_ui');
   const statusTimeMap = {
     MOVING: 'departed_at',
     ARRIVED: 'arrived_at',
@@ -3403,9 +3407,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     transfer_event_id: eventId,
     from_status: fromStatus,
     to_status: newStatus,
-    changed_by: ['ic_scan', 'maintenance'].includes(payload.source)
-      ? payload.source
-      : (isExternal ? 'child_api' : 'local_ui'),
+    changed_by: statusActor,
     changed_at: now,
     note: '',
   });
@@ -3413,11 +3415,16 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   appendAuditLog(db, 'STATUS_CHANGE', {
     targetType: 'transfer_events',
     targetId: eventId,
-    actorType: isExternal ? 'child_api' : 'local_ui',
+    actorType: statusActor,
     result: 'success',
     before: summarizeAuditRecord('transfer_events', current),
     after: summarizeAuditRecord('transfer_events', list[index]),
-    details: { fromStatus, toStatus: newStatus, scope },
+    details: {
+      fromStatus,
+      toStatus: newStatus,
+      scope,
+      requestChannel: isExternal ? 'http_api' : 'local_ipc',
+    },
   });
 
   if (!writeDB(db)) {
@@ -3949,22 +3956,16 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     const referenceError = validateMasterReferences(db, table, beforeItem, data);
     if (referenceError) return referenceError;
     if (index !== -1) {
+      // current_statusの変更はstatus/update(processStatusUpdateRequest)の1経路に
+      // 集約する。ここを素通しにすると、スコープ別ルールではなく緩い和集合の判定
+      // だけで通ってしまい、タイムスタンプ・transfer_status_logs行・監査ログ・
+      // 音声通知の副作用も一切伴わない状態変更が発生しうる(isExternalかどうかを
+      // 問わない。ローカル(親機UI)側もこの経路を使っていないことを確認済み)
       if (
-        isExternal &&
         table === 'transfer_events' &&
         Object.prototype.hasOwnProperty.call(data, 'current_status')
       ) {
         return { success: false, message: 'Use status/update for status changes' };
-      }
-      if (
-        table === 'transfer_events' &&
-        Object.prototype.hasOwnProperty.call(data, 'current_status') &&
-        !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
-      ) {
-        return {
-          success: false,
-          message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
-        };
       }
       if (table === 'transfer_events') {
         const merged = { ...list[index], ...data };
@@ -3976,6 +3977,13 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       list[index] = { ...list[index], ...data };
       console.log(`[DB] POST (Update instead of duplicate): table=${table}, id=${data.id}`);
     } else {
+      if (
+        table === 'transfer_events' &&
+        Object.prototype.hasOwnProperty.call(data, 'current_status') &&
+        !KNOWN_TRANSFER_STATUSES.has(data.current_status)
+      ) {
+        return { success: false, message: `Invalid current_status: ${data.current_status}` };
+      }
       if (table === 'transfer_events' && shouldCheckActiveBedConflict(null, data, true)) {
         const conflict = findActiveBedEventConflict(list, data, data.id);
         if (conflict) return activeBedConflictResponse(conflict);
@@ -4072,7 +4080,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         }
       }
       if (table === 'transfer_events') {
-        if (isExternal && bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))) {
+        // current_statusの変更はstatus/update(processStatusUpdateRequest)の
+        // 1経路に集約する(isExternalを問わない。理由は単体PATCH分岐と同じ)
+        if (bulkData.some(patchItem => Object.prototype.hasOwnProperty.call(patchItem, 'current_status'))) {
           return { success: false, message: 'Use status/update for status changes' };
         }
         const simulated = list.map(item => ({ ...item }));
@@ -4081,15 +4091,6 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           const index = simulated.findIndex(x => String(x.id) === String(targetId));
           if (index === -1) continue;
           const before = simulated[index];
-          if (
-            Object.prototype.hasOwnProperty.call(patchItem, 'current_status') &&
-            !isTransferStatusTransitionAllowed(before.current_status, patchItem.current_status, db)
-          ) {
-            return {
-              success: false,
-              message: `Invalid status transition: ${before.current_status} -> ${patchItem.current_status}`,
-            };
-          }
           const merged = { ...before, ...patchItem };
           if (shouldCheckActiveBedConflict(before, merged, false)) {
             const conflict = findActiveBedEventConflict(simulated, merged, merged.id);
@@ -4162,8 +4163,9 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (masterRevisionError) return masterRevisionError;
     const referenceError = validateMasterReferences(db, table, list[index], data);
     if (referenceError) return referenceError;
+    // current_statusの変更はstatus/update(processStatusUpdateRequest)の1経路に
+    // 集約する(isExternalを問わない。理由は上のPOST-as-update分岐と同じ)
     if (
-      isExternal &&
       table === 'transfer_events' &&
       Object.prototype.hasOwnProperty.call(data, 'current_status')
     ) {
@@ -4183,16 +4185,6 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     if (expectedStatus && list[index].current_status !== expectedStatus) {
       return statusMismatchConflictResponse(expectedStatus, list[index]);
-    }
-    if (
-      table === 'transfer_events' &&
-      Object.prototype.hasOwnProperty.call(data, 'current_status') &&
-      !isTransferStatusTransitionAllowed(list[index].current_status, data.current_status, db)
-    ) {
-      return {
-        success: false,
-        message: `Invalid status transition: ${list[index].current_status} -> ${data.current_status}`,
-      };
     }
     if (table === 'transfer_events') {
       const merged = { ...list[index], ...data };

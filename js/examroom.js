@@ -845,9 +845,13 @@ const ExamRoom = {
   _bindQueueEvents(container) {
     container.querySelectorAll('[data-exam-action]').forEach(btn => {
       btn.addEventListener('click', () => {
+        // 連打防止: リクエスト中は同じカードの全ボタンを無効化する
+        // (成功時はキューが再描画されるためそのままでよく、失敗時は_updateStatus側で戻す)
+        const card = btn.closest('.exam-queue-card, .exam-queue-row');
+        if (card) card.querySelectorAll('button').forEach(b => (b.disabled = true));
         const eventId = btn.dataset.eventId;
         const newStatus = btn.dataset.examAction;
-        this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null);
+        this._updateStatus(eventId, newStatus, btn.dataset.currentStatus || null, card);
       });
     });
 
@@ -859,7 +863,7 @@ const ExamRoom = {
     });
   },
 
-  async _updateStatus(eventId, newStatus, expectedStatus = null) {
+  async _updateStatus(eventId, newStatus, expectedStatus = null, card = null) {
     const event = AppState.activeEvents.find(e => e.id === eventId) ||
                   AppState.todayEvents.find(e => e.id === eventId);
     const currentStatus = expectedStatus || event?.current_status || null;
@@ -876,11 +880,12 @@ const ExamRoom = {
       UI.toast(`${label} に更新しました`, 'success');
       UI.playScanSound(true);
       this._pendingFlashEventId = eventId;
-      
+
       await App.refreshData();
       await this._renderQueue();
     } catch (e) {
       console.error(e);
+      if (card) card.querySelectorAll('button').forEach(b => (b.disabled = false));
       if (await App.handleDataConflict(e)) {
         UI.playScanSound(false);
         return;
