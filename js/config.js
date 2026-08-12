@@ -6,19 +6,6 @@ const CONFIG = {
   // ポーリング間隔 (ms)
   POLL_INTERVAL: 5000,
 
-  // 状態定義
-  STATUS: {
-    IN_BED: 'IN_BED',
-    DEPART_REGISTERED: 'DEPART_REGISTERED',
-    MOVING: 'MOVING',
-    ARRIVED: 'ARRIVED',
-    IN_EXAM: 'IN_EXAM',
-    NEARLY_DONE: 'NEARLY_DONE',
-    PICKUP_REQUIRED: 'PICKUP_REQUIRED',
-    RETURNED: 'RETURNED',
-    CANCELLED: 'CANCELLED',
-  },
-
   // 状態表示名（施設ごとのカスタム表示名で上書きされる可能性がある実行時の値）
   STATUS_LABEL: {
     IN_BED: '在床',
