@@ -18,8 +18,29 @@ Object.assign(Settings, {
     const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
     const isElectron = !!window.electronAPI;
     const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const terminalRole = localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward';
 
     body.innerHTML = `
+      <div class="settings-panel" style="margin-bottom:16px;">
+        <div class="settings-panel-header">
+          <h3><i class="fas fa-columns"></i> 端末画面の役割</h3>
+          <span class="settings-badge settings-badge--terminal">この端末のみ</span>
+        </div>
+        <p class="settings-hint">
+          <i class="fas fa-info-circle"></i>
+          検査室端末では病棟選択・病棟ダッシュボード・病棟通知の操作を隠し、検査室画面を直接表示します。移送元の病棟名と確認状況は検査室画面に表示されます。
+        </p>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
+            <input type="radio" name="terminal-role" value="ward" ${terminalRole === 'ward' ? 'checked' : ''} style="margin-top:3px;">
+            <span><strong>病棟端末</strong><br><span style="font-size:11px; color:#718096;">病棟を選択して、病床・通知・申し送りを操作します。</span></span>
+          </label>
+          <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
+            <input type="radio" name="terminal-role" value="exam" ${terminalRole === 'exam' ? 'checked' : ''} style="margin-top:3px;">
+            <span><strong>検査室端末</strong><br><span style="font-size:11px; color:#718096;">病棟を選択せず、検査室の進捗と病棟の確認状況を参照します。</span></span>
+          </label>
+        </div>
+      </div>
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
           <h3><i class="fas fa-desktop"></i> 画面表示</h3>
@@ -101,6 +122,7 @@ Object.assign(Settings, {
       defaultZoomVal: body.querySelector('#cfg-default-zoom')?.value || '1.0',
       fontStyleVal: body.querySelector('#cfg-font-style')?.value || 'ud',
       bedCardSizeVal: body.querySelector('#cfg-bed-card-size')?.value || 'medium',
+      terminalRoleVal: body.querySelector('input[name="terminal-role"]:checked')?.value || 'ward',
     });
     const saveLocalVisualValues = () => {
       const values = readVisualValues();
@@ -119,7 +141,7 @@ Object.assign(Settings, {
 
     const saveBtn = body.querySelector('#btn-save-terminal-behavior');
     if (saveBtn) saveBtn.onclick = async () => {
-      const { defaultZoomVal, fontStyleVal, bedCardSizeVal } = saveLocalVisualValues();
+      const { defaultZoomVal, fontStyleVal, bedCardSizeVal, terminalRoleVal } = saveLocalVisualValues();
 
       try {
         const isChildMode = currentMode === 'client' || currentMode === 'child';
@@ -138,6 +160,9 @@ Object.assign(Settings, {
           this._writeLocalSetting('default_zoom', defaultZoomVal);
           this._writeLocalSetting('font_style', fontStyleVal);
           this._writeLocalSetting('bed_card_size', bedCardSizeVal);
+          if (typeof App !== 'undefined' && App.setTerminalRole) {
+            await App.setTerminalRole(terminalRoleVal);
+          }
         }
         applyVisuals();
         UI.toast(failed ? 'この端末の表示は保存しました。共通デフォルトは親機へ反映できませんでした。' : '端末表示を保存しました', failed ? 'warning' : 'success');

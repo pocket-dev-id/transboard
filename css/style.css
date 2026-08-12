@@ -2978,6 +2978,21 @@ body.standalone-mode #device-presence-display {
   display: none !important;
 }
 
+/* 検査室端末: 病棟を操作対象にするUIを隠し、検査室画面だけを通常の業務画面として表示する */
+body.exam-terminal-mode .ward-selector,
+body.exam-terminal-mode .tab-btn[data-page="ward-dashboard"],
+body.exam-terminal-mode .tab-btn[data-page="timeline"],
+body.exam-terminal-mode .tab-btn[data-page="history"] {
+  display: none !important;
+}
+body.exam-terminal-mode #btn-call-toggle,
+body.exam-terminal-mode #call-panel {
+  display: none !important;
+}
+body.exam-terminal-mode #page-ward-dashboard {
+  display: none !important;
+}
+
 /* 検査時間実績テーブル */
 .exam-stats-table { font-size: 12px; }
 .exam-stats-table th { white-space: nowrap; }

@@ -82,6 +82,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setAdminPasscode: (passcode) => ipcRenderer.invoke('set-admin-passcode', passcode),
   getTerminalApiToken: () => ipcRenderer.invoke('get-terminal-api-token'),
   setTerminalApiToken: (token) => ipcRenderer.invoke('set-terminal-api-token', token),
+  getTerminalRole: () => ipcRenderer.invoke('get-terminal-role'),
+  setTerminalRole: (role) => ipcRenderer.invoke('set-terminal-role', role),
   cleanupEventRetention: () => ipcRenderer.invoke('cleanup-event-retention'),
 
   // アプリ更新（自前アップデータ）
