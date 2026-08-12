@@ -512,7 +512,7 @@ const CallPanel = {
           <!-- 内線番号表示（バックアップ用） -->
           ${phoneNum ? `
           <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center;">
-            <div style="font-size: 10px; color: #64748b;">(固定電話からかける場合の内線番号)</div>
+            <div style="font-size: 10px; color: #64748b;">(内線電話からかける場合の内線番号)</div>
             <div style="font-size: 18px; font-weight: 800; color: #1e293b; margin-top: 2px;">内線 ${phoneNumHtml}</div>
           </div>
           ` : ''}

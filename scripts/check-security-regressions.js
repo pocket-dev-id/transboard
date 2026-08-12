@@ -268,12 +268,10 @@ assert(
   'readDB/writeDB must deep-clone the whole DB with structuredClone, not a JSON.stringify/parse round trip (this cost scales with DB size and is paid on every poll from every terminal)'
 );
 
-// audit_logsはdb.jsonから分離し、専用ファイル(AUDIT_LOG_FILE)へappendAuditLog()が
-// 都度O(1)追記することで、writeDB()の毎回のstringify/クローンコストから外している。
-// writeDB()がaudit_logsをdb.json書き込み対象から除外し続けること、
-// appendAuditLogがpush直後に専用ファイルへ同期的に追記し続けることを保証する。
-// ここが崩れると、audit_logsが再びdb.json経由の全件書き直しに戻るか、
-// あるいは監査ログが専用ファイルに永続化されないまま失われる回帰になる。
+// audit_logsはdb.jsonから分離し、専用ファイル(AUDIT_LOG_FILE)へ永続化することで、
+// writeDB()の毎回のstringify/クローンコストから外している。writeDB()が
+// audit_logs/_pendingAuditLogEntriesをdb.json書き込み対象から除外し続けることを
+// 保証する。ここが崩れると、audit_logsが再びdb.json経由の全件書き直しに戻る。
 assert(
   (() => {
     const writeStart = main.indexOf('function writeDB(');
@@ -281,18 +279,41 @@ assert(
     if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
     const writeBody = main.slice(writeStart, writeEnd);
 
+    return writeBody.includes('const { audit_logs, _pendingAuditLogEntries, ...dbWithoutAuditLogs } = data;') &&
+      writeBody.includes('JSON.stringify(dbForDisk)') &&
+      !/JSON\.stringify\(dbForDisk\)[\s\S]{0,80}audit_logs/.test(writeBody);
+  })(),
+  'writeDB must exclude audit_logs and _pendingAuditLogEntries from the db.json payload, or audit_logs bloats every DB write again'
+);
+
+// 監査ログの専用ファイルへの永続化は、対応するDB書き込み(safeWriteFile)が
+// 実際に成功した後にだけ行う必要がある。appendAuditLog()の時点で即座に
+// ファイルへ書いてしまうと、その後writeDB()が失敗(署名不一致等)して実際の
+// 変更が破棄されても、「成功した」と主張する監査エントリだけが残ってしまう
+// (=起きなかった変更を成功として記録する、意味的に誤った監査証跡になる)。
+// appendAuditLogは保留リストに積むだけにし、writeDBがsafeWriteFile成功後に
+// フラッシュすることを保証する。
+assert(
+  (() => {
     const appendStart = main.indexOf('function appendAuditLog(db, action, {');
     const appendEnd = main.indexOf('function appendParentActionAudit(');
     if (appendStart < 0 || appendEnd < 0 || appendEnd <= appendStart) return false;
     const appendBody = main.slice(appendStart, appendEnd);
 
-    return writeBody.includes('const { audit_logs, ...dbWithoutAuditLogs } = data;') &&
-      writeBody.includes('JSON.stringify(dbForDisk)') &&
-      !/JSON\.stringify\(dbForDisk\)[\s\S]{0,80}audit_logs/.test(writeBody) &&
-      appendBody.includes('appendAuditLogFile(entry)') &&
-      appendBody.indexOf('db.audit_logs.push(entry)') < appendBody.indexOf('appendAuditLogFile(entry)');
+    const writeStart = main.indexOf('function writeDB(');
+    const writeEnd = main.indexOf('function getSettingRecord(');
+    if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
+    const writeBody = main.slice(writeStart, writeEnd);
+
+    const safeWriteIdx = writeBody.indexOf('safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbForDisk)));');
+    const flushIdx = writeBody.indexOf('appendAuditLogFile(entry)');
+
+    return !appendBody.includes('appendAuditLogFile(entry)') &&
+      appendBody.includes('db._pendingAuditLogEntries') &&
+      appendBody.indexOf('db.audit_logs.push(entry)') < appendBody.indexOf('db._pendingAuditLogEntries.push(entry)') &&
+      safeWriteIdx >= 0 && flushIdx >= 0 && safeWriteIdx < flushIdx;
   })(),
-  'writeDB must exclude audit_logs from the db.json payload, and appendAuditLog must synchronously append each new entry to the dedicated audit log file, or audit_logs either bloats every DB write again or stops being durably persisted'
+  'appendAuditLog must only queue entries in _pendingAuditLogEntries (not write them immediately), and writeDB must flush them via appendAuditLogFile only after safeWriteFile succeeds, or a failed DB write can leave a misleading audit-log entry claiming success for a change that was never persisted'
 );
 
 // readDbShared()はキャッシュヒット時にdbCacheをディープコピーせず直接返す
@@ -342,23 +363,23 @@ assert(
   'normalizeParentHttpRequest must use readDbShared() (no full-DB clone) since it only reads share_mode/parent_ip on every parent-relayed request'
 );
 
-// appendAuditLogの圧縮(閾値超過時のrewriteAuditLogFile)は、このプロセスの
-// メモリ上のaudit_logsだけを正として書き換えると、共有DBフォルダ運用で
-// 他プロセスが既に専用ファイルへ追記済みのエントリをサイレントに消してしまう。
-// 圧縮前にloadAuditLogFile()でディスクの最新内容を読み直し、
+// 監査ログの圧縮(閾値超過時のrewriteAuditLogFile、writeDB内に移設済み)は、
+// このプロセスのメモリ上のaudit_logsだけを正として書き換えると、共有DBフォルダ
+// 運用で他プロセスが既に専用ファイルへ追記済みのエントリをサイレントに消して
+// しまう。圧縮前にloadAuditLogFile()でディスクの最新内容を読み直し、
 // mergeAuditLogEntriesでマージしてから間引くことを保証する。
 assert(
   (() => {
-    const idx = main.indexOf('function appendAuditLog(db, action, {');
-    const end = main.indexOf('\nfunction appendParentActionAudit(');
+    const idx = main.indexOf('function writeDB(');
+    const end = main.indexOf('function getSettingRecord(');
     if (idx < 0 || end < 0 || end <= idx) return false;
     const body = main.slice(idx, end);
     const compactIdx = body.indexOf('AUDIT_LOG_COMPACT_THRESHOLD');
     if (compactIdx < 0) return false;
     const compactBody = body.slice(compactIdx);
-    return compactBody.includes('mergeAuditLogEntries(db.audit_logs, loadAuditLogFile())');
+    return compactBody.includes('mergeAuditLogEntries(audit_logs, loadAuditLogFile())');
   })(),
-  'appendAuditLog must merge with the on-disk audit log file (loadAuditLogFile + mergeAuditLogEntries) before compacting, or entries appended by another process sharing the same DB folder can be silently lost'
+  'writeDB must merge with the on-disk audit log file (loadAuditLogFile + mergeAuditLogEntries) before compacting, or entries appended by another process sharing the same DB folder can be silently lost'
 );
 
 // loadMasters()のstaffs取得(getAllStaffs)は、単発の一時的な失敗でwards/beds等を

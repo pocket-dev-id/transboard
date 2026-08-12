@@ -290,7 +290,7 @@ const BedMap = {
       const patientIdText = showNames ? UI.escapeHTML(bed.patient_id || '') : '＊＊＊＊';
 
       patientHtml = `<div class="bed-patient-info" style="margin-top: 2px; border-top: 1px dashed rgba(0,0,0,0.08); padding-top: 2px;">
-        <div class="bed-patient-name" style="font-weight:700; color:#2d3748; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${patientNameText}</div>
+        <div class="bed-patient-name" title="${patientNameText}" style="font-weight:700; color:#2d3748; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; white-space:normal; word-break:break-word;">${patientNameText}</div>
         <div class="bed-patient-meta" style="font-size:9px; color:#718096; display:flex; justify-content:space-between; align-items:center; margin-top:1px;">
           <span>${patientIdText}</span>
           <span style="padding:1px 3px; border-radius:2px; font-size:8px; font-weight:800; color:#fff; background:${presenceColor};">${presenceLabel}</span>
