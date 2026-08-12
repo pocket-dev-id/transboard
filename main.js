@@ -1166,6 +1166,10 @@ function normalizeShareMode(value) {
   return value === 'client' || value === 'child' ? 'client' : 'parent';
 }
 
+function normalizeTerminalRole(value) {
+  return value === 'exam' ? 'exam' : 'ward';
+}
+
 function maskAuditValue(table, id, value) {
   if (table === 'system_settings' && AUDIT_SECRET_SETTING_IDS.has(String(id || ''))) {
     return value === undefined ? undefined : '[changed]';
@@ -1306,6 +1310,7 @@ function readTerminalRole() {
     return {
       shareMode: normalizeShareMode(role.shareMode || role.share_mode),
       parentIp: String(role.parentIp || role.parent_ip || ''),
+      terminalRole: normalizeTerminalRole(role.terminalRole || role.terminal_role),
       updatedAt: Number(role.updatedAt || 0) || 0,
     };
   } catch (err) {
@@ -1314,11 +1319,13 @@ function readTerminalRole() {
   }
 }
 
-function writeTerminalRole({ shareMode, parentIp = '' }) {
+function writeTerminalRole({ shareMode, parentIp = '', terminalRole } = {}) {
   try {
+    const existing = readTerminalRole();
     const role = {
       shareMode: normalizeShareMode(shareMode),
       parentIp: String(parentIp || ''),
+      terminalRole: normalizeTerminalRole(terminalRole || existing?.terminalRole),
       updatedAt: Date.now(),
     };
     safeWriteFile(TERMINAL_ROLE_FILE, JSON.stringify(role, null, 2));
@@ -3155,6 +3162,9 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     console.warn('[Security] 移送開始APIトークン認証失敗');
     return { success: false, message: 'Unauthorized', unauthorized: true };
   }
+  if (normalizeTerminalRole(requestMeta.terminalRole) === 'exam') {
+    return { success: false, message: '検査室端末では移送を開始できません' };
+  }
 
   let payload;
   try { payload = JSON.parse(bodyStr || '{}'); } catch {
@@ -3288,7 +3298,7 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
   return { success: true, idempotent: false, event: eventData };
 }
 
-async function processStatusUpdateRequest(method, bodyStr, isExternal = false, apiToken = null) {
+async function processStatusUpdateRequest(method, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
   }
@@ -3307,6 +3317,9 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   const expectedStatus = payload.expectedStatus || null;
   const extraFields = sanitizeStatusExtraFields(payload.extraFields);
   const scope = payload.scope === 'exam' ? 'exam' : 'ward';
+  if (normalizeTerminalRole(requestMeta.terminalRole) === 'exam' && scope !== 'exam') {
+    return { success: false, message: '検査室端末では病棟側の状態操作はできません' };
+  }
   const knownStatuses = new Set([
     'IN_BED', 'DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM',
     'NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED', 'CANCELLED',
@@ -3480,6 +3493,9 @@ function processStatusAcknowledgeRequest(method, bodyStr, isExternal = false, ap
   }
   if (isExternal && !isValidApiToken(apiToken)) {
     return { success: false, message: 'Unauthorized', unauthorized: true };
+  }
+  if (normalizeTerminalRole(requestMeta.terminalRole) === 'exam') {
+    return { success: false, message: '検査室端末では病棟通知を確認できません' };
   }
 
   let payload;
@@ -4285,20 +4301,21 @@ handleTrusted('db-request', async (event, { url, options }) => {
     return { success: true };
   }
   const method = (options.method || 'GET').toUpperCase();
+  const terminalRole = readTerminalRole()?.terminalRole || 'ward';
   if (url === 'audit/write') {
     return processAuditWriteRequest(method, options.body || '', false);
   }
   if (url === 'status/update') {
-    return processStatusUpdateRequest(method, options.body || '', false);
+    return processStatusUpdateRequest(method, options.body || '', false, null, { terminalRole });
   }
   if (url === 'status/note') {
     return processStatusNoteRequest(method, options.body || '', false);
   }
   if (url === 'status/ack') {
-    return processStatusAcknowledgeRequest(method, options.body || '', false);
+    return processStatusAcknowledgeRequest(method, options.body || '', false, null, { terminalRole });
   }
   if (url === 'transfer/start') {
-    return processTransferStartRequest(method, options.body || '', false);
+    return processTransferStartRequest(method, options.body || '', false, null, { terminalRole });
   }
   const result = await processDbRequest(method, url, options.body || '', false);
   syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
@@ -4314,7 +4331,7 @@ handleTrusted('webrtc-request', async (event, { url, options }) => {
 // 子機から親機へのHTTPリクエストはmainプロセスで中継する。ただしrendererが
 // 任意のLAN/ローカルサービスへ接続できないよう、設定済み親機のAPIだけに制限する。
 const ALLOWED_PARENT_HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
-const ALLOWED_PARENT_HTTP_HEADERS = new Set(['content-type', 'x-api-token']);
+const ALLOWED_PARENT_HTTP_HEADERS = new Set(['content-type', 'x-api-token', 'x-terminal-role']);
 const MAX_PARENT_REQUEST_BYTES = 1024 * 1024;
 const MAX_PARENT_RESPONSE_BYTES = 5 * 1024 * 1024;
 
@@ -4484,6 +4501,22 @@ handleTrusted('verify-admin-passcode', (event, passcode) => (
 handleTrusted('set-admin-passcode', (event, passcode) => setAdminPasscode(passcode));
 handleTrusted('get-terminal-api-token', () => getTerminalApiToken());
 handleTrusted('set-terminal-api-token', (event, token) => setTerminalApiToken(token));
+handleTrusted('get-terminal-role', () => ({
+  success: true,
+  terminalRole: normalizeTerminalRole(readTerminalRole()?.terminalRole),
+}));
+handleTrusted('set-terminal-role', (event, value) => {
+  const current = readTerminalRole() || {};
+  const db = readDB();
+  const saved = writeTerminalRole({
+    shareMode: current.shareMode || getSettingRecord(db, 'share_mode')?.value,
+    parentIp: current.parentIp ?? getSettingRecord(db, 'parent_ip')?.value ?? '',
+    terminalRole: value,
+  });
+  return saved
+    ? { success: true, terminalRole: saved.terminalRole }
+    : { success: false, message: '端末役割を保存できませんでした' };
+});
 handleTrusted('cleanup-event-retention', () => {
   const db = readDB();
   if (normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) !== 'parent') {
@@ -6150,16 +6183,20 @@ function startParentServer() {
             remoteIp,
           });
         } else if (cleanUrl === 'status/update') {
-          result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token']);
+          result = await processStatusUpdateRequest(req.method, body, true, req.headers['x-api-token'], {
+            terminalRole: req.headers['x-terminal-role'],
+          });
         } else if (cleanUrl === 'status/note') {
           result = processStatusNoteRequest(req.method, body, true, req.headers['x-api-token']);
         } else if (cleanUrl === 'status/ack') {
           result = processStatusAcknowledgeRequest(req.method, body, true, req.headers['x-api-token'], {
             remoteIp,
+            terminalRole: req.headers['x-terminal-role'],
           });
         } else if (cleanUrl === 'transfer/start') {
           result = await processTransferStartRequest(req.method, body, true, req.headers['x-api-token'], {
             remoteIp,
+            terminalRole: req.headers['x-terminal-role'],
           });
         } else if (cleanUrl.startsWith('parent-actions/')) {
           const action = cleanUrl.replace(/^parent-actions\//, '').split('?')[0];

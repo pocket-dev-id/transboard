@@ -239,6 +239,27 @@ assert(
 );
 
 assert(
+  main.includes('function normalizeTerminalRole(value)') &&
+  main.includes('検査室端末では移送を開始できません') &&
+  main.includes('検査室端末では病棟側の状態操作はできません') &&
+  main.includes('検査室端末では病棟通知を確認できません') &&
+  main.includes("handleTrusted('set-terminal-role'") &&
+  preload.includes("setTerminalRole: (role) => ipcRenderer.invoke('set-terminal-role', role)"),
+  'Exam terminals must have a persisted role and must not use ward transfer or acknowledgement operations'
+);
+assert(
+  app.includes("localStorage.getItem('cfg_terminal_role') === 'exam'") &&
+  app.includes("document.body.classList.toggle('exam-terminal-mode', exam)") &&
+  app.includes("API.getWardStatusEvents(wardId, todayMs)") &&
+  app.includes("Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [] })") &&
+  api.includes("'X-Terminal-Role': terminalRole") &&
+  terminalAccess.includes("name=\"terminal-role\"") &&
+  wizard.includes("name=\"terminal_role\"") &&
+  styles.includes('body.exam-terminal-mode .ward-selector'),
+  'Exam terminal mode must hide ward selection, avoid ward notification polling, and propagate the role to the parent'
+);
+
+assert(
   priority.includes('UI.escapeHTML(examType.name)') &&
   priority.includes('UI.escapeHTML(examRoom.name)'),
   'Priority labels must be HTML-escaped'

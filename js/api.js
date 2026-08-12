@@ -182,9 +182,20 @@ const API = {
       try {
         const cleanUrl = url.replace(/^\//, '');
         const apiToken = await getTerminalApiToken();
+        const terminalRole = localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward';
         const optionsWithToken = apiToken
-          ? { ...options, headers: { ...(options.headers || {}), 'X-API-Token': apiToken } }
-          : options;
+          ? {
+              ...options,
+              headers: {
+                ...(options.headers || {}),
+                'X-API-Token': apiToken,
+                'X-Terminal-Role': terminalRole,
+              }
+            }
+          : {
+              ...options,
+              headers: { ...(options.headers || {}), 'X-Terminal-Role': terminalRole },
+            };
         const res = await parentFetch(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
         if (res.status === 204) return null;
         const data = await res.json();

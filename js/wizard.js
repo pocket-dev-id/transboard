@@ -17,6 +17,7 @@ const Wizard = {
       // localStorageの値（未設定なら初回起動とみなしローカルDBのgs()にフォールバック）を優先する。
       share_mode:                   localStorage.getItem('cfg_share_mode') || gs('share_mode') || 'parent',
       standalone:                   localStorage.getItem('cfg_standalone_mode') === 'true',
+      terminal_role:                localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward',
       parent_ip:                    localStorage.getItem('cfg_parent_ip')  || gs('parent_ip')  || '',
       api_token:                    terminalApiToken,
       import_connection_type:       gs('import_connection_type')       || 'csv',
@@ -129,6 +130,17 @@ const Wizard = {
         ${this._radioCard('wiz_role', 'client', sel('client'),
           'fa-laptop', '子機モード（クライアント）',
           'ネットワーク上の親機PCに接続し、表示の同期・操作を行います。')}
+      </div>
+      <div class="wiz-sub-panel" style="margin-top:16px;">
+        <label class="wiz-label">この端末の画面役割</label>
+        <div class="wiz-radio-group" style="gap:8px;">
+          ${this._radioCard('terminal_role', 'ward', this.config.terminal_role === 'ward',
+            'fa-hospital', '病棟端末',
+            '病棟選択・病床・通知・申し送りを操作します。')}
+          ${this._radioCard('terminal_role', 'exam', this.config.terminal_role === 'exam',
+            'fa-x-ray', '検査室端末',
+            '病棟選択を隠し、検査室の進捗管理を直接表示します。')}
+        </div>
       </div>
       <div id="parent-ip-container" class="wiz-sub-panel" style="display:${sel('client') ? 'block' : 'none'};">
         <label class="wiz-label">親機のIPアドレス <span style="color:#dc2626">*</span></label>
@@ -434,6 +446,12 @@ const Wizard = {
     document.getElementById('wizard-finish')?.addEventListener('click', () => this.finish());
 
     // Step 1: 稼働モード切り替え（単独/親機共有/子機の3択→share_mode+standaloneに集約）
+    overlay.querySelectorAll('input[name="terminal_role"]').forEach(r => {
+      r.addEventListener('change', () => {
+        this.config.terminal_role = r.value === 'exam' ? 'exam' : 'ward';
+      });
+    });
+
     overlay.querySelectorAll('input[name="wiz_role"]').forEach(r => {
       r.addEventListener('change', () => {
         this._saveCurrentStepState();
@@ -617,6 +635,8 @@ const Wizard = {
         this.config.share_mode = r.value === 'client' ? 'client' : 'parent';
         this.config.standalone = r.value === 'standalone';
       }
+      const terminalRole = document.querySelector('input[name="terminal_role"]:checked');
+      if (terminalRole) this.config.terminal_role = terminalRole.value === 'exam' ? 'exam' : 'ward';
       const ip = document.getElementById('wizard-parent-ip');
       if (ip) this.config.parent_ip = ip.value.trim();
       const token = document.getElementById('wizard-api-token');
@@ -684,6 +704,13 @@ const Wizard = {
       // （子機が誤って"親機自身の"稼働モードを上書きしてしまう事故になるため）。
       localStorage.setItem('cfg_share_mode', this.config.share_mode);
       localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
+      localStorage.setItem('cfg_terminal_role', this.config.terminal_role === 'exam' ? 'exam' : 'ward');
+      if (window.electronAPI?.setTerminalRole) {
+        const roleSave = await window.electronAPI.setTerminalRole(this.config.terminal_role === 'exam' ? 'exam' : 'ward');
+        if (roleSave?.success === false) {
+          throw new Error(roleSave.message || '端末役割を保存できませんでした');
+        }
+      }
       const tokenSave = await API.setTerminalApiToken(this.config.api_token || '');
       if (!tokenSave?.success) {
         throw new Error(tokenSave?.message || 'APIトークンを安全に保存できませんでした');
@@ -765,8 +792,10 @@ const Wizard = {
       await App.applySystemVisualSettings();
       // 単独運用モードのUI反映（検査室タブ・通話ボタン・接続端末チップ）とポーリング再判定
       App._applyStandaloneMode();
+      App._applyTerminalRoleMode({ navigate: false });
       App._startDevicePresenceMonitor();
-      WardDashboard.render();
+      if (App.isExamTerminal()) UI.switchPage('exam-room');
+      else WardDashboard.render();
       this.close();
     } catch (err) {
       console.error('[Wizard Finish Error]', err);

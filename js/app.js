@@ -420,7 +420,58 @@ const App = {
   // 接続ルーティングには影響しない端末ローカルの表示フラグ。
   isStandalone() {
     const mode = localStorage.getItem('cfg_share_mode') || 'parent';
-    return mode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true';
+    return mode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true' && !this.isExamTerminal();
+  },
+
+  getTerminalRole() {
+    return localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward';
+  },
+
+  isExamTerminal() {
+    return this.getTerminalRole() === 'exam';
+  },
+
+  async _loadTerminalRole() {
+    const storedRole = localStorage.getItem('cfg_terminal_role');
+    if (storedRole === 'exam' || storedRole === 'ward') return;
+    try {
+      const result = await window.electronAPI?.getTerminalRole?.();
+      localStorage.setItem('cfg_terminal_role', result?.terminalRole === 'exam' ? 'exam' : 'ward');
+    } catch (err) {
+      console.warn('[TerminalRole] 端末役割の読み込みに失敗しました:', err);
+      localStorage.setItem('cfg_terminal_role', 'ward');
+    }
+  },
+
+  async setTerminalRole(role) {
+    const normalized = role === 'exam' ? 'exam' : 'ward';
+    if (window.electronAPI?.setTerminalRole) {
+      const result = await window.electronAPI.setTerminalRole(normalized);
+      if (result?.success === false) {
+        throw new Error(result.message || '端末役割を保存できませんでした');
+      }
+    }
+    localStorage.setItem('cfg_terminal_role', normalized);
+    this._applyTerminalRoleMode();
+    this._applyStandaloneMode();
+    return normalized;
+  },
+
+  _applyTerminalRoleMode({ navigate = true } = {}) {
+    const exam = this.isExamTerminal();
+    document.body.classList.toggle('exam-terminal-mode', exam);
+
+    const wardSelect = document.getElementById('ward-select');
+    const wardSelector = wardSelect?.closest('.ward-selector');
+    if (wardSelect) wardSelect.disabled = exam;
+    if (wardSelector) wardSelector.hidden = exam;
+
+    if (navigate && exam) {
+      const activePage = document.querySelector('.tab-btn.active')?.dataset.page;
+      if (activePage && activePage !== 'exam-room' && activePage !== 'settings') {
+        UI.switchPage('exam-room');
+      }
+    }
   },
 
   // bodyクラスで単独運用UI(検査室タブ・通話ボタン・接続端末チップの非表示)を一括制御する。
@@ -471,6 +522,8 @@ const App = {
 
   async init() {
     console.log('[App] 初期化開始...');
+    await this._loadTerminalRole();
+    this._applyTerminalRoleMode({ navigate: false });
  
     // 表示倍率（ズーム）のイベントバインド（起動時はDBロード後に applySystemVisualSettings で一括適用）
     const zoomSelect = document.getElementById('zoom-select');
@@ -646,6 +699,7 @@ const App = {
 
     // 病棟セレクト変更
     document.getElementById('ward-select').addEventListener('change', async (e) => {
+      if (this.isExamTerminal()) return;
       AppState.currentWardId = e.target.value;
       localStorage.setItem('current_ward_id', AppState.currentWardId);
       await this.refreshData();
@@ -734,6 +788,7 @@ const App = {
 
     // 再度同期
     this.syncWardSelect();
+    this._applyTerminalRoleMode({ navigate: false });
 
     // 通話パネル描画（マスタ読み込み後）
     CallPanel._renderCallPanel();
@@ -746,7 +801,8 @@ const App = {
     await this.applySystemVisualSettings();
 
     // 初期レンダリング
-    WardDashboard.render();
+    if (this.isExamTerminal()) UI.switchPage('exam-room');
+    else WardDashboard.render();
 
     // ポーリング開始
     this.startPolling();
@@ -1453,7 +1509,9 @@ const App = {
     const sendHeartbeat = async () => {
       if (this._heartbeatInFlight) return;
       this._heartbeatInFlight = true;
-      const wardId = AppState.currentWardId || localStorage.getItem('current_ward_id') || '';
+      const wardId = this.isExamTerminal()
+        ? ''
+        : (AppState.currentWardId || localStorage.getItem('current_ward_id') || '');
       try {
         const res = await API.deviceHeartbeat({
           deviceId,
@@ -1528,7 +1586,7 @@ const App = {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const isChild = shareMode === 'client' || shareMode === 'child';
     const summary = DevicePresence.summarize(devices, {
-      currentWardId: AppState.currentWardId,
+      currentWardId: this.isExamTerminal() ? null : AppState.currentWardId,
       parentVersion: AppState.appVersion,
       hasConnectionProblem: isChild && this._connectionLost,
       connectionReason: this._connectionLostReason,
@@ -1656,6 +1714,16 @@ const App = {
 
   syncWardSelect() {
     const select = document.getElementById('ward-select');
+    const exam = this.isExamTerminal();
+    const wardSelector = select?.closest('.ward-selector');
+    if (select) select.disabled = exam;
+    if (wardSelector) wardSelector.hidden = exam;
+    if (exam) {
+      if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
+        CallPanel._renderCallPanel();
+      }
+      return;
+    }
     if (select) {
       const savedWardId = localStorage.getItem('current_ward_id');
       const current = [savedWardId, AppState.currentWardId, select.value]
@@ -1721,7 +1789,11 @@ const App = {
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
 
       // 申し送りメモを読み込む（現在病棟）
-      if (loadHandover && typeof Handover !== 'undefined') await Handover.load().catch(() => {});
+      if (loadHandover && !this.isExamTerminal() && typeof Handover !== 'undefined') {
+        await Handover.load().catch(() => {});
+      } else if (this.isExamTerminal()) {
+        AppState.handoverNotes = [];
+      }
       return true;
 
     } catch (e) {
@@ -1798,8 +1870,11 @@ const App = {
   async _refreshDataOnce(wardId, todayMs) {
     try {
       const dayEndMs = todayMs + 24 * 60 * 60 * 1000;
+      const isExamTerminal = this.isExamTerminal();
       const [eventResult, settingsResult, feedsResult, itemsResult] = await Promise.allSettled([
-        API.getWardStatusEvents(wardId, todayMs),
+        isExamTerminal
+          ? Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [] })
+          : API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data),
         API.getScheduleFeeds(),
         API.getScheduleItemsForRange(todayMs, dayEndMs)
@@ -1817,7 +1892,7 @@ const App = {
       const scheduleItems = itemsResult.status === 'fulfilled'
         ? itemsResult.value
         : (AppState.scheduleItems || []);
-      if (AppState.currentWardId !== wardId) return false;
+      if (!isExamTerminal && AppState.currentWardId !== wardId) return false;
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
       AppState.recentStatusLogs = eventStatus.recentStatusLogs || [];
@@ -2013,6 +2088,10 @@ const App = {
   },
 
   async acknowledgeNotification(logId) {
+    if (this.isExamTerminal()) {
+      UI.toast('検査室端末では病棟通知を確認できません', 'warning');
+      return false;
+    }
     try {
       const result = await API.acknowledgeStatusLog(logId, AppState.currentWardId);
       const updated = result?.log;
@@ -2033,6 +2112,7 @@ const App = {
   _checkNotifications() {
     const now = Date.now();
     this._updateNavBadge();
+    if (this.isExamTerminal()) return;
 
     // 通知音設定のロード (デフォルト値)
     let soundSettings = {

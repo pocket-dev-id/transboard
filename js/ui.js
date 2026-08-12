@@ -383,6 +383,15 @@ const UI = {
 
   /* ---------- タブ切り替え ---------- */
   switchPage(pageId) {
+    if (
+      typeof App !== 'undefined' &&
+      typeof App.isExamTerminal === 'function' &&
+      App.isExamTerminal() &&
+      pageId !== 'exam-room' &&
+      pageId !== 'settings'
+    ) {
+      pageId = 'exam-room';
+    }
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     const page = document.getElementById(`page-${pageId}`);
