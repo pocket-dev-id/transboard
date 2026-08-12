@@ -176,22 +176,9 @@ const CONFIG = {
 
   getAllowedActions(status, scope = 'ward') {
     const source = scope === this.STATUS_SCOPE.EXAM ? this.EXAM_ROOM_ACTIONS : this.ACTION_BUTTONS;
-    const hidden = new Set(this.getHiddenStatuses());
-    const result = [];
-    const seen = new Set();
-    const visit = (actions) => {
-      actions.forEach(action => {
-        if (hidden.has(action.toStatus)) {
-          visit(source[action.toStatus] || []);
-          return;
-        }
-        if (seen.has(action.toStatus)) return;
-        seen.add(action.toStatus);
-        result.push(action);
-      });
-    };
-    visit(source[status] || []);
-    return result;
+    // 非表示設定は表示だけを変える。中間状態をここで自動的に
+    // スキップすると、UI上の遷移と保存された履歴が一致しなくなる。
+    return [...(source[status] || [])];
   },
 
   ROLES: {

@@ -12,6 +12,7 @@ function assert(condition, message) {
 }
 
 const main = read('main.js');
+const config = read('js/config.js');
 const indexHtml = read('index.html');
 const api = read('js/api.js');
 const app = read('js/app.js');
@@ -258,6 +259,34 @@ assert(
   !importNotify.includes('showOsNotification') &&
   !importNotify.includes('notification_os'),
   'Windows native toast notifications must remain removed'
+);
+
+// ステータス遷移はmainプロセスの検証を必ず通し、クライアント入力の
+// maintenanceフラグで通常ルールを迂回できないようにする。
+const statusUpdateIndex = main.indexOf('async function processStatusUpdateRequest');
+const statusUpdateEnd = main.indexOf('\nfunction processStatusNoteRequest', statusUpdateIndex);
+assert(statusUpdateIndex >= 0 && statusUpdateEnd > statusUpdateIndex, 'Status update handler must remain present');
+const statusUpdateBody = main.slice(statusUpdateIndex, statusUpdateEnd);
+assert(
+  statusUpdateBody.includes('Unknown status:') &&
+  statusUpdateBody.includes('isScopedTransferStatusTransitionAllowed') &&
+  !statusUpdateBody.includes('payload.maintenance') &&
+  !statusUpdateBody.includes('maintenanceComplete'),
+  'Status updates must reject unknown states and must not bypass transition validation via a client maintenance flag'
+);
+assert(
+  main.includes("changed_by: payload.source === 'ic_scan'") ||
+  main.includes("changed_by: ['ic_scan', 'maintenance'].includes(payload.source)"),
+  'Status history must preserve the operation source instead of always recording UI操作'
+);
+assert(
+  !main.includes('if (hidden.has(status))') &&
+  !api.includes('maintenance: true'),
+  'Hidden statuses must not be auto-skipped and the removed maintenance payload must not be sent'
+);
+assert(
+  config.includes('return [...(source[status] || [])];'),
+  'Renderer action availability must use explicit one-step transitions'
 );
 
 // 患者取り違え・移送の取りこぼしにつながる3つのガード。いずれも processDbRequest や

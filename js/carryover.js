@@ -100,11 +100,10 @@ const CarryoverModal = {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
-      // 帰棟完了は前日から残った任意のステータス(IN_EXAM等)から直接RETURNEDへ倒す整理操作のため、
-      // 通常のワード遷移ルール(PICKUP_REQUIRED->RETURNEDのみ許可)をバイパスするmaintenance経路を使う
+      // 帰棟完了も通常の遷移ルールを必ず通す。進行中状態からの強制帰棟は許可しない。
       if (action === 'RETURNED') {
         const target = items.find(x => x.id === eventId);
-        await API.completeEventForMaintenance(eventId, target?.current_status || null);
+        await API.updateEventStatus(eventId, 'RETURNED', {}, CONFIG.STATUS_SCOPE.WARD, target?.current_status || null);
       } else {
         await API.updateEventStatus(eventId, action);
       }

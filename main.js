@@ -2841,22 +2841,10 @@ function getHiddenTransferStatuses(db) {
 }
 
 function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIONS) {
-  const hidden = getHiddenTransferStatuses(db);
-  const result = [];
-  const seen = new Set();
-  const visit = (targets) => {
-    targets.forEach(status => {
-      if (hidden.has(status)) {
-        visit(actionMap[status] || []);
-        return;
-      }
-      if (seen.has(status)) return;
-      seen.add(status);
-      result.push(status);
-    });
-  };
-  visit(actionMap[fromStatus] || []);
-  return result;
+  // 非表示設定は表示だけを変える。永続化される遷移を自動的に
+  // スキップすると、UIと履歴の意味が一致しなくなるため、遷移規則は
+  // 常に明示的な1段階遷移として評価する。
+  return [...(actionMap[fromStatus] || [])];
 }
 
 function isTransferStatusTransitionAllowed(fromStatus, toStatus, db) {
@@ -3290,7 +3278,7 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     transfer_event_id: eventId,
     from_status: null,
     to_status: 'MOVING',
-    changed_by: 'UI操作',
+    changed_by: isExternal ? 'child_api' : 'local_ui',
     changed_at: now,
     note: '',
   });
@@ -3337,9 +3325,16 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   const expectedStatus = payload.expectedStatus || null;
   const extraFields = sanitizeStatusExtraFields(payload.extraFields);
   const scope = payload.scope === 'exam' ? 'exam' : 'ward';
+  const knownStatuses = new Set([
+    'IN_BED', 'DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM',
+    'NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED', 'CANCELLED',
+  ]);
 
   if (!eventId || !newStatus) {
     return { success: false, message: 'eventId and newStatus are required' };
+  }
+  if (!knownStatuses.has(String(newStatus))) {
+    return { success: false, message: `Unknown status: ${newStatus}` };
   }
 
   const db = readDB();
@@ -3351,11 +3346,6 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
 
   const current = list[index];
   const fromStatus = current.current_status || null;
-  const maintenanceComplete = (
-    payload.maintenance === true &&
-    newStatus === 'RETURNED' &&
-    ACTIVE_TRANSFER_STATUSES.has(fromStatus)
-  );
   const legacyMovingRetry = (
     expectedStatus === 'DEPART_REGISTERED' &&
     fromStatus === 'MOVING' &&
@@ -3367,7 +3357,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   if (fromStatus === newStatus || legacyMovingRetry) {
     return { success: true, idempotent: true, event: current };
   }
-  if (!maintenanceComplete && !isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
+  if (!isScopedTransferStatusTransitionAllowed(fromStatus, newStatus, db, scope)) {
     return {
       success: false,
       message: `Invalid status transition: ${fromStatus} -> ${newStatus}`,
@@ -3385,9 +3375,6 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     CANCELLED: 'cancelled_at',
   };
   const patch = { current_status: newStatus, ...extraFields };
-  if (maintenanceComplete) {
-    patch.patient_ic_tag_id = null;
-  }
   if (statusTimeMap[newStatus]) {
     patch[statusTimeMap[newStatus]] = now;
   }
@@ -3416,7 +3403,9 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     transfer_event_id: eventId,
     from_status: fromStatus,
     to_status: newStatus,
-    changed_by: 'UI操作',
+    changed_by: ['ic_scan', 'maintenance'].includes(payload.source)
+      ? payload.source
+      : (isExternal ? 'child_api' : 'local_ui'),
     changed_at: now,
     note: '',
   });
@@ -3428,7 +3417,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     result: 'success',
     before: summarizeAuditRecord('transfer_events', current),
     after: summarizeAuditRecord('transfer_events', list[index]),
-    details: { fromStatus, toStatus: newStatus, scope, maintenance: maintenanceComplete },
+    details: { fromStatus, toStatus: newStatus, scope },
   });
 
   if (!writeDB(db)) {
@@ -3440,7 +3429,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     processWebrtcRequest('POST', 'webrtc/send', JSON.stringify(speechMsg));
   }
 
-  console.log(`[Status] Updated: id=${eventId}, ${fromStatus} -> ${newStatus}, scope=${scope}${maintenanceComplete ? ', maintenance=true' : ''}`);
+  console.log(`[Status] Updated: id=${eventId}, ${fromStatus} -> ${newStatus}, scope=${scope}`);
   return list[index];
 }
 
