@@ -164,6 +164,7 @@ const BedMap = {
       const feedId = item?.feed_id == null ? '' : String(item.feed_id);
       const feed = feedId ? feedsById.get(feedId) : null;
       if (feedId && !feed) return schedules;
+      if (feed?.is_active === false) return schedules;
       if (feed?.show_on_bed_map === false) return schedules;
 
       const wardIds = Array.isArray(feed?.ward_ids)

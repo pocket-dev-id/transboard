@@ -18,6 +18,8 @@ const app = read('js/app.js');
 const preload = read('preload.js');
 const priority = read('js/priority.js');
 const call = read('js/call.js');
+const bedmap = read('js/bedmap.js');
+const timeline = read('js/timeline.js');
 const wizard = read('js/wizard.js');
 const networkSettings = read('js/settings/network.js');
 const importNotify = read('js/settings/import-notify.js');
@@ -804,6 +806,33 @@ assert(
     return before.includes("if (method !== 'GET')");
   })(),
   'The [DB Request] log in processDbRequest must be gated to non-GET methods to avoid per-poll logging overhead scaling with connected terminals'
+);
+
+// スケジュールフィードを無効化(is_active=false)しても、取り込み済みの
+// schedule_itemsはDBから削除されない(setupScheduleFeedTriggersが今後の
+// 自動取り込みを止めるだけ)。描画側でis_activeを見ていないと、無効化
+// したフィードの予定が病床マップ・タイムラインに残り続けてしまう
+assert(
+  (() => {
+    const idx = bedmap.indexOf('_getTodaySchedulesForBed(bed) {');
+    if (idx < 0) return false;
+    const end = bedmap.indexOf('_renderTodayScheduleBadges(bed) {', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = bedmap.slice(idx, end);
+    return body.includes('feed?.is_active === false');
+  })(),
+  '_getTodaySchedulesForBed must hide items whose feed has is_active === false, otherwise disabled feeds keep showing stale badges on the bed map'
+);
+assert(
+  (() => {
+    const idx = timeline.indexOf('const allItems = await API.getScheduleItemsForRange(dayStart, dayEnd);');
+    if (idx < 0) return false;
+    const end = timeline.indexOf('this._scheduleItems = schedItems;', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes('AppState.scheduleFeeds') && body.includes('feed?.is_active === false');
+  })(),
+  'Timeline schedule item fetch must look up the parent feed and hide items whose feed has is_active === false'
 );
 
 console.log('Security regression checks passed.');
