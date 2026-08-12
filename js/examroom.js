@@ -205,7 +205,7 @@ const ExamRoom = {
         }
       }
 
-      await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM, matchEvent.current_status);
+      await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM, matchEvent.current_status, 'ic_scan');
       const label = nextLabel;
       UI.toast(`[ICスキャン] ${bedName} → ${label}`, 'success');
       UI.playScanSound(true);

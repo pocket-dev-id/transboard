@@ -314,7 +314,7 @@ const API = {
 
   async patch(table, id, data, { skipRevisionCheck = false } = {}) {
     if (table === 'transfer_events' && data?.current_status === 'RETURNED') {
-      return this.completeEventForMaintenance(id, data.expectedStatus || null);
+      return this.updateEventStatus(id, 'RETURNED', {}, CONFIG.STATUS_SCOPE.WARD, data.expectedStatus || null);
     }
     const payload = skipRevisionCheck ? data : addExpectedMasterRevision(table, id, data);
     return ensureMutationSuccess(await this._fetch(`tables/${table}/${id}`, {
@@ -527,11 +527,11 @@ const API = {
     throw err;
   },
 
-  async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD, expectedStatus = null) {
+  async updateEventStatus(eventId, newStatus, extraFields = {}, scope = CONFIG.STATUS_SCOPE.WARD, expectedStatus = null, source = null) {
     const result = await this._fetch('status/update', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId, newStatus, extraFields, scope, expectedStatus }),
+      body: JSON.stringify({ eventId, newStatus, extraFields, scope, expectedStatus, source }),
     });
     if (result && result.success === false) {
       const err = new Error(result.message || 'Status update failed');
@@ -545,28 +545,10 @@ const API = {
     return result;
   },
 
+  // 互換API名。以前はstatus/updateのmaintenanceフラグで任意の進行中状態を
+  // RETURNEDにしていたが、現在は通常の遷移検証を必ず通す。
   async completeEventForMaintenance(eventId, expectedStatus = null) {
-    const result = await this._fetch('status/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        eventId,
-        newStatus: 'RETURNED',
-        scope: CONFIG.STATUS_SCOPE.WARD,
-        expectedStatus,
-        maintenance: true,
-      }),
-    });
-    if (result && result.success === false) {
-      const err = new Error(result.message || 'Maintenance completion failed');
-      err.conflict = !!result.conflict;
-      err.conflictType = result.conflictType || '';
-      err.expectedStatus = result.expectedStatus || expectedStatus || null;
-      err.currentStatus = result.currentStatus || null;
-      err.event = result.event || null;
-      throw err;
-    }
-    return result;
+    return this.updateEventStatus(eventId, 'RETURNED', {}, CONFIG.STATUS_SCOPE.WARD, expectedStatus, 'maintenance');
   },
 
   /* ---------- 操作監査ログ (データ #2) ---------- */
