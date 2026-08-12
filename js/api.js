@@ -91,7 +91,7 @@ function requireDataArray(result, label) {
 }
 
 const MASTER_REVISION_TABLES = new Set([
-  'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
+  'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
 ]);
 
 function getLocalMasterUpdatedAt(table, id) {
@@ -99,10 +99,9 @@ function getLocalMasterUpdatedAt(table, id) {
   const stateKey = {
     wards: 'wards',
     beds: 'beds',
-    bed_types: 'allBedTypes',
     exam_rooms: 'allExamRooms',
     exam_types: 'allExamTypes',
-    // bed_types/exam_rooms/exam_typesと同様、非活性を含む全件から探す。
+    // exam_rooms/exam_typesと同様、非活性を含む全件から探す。
     // masters.jsのスタッフ編集フォームはAppState.allStaffs(非活性含む)を使うため、
     // 活性のみのAppState.staffsだけを見ると、非活性スタッフの編集で
     // _expectedUpdatedAtが付与されず楽観的排他ロックが働かない
@@ -364,7 +363,6 @@ const API = {
   /* ---------- マスタ取得 ---------- */
   async getWards()      { return requireDataArray(await this.getAll('wards'), '病棟マスター'); },
   async getAllBeds()     { return requireDataArray(await this.getAll('beds'), '病床マスター'); },
-  async getBedTypes()    { return requireDataArray(await this.getAll('bed_types'), '病床タイプ'); },
   async getExamRooms()  { return requireDataArray(await this.getAll('exam_rooms'), '検査室マスター'); },
   async getExamTypes()  { return requireDataArray(await this.getAll('exam_types'), '検査種別'); },
   async getAllStaffs() { return requireDataArray(await this.getAll('staffs'), 'スタッフマスター'); },

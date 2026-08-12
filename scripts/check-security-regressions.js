@@ -286,6 +286,11 @@ assert(
   'Import and ODBC values must be HTML-escaped'
 );
 assert(
+  main.includes('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8') &&
+  main.includes('$OutputEncoding = [System.Text.Encoding]::UTF8'),
+  'ODBC PowerShell output must be emitted as UTF-8 for Japanese errors and table names'
+);
+assert(
   app.includes('API.verifyAdminPasscode(inputVal)') &&
   !app.includes("API.getOne('system_settings', 'admin_passcode')") &&
   !app.includes('PasscodeHash.hash(') &&

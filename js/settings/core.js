@@ -8,7 +8,6 @@
 const SETTINGS_TAB_DEFS = {
   wards: ['fa-hospital', '病棟マスタ', 'global', '全体'],
   beds: ['fa-bed', '病床マスタ', 'global', '全体'],
-  bed_types: ['fa-tags', '病床タイプ', 'global', '全体'],
   map: ['fa-map', 'マップ配置', 'global', '全体'],
   rooms: ['fa-x-ray', '検査室マスタ', 'global', '全体'],
   exam_types: ['fa-notes-medical', '検査種別', 'global', '全体'],
@@ -27,12 +26,12 @@ const SETTINGS_TAB_DEFS = {
 const SETTINGS_TAB_GROUPS = {
   child: [
     ['端末・接続', ['network', 'terminal_behavior', 'notifications', 'access_protection']],
-    ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+    ['全体共通', ['wards', 'beds', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
     ['保守', ['maintenance']],
   ],
   parent: [
-    ['全体共通', ['wards', 'beds', 'bed_types', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+    ['全体共通', ['wards', 'beds', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
     ['端末・接続', ['network', 'terminal_behavior', 'notifications', 'access_protection']],
     ['保守', ['maintenance']],
@@ -40,7 +39,7 @@ const SETTINGS_TAB_GROUPS = {
 };
 
 const SETTINGS_TAB_CATEGORIES = {
-  wards: 'global', beds: 'global', bed_types: 'global',
+  wards: 'global', beds: 'global',
   map: 'global', rooms: 'global', exam_types: 'global',
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
@@ -245,7 +244,6 @@ const Settings = {
 
     const renderers = {
       beds: '_renderBeds',
-      bed_types: '_renderBedTypes',
       map: '_renderMapEditor',
       rooms: '_renderRooms',
       exam_types: '_renderExamTypes',

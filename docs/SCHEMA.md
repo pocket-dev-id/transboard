@@ -11,7 +11,6 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 |---|---|
 | `wards` | 病棟マスタ |
 | `beds` | ベッドマスタ（患者在籍情報を含む） |
-| `bed_types` | ベッド種別マスタ（一般／隔離／ICU等） |
 | `exam_rooms` | 検査室マスタ |
 | `exam_types` | 検査種別マスタ |
 | `staffs` | スタッフマスタ |
@@ -47,7 +46,6 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 | `ward_id` | string | 所属病棟ID |
 | `bed_number` | string | ベッド番号（例: `101`） |
 | `room_number` | string \| null | 病室番号 |
-| `bed_type_code` | string | ベッド種別（`normal` / `isolation` / `icu`） |
 | `order` | number | 表示順 |
 | `patient_id` | string \| null | 患者ID（CSV/ODBC同期） |
 | `patient_name` | string \| null | 患者氏名 |

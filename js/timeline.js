@@ -180,7 +180,6 @@ const TimelineDate = {
 const Timeline = {
 
   // 永続フィルタ状態
-  _filterBedType: null,   // null = すべて
   _timeRangeMode: 'fixed', // 'fixed' | 'auto'
 
   render() {
@@ -447,15 +446,6 @@ const Timeline = {
       return ref != null && ref >= dayStart && ref < dayEnd;
     });
 
-    // ── A2: 病床種別フィルタ適用 ──
-    if (this._filterBedType) {
-      filtered = filtered.filter(e => {
-        const bed = AppState.getBedById(e.bed_id);
-        if (!bed) return false;
-        const typeCode = AppState.normalizeBedTypeCode(bed.bed_type);
-        return typeCode === this._filterBedType;
-      });
-    }
 
     // ── フィルタバー描画 (A2) ──
     this._renderFilterBar(filtered.length + schedItems.length);
@@ -625,26 +615,10 @@ const Timeline = {
     const bar = document.getElementById('timeline-filter-bar');
     if (!bar) return;
 
-    const bedTypes = AppState.bedTypes || [];
-    const chips = [{ code: null, label: 'すべて' }, ...bedTypes.map(t => ({ code: t.code, label: t.name }))];
-
     bar.innerHTML = `<div class="tl-filter-bar">
-      <span class="tl-filter-label">病床種別:</span>
-      ${chips.map(t => `
-        <button class="tl-filter-chip${this._filterBedType === t.code ? ' active' : ''}"
-          data-code="${t.code === null ? '' : t.code}">
-          ${t.label}
-        </button>`).join('')}
       <span class="tl-filter-count">${totalCount}件</span>
     </div>`;
 
-    bar.querySelectorAll('.tl-filter-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const code = btn.dataset.code || null;
-        this._filterBedType = code;
-        this._renderFullTimeline().catch(console.error);
-      });
-    });
   },
 
   _renderFullTimeAxis(start, end, winMs) {

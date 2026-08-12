@@ -8,7 +8,8 @@ Object.assign(Settings, {
   //  病床マスタ管理
   // ──────────────────────────────────
 
-  _renderBedTypes(body) {
+  /* removed bed type management */
+  /*
     body.innerHTML = `
       <div class="settings-panel">
         <div class="settings-panel-header">
@@ -143,7 +144,7 @@ Object.assign(Settings, {
     } catch (e) {
       UI.toast('状態の変更に失敗しました: ' + e.message, 'danger');
     }
-  },
+  }, */
 
   _renderBeds(body) {
     const wardId = AppState.currentWardId;
@@ -230,13 +231,10 @@ Object.assign(Settings, {
       btn.onclick = () => this._deleteBed(btn.dataset.bedId);
     });
 
-    this._setupCsvHandlers('beds', 'beds', ['id', 'ward_id', 'bed_number', 'room_number', 'room_code', 'bed_code', 'bed_type', 'note', 'map_col', 'map_row', 'sort_order']);
+    this._setupCsvHandlers('beds', 'beds', ['id', 'ward_id', 'bed_number', 'room_number', 'room_code', 'bed_code', 'note', 'map_col', 'map_row', 'sort_order']);
   },
 
   _bedRow(b) {
-    const typeClass = AppState.normalizeBedTypeCode(b.bed_type);
-    const label = AppState.getBedTypeLabel(b.bed_type);
-
     let joinChar = '-';
     const mappingSetting = AppState.systemSettings?.find(s => s.id === 'import_mapping');
     if (mappingSetting && mappingSetting.value) {
@@ -266,7 +264,6 @@ Object.assign(Settings, {
         <td class="font-bold">${UI.escapeHTML(rCode || '-')}</td>
         <td class="font-bold">${UI.escapeHTML(bCode || '-')}</td>
         <td style="color:#718096; font-size:11px;">${UI.escapeHTML(b.bed_number)}</td>
-        <td><span class="bed-type-tag type-${UI.escapeHTML(typeClass)}">${UI.escapeHTML(label)}</span></td>
         <td>${UI.escapeHTML(b.note || '-')}</td>
         <td>
           <button class="btn btn-outline btn-sm btn-edit-bed" data-bed-id="${UI.escapeHTML(b.id)}">
@@ -307,11 +304,6 @@ Object.assign(Settings, {
       }
     }
 
-    const currentType = AppState.normalizeBedTypeCode(bed?.bed_type);
-    const bedTypeOptions = (AppState.bedTypes || []).map(type => `
-              <option value="${UI.escapeHTML(type.code)}" ${currentType === type.code ? 'selected' : ''}>${UI.escapeHTML(type.name)}</option>
-    `).join('');
-
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
@@ -328,12 +320,6 @@ Object.assign(Settings, {
           <div class="form-row">
             <label>病床コード</label>
             <input type="text" id="bf-bed-code" value="${UI.escapeHTML(bedCode)}" placeholder="例: 1 (空欄可)">
-          </div>
-          <div class="form-row">
-            <label>病床タイプ</label>
-            <select id="bf-type">
-              ${bedTypeOptions || '<option value="normal">一般</option>'}
-            </select>
           </div>
           <div class="form-row">
             <label>備考</label>
@@ -378,7 +364,6 @@ Object.assign(Settings, {
         room_number: roomVal,
         room_code: roomVal,
         bed_code: bedVal,
-        bed_type: document.getElementById('bf-type').value,
         note: document.getElementById('bf-note').value.trim(),
         map_col: bed?.map_col ?? null,
         map_row: bed?.map_row ?? null,

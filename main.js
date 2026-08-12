@@ -349,29 +349,24 @@ const SEEDS = {
     { id: "ward-2", name: "7階西病棟", phone: "7201", note: "7階西 ナースステーション" }
   ],
   beds: [
-    { id: "bed-701", ward_id: "ward-1", bed_number: "701", room_number: "701", bed_type: "一般", sort_order: 1, map_col: 0, map_row: 0 },
-    { id: "bed-702", ward_id: "ward-1", bed_number: "702", room_number: "701", bed_type: "一般", sort_order: 2, map_col: 1, map_row: 0 },
-    { id: "bed-703", ward_id: "ward-1", bed_number: "703", room_number: "702", bed_type: "一般", sort_order: 3, map_col: 3, map_row: 0 },
-    { id: "bed-704", ward_id: "ward-1", bed_number: "704", room_number: "702", bed_type: "一般", sort_order: 4, map_col: 4, map_row: 0 },
-    { id: "bed-705", ward_id: "ward-1", bed_number: "705", room_number: "703", bed_type: "一般", sort_order: 5, map_col: 6, map_row: 0 },
-    { id: "bed-706", ward_id: "ward-1", bed_number: "706", room_number: "703", bed_type: "一般", sort_order: 6, map_col: 7, map_row: 0 },
-    { id: "bed-707", ward_id: "ward-1", bed_number: "707", room_number: "704", bed_type: "一般", sort_order: 7, map_col: 0, map_row: 2 },
-    { id: "bed-708", ward_id: "ward-1", bed_number: "708", room_number: "704", bed_type: "一般", sort_order: 8, map_col: 1, map_row: 2 },
-    { id: "bed-709", ward_id: "ward-1", bed_number: "709", room_number: "705", bed_type: "一般", sort_order: 9, map_col: 3, map_row: 2 },
-    { id: "bed-710", ward_id: "ward-1", bed_number: "710", room_number: "705", bed_type: "一般", sort_order: 10, map_col: 4, map_row: 2 },
-    { id: "bed-711", ward_id: "ward-1", bed_number: "711", room_number: "706", bed_type: "一般", sort_order: 11, map_col: 6, map_row: 2 },
-    { id: "bed-712", ward_id: "ward-1", bed_number: "712", room_number: "706", bed_type: "一般", sort_order: 12, map_col: 7, map_row: 2 },
-    { id: "bed-713", ward_id: "ward-1", bed_number: "713", room_number: "707", bed_type: "一般", sort_order: 13, map_col: 0, map_row: 4 },
-    { id: "bed-714", ward_id: "ward-1", bed_number: "714", room_number: "707", bed_type: "一般", sort_order: 14, map_col: 1, map_row: 4 },
-    { id: "bed-715", ward_id: "ward-1", bed_number: "715", room_number: "708", bed_type: "一般", sort_order: 15, map_col: 3, map_row: 4 },
-    { id: "bed-716", ward_id: "ward-1", bed_number: "716", room_number: "708", bed_type: "一般", sort_order: 16, map_col: 4, map_row: 4 },
-    { id: "bed-717", ward_id: "ward-1", bed_number: "717", room_number: "709個室", bed_type: "隔離", sort_order: 17, map_col: 6, map_row: 4 },
-    { id: "bed-718", ward_id: "ward-1", bed_number: "718", room_number: "709個室", bed_type: "隔離", sort_order: 18, map_col: 7, map_row: 4 }
-  ],
-  bed_types: [
-    { id: "bed-type-normal", code: "normal", name: "一般", sort_order: 1, is_active: true },
-    { id: "bed-type-isolation", code: "isolation", name: "隔離", sort_order: 2, is_active: true },
-    { id: "bed-type-icu", code: "icu", name: "ICU", sort_order: 3, is_active: true }
+    { id: "bed-701", ward_id: "ward-1", bed_number: "701", room_number: "701", sort_order: 1, map_col: 0, map_row: 0 },
+    { id: "bed-702", ward_id: "ward-1", bed_number: "702", room_number: "701", sort_order: 2, map_col: 1, map_row: 0 },
+    { id: "bed-703", ward_id: "ward-1", bed_number: "703", room_number: "702", sort_order: 3, map_col: 3, map_row: 0 },
+    { id: "bed-704", ward_id: "ward-1", bed_number: "704", room_number: "702", sort_order: 4, map_col: 4, map_row: 0 },
+    { id: "bed-705", ward_id: "ward-1", bed_number: "705", room_number: "703", sort_order: 5, map_col: 6, map_row: 0 },
+    { id: "bed-706", ward_id: "ward-1", bed_number: "706", room_number: "703", sort_order: 6, map_col: 7, map_row: 0 },
+    { id: "bed-707", ward_id: "ward-1", bed_number: "707", room_number: "704", sort_order: 7, map_col: 0, map_row: 2 },
+    { id: "bed-708", ward_id: "ward-1", bed_number: "708", room_number: "704", sort_order: 8, map_col: 1, map_row: 2 },
+    { id: "bed-709", ward_id: "ward-1", bed_number: "709", room_number: "705", sort_order: 9, map_col: 3, map_row: 2 },
+    { id: "bed-710", ward_id: "ward-1", bed_number: "710", room_number: "705", sort_order: 10, map_col: 4, map_row: 2 },
+    { id: "bed-711", ward_id: "ward-1", bed_number: "711", room_number: "706", sort_order: 11, map_col: 6, map_row: 2 },
+    { id: "bed-712", ward_id: "ward-1", bed_number: "712", room_number: "706", sort_order: 12, map_col: 7, map_row: 2 },
+    { id: "bed-713", ward_id: "ward-1", bed_number: "713", room_number: "707", sort_order: 13, map_col: 0, map_row: 4 },
+    { id: "bed-714", ward_id: "ward-1", bed_number: "714", room_number: "707", sort_order: 14, map_col: 1, map_row: 4 },
+    { id: "bed-715", ward_id: "ward-1", bed_number: "715", room_number: "708", sort_order: 15, map_col: 3, map_row: 4 },
+    { id: "bed-716", ward_id: "ward-1", bed_number: "716", room_number: "708", sort_order: 16, map_col: 4, map_row: 4 },
+    { id: "bed-717", ward_id: "ward-1", bed_number: "717", room_number: "709個室", sort_order: 17, map_col: 6, map_row: 4 },
+    { id: "bed-718", ward_id: "ward-1", bed_number: "718", room_number: "709個室", sort_order: 18, map_col: 7, map_row: 4 }
   ],
   exam_rooms: [
     { id: "room-ct", name: "CT室", code: "CT", floor: "1F", phone: "2001", icon: "fa-x-ray", is_active: true },
@@ -917,6 +912,15 @@ function readDbShared() {
     const db = JSON.parse(data);
 
     let hasDuplicates = false;
+    // 病床タイプ機能を廃止した際の一回限りのデータ移行。
+    if (!db._migrations || !db._migrations.bed_type_removed_v1) {
+      if (Array.isArray(db.beds)) {
+        db.beds.forEach(bed => { if (bed && typeof bed === 'object') delete bed.bed_type; });
+      }
+      delete db.bed_types;
+      db._migrations = { ...(db._migrations || {}), bed_type_removed_v1: Date.now() };
+      hasDuplicates = true;
+    }
     // 旧形式（平文）のDBを検出した場合、暗号化が使える環境なら次回書き込み時に暗号化形式へ移行する
     let needsEncryptionRewrite = !wasEncrypted && safeStorage && safeStorage.isEncryptionAvailable();
 
@@ -935,17 +939,6 @@ function readDbShared() {
       SEEDS.system_settings.forEach(s => {
         if (!db.system_settings.some(x => x.id === s.id)) {
           db.system_settings.push(s);
-          hasDuplicates = true;
-        }
-      });
-    }
-    if (!db.bed_types) {
-      db.bed_types = SEEDS.bed_types;
-      hasDuplicates = true;
-    } else {
-      SEEDS.bed_types.forEach(t => {
-        if (!db.bed_types.some(x => x.id === t.id || x.code === t.code)) {
-          db.bed_types.push(t);
           hasDuplicates = true;
         }
       });
@@ -2436,6 +2429,11 @@ function sanitizeOdbcError(message, connectionString = '') {
 function execOdbcPowerShell(connectionString, scriptBody, timeoutMs = 15000) {
   const safe = String(connectionString).slice(0, 500).replace(/'/g, "''");
   const ps = `
+# Windows PowerShell 5.1 uses the active Windows code page for redirected
+# stdout by default. Node decodes this stream as UTF-8, so force the encoding
+# before emitting Japanese ODBC errors or table names.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 try {
   Add-Type -AssemblyName System.Data
@@ -2730,7 +2728,7 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
 }
 
 const ALLOWED_TABLES = new Set([
-  'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs',
+  'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs',
   'system_settings', 'transfer_events', 'transfer_status_logs',
   'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
   'audit_logs', 'handover_notes', 'bed_occupancy_log',
@@ -2738,7 +2736,7 @@ const ALLOWED_TABLES = new Set([
 
 // 共有マスターは親機を唯一の書き込み元とし、更新時刻で子機同士の上書きを検知する。
 const MASTER_REVISION_TABLES = new Set([
-  'wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
+  'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
 ]);
 
 function checkMasterRevision(table, existing, payload) {
@@ -2767,6 +2765,7 @@ function applyMasterRevision(table, existing, payload) {
 
 function validateMasterReferences(db, table, existing, payload) {
   if (table !== 'beds' || !payload || typeof payload !== 'object') return null;
+  delete payload.bed_type;
   if (Object.prototype.hasOwnProperty.call(payload, 'bed_number')) {
     const bedNumber = String(payload.bed_number || '').trim();
     if (!bedNumber) {
@@ -3545,7 +3544,7 @@ function processStatusAcknowledgeRequest(method, bodyStr, isExternal = false, ap
 }
 
 function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {}) {
-  const bulkTables = new Set(['wards', 'beds', 'bed_types', 'exam_rooms', 'exam_types', 'staffs']);
+  const bulkTables = new Set(['wards', 'beds', 'exam_rooms', 'exam_types', 'staffs']);
   if (!bulkTables.has(table)) {
     return { success: false, message: 'このテーブルの一括マスター更新は許可されていません。' };
   }

@@ -1754,14 +1754,9 @@ const App = {
 
   async loadMasters({ silent = false, loadHandover = true } = {}) {
     try {
-      const [wards, beds, bedTypes, examRooms, examTypes, allStaffs, systemSettings] = await Promise.all([
+      const [wards, beds, examRooms, examTypes, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
         API.getAllBeds(),
-        API.getBedTypes().catch(() => [
-          { id: 'bed-type-normal', code: 'normal', name: '一般', sort_order: 1, is_active: true },
-          { id: 'bed-type-isolation', code: 'isolation', name: '隔離', sort_order: 2, is_active: true },
-          { id: 'bed-type-icu', code: 'icu', name: 'ICU', sort_order: 3, is_active: true }
-        ]),
         API.getExamRooms(),
         API.getExamTypes(),
         // 単発の一時的な失敗でマスタ読み込み全体(wards/beds等)まで失敗させない
@@ -1771,8 +1766,6 @@ const App = {
       ]);
       AppState.wards = wards;
       AppState.beds = beds;
-      AppState.allBedTypes = bedTypes.slice().sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
-      AppState.bedTypes = bedTypes.filter(t => t.is_active !== false).sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99));
       AppState.allExamRooms = examRooms;
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
       AppState.allExamTypes = examTypes;

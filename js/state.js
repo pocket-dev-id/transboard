@@ -11,7 +11,6 @@ const AppState = {
 
   // マスタキャッシュ
   beds: [],
-  bedTypes: [],
   examRooms: [],
   examTypes: [],
   staffs: [],
@@ -60,22 +59,6 @@ const AppState = {
 
   getBedById(id) {
     return this.beds.find(b => b.id === id);
-  },
-
-  getBedTypeByCode(code) {
-    const normalized = this.normalizeBedTypeCode(code);
-    return this.bedTypes.find(t => t.code === normalized || t.id === normalized);
-  },
-
-  normalizeBedTypeCode(code) {
-    const map = { '一般': 'normal', '隔離': 'isolation', 'ICU': 'icu' };
-    return map[code] || code || 'normal';
-  },
-
-  getBedTypeLabel(code) {
-    const normalized = this.normalizeBedTypeCode(code);
-    const type = this.getBedTypeByCode(normalized);
-    return type ? type.name : (code || normalized);
   },
 
   getExamTypeById(id) {

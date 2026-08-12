@@ -2398,17 +2398,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 .maint-info-value--mono { font-family: 'Roboto Mono', Consolas, monospace; font-weight: 400; font-size: 11px; word-break: break-all; }
 .maint-info-value--warn { color: #b45309; }
 
-.bed-type-tag {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-.bed-type-tag.type-normal    { background: #e0f2fe; color: #0369a1; }
-.bed-type-tag.type-isolation { background: #fef9c3; color: #713f12; }
-.bed-type-tag.type-icu       { background: #fee2e2; color: #7f1d1d; }
-
 /* ============================================================
    病床マップ グリッドエディタ
    ============================================================ */
