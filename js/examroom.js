@@ -344,6 +344,7 @@ const ExamRoom = {
     try {
       const { events, recentStatusLogs } = await API.getExamRoomStatus(roomId);
       const relevant = events.filter(e => CONFIG.ACTIVE_STATUSES.includes(e.current_status));
+      this._eventWardById = new Map(relevant.map(event => [String(event.id), String(event.ward_id || '')]));
       this._notifyWardAcknowledgementChanges(relevant);
       this._renderNotificationHistory(recentStatusLogs);
 
@@ -861,7 +862,8 @@ const ExamRoom = {
 
     container.querySelectorAll('.btn-call-ward').forEach(btn => {
       btn.addEventListener('click', () => {
-        const ward = AppState.wards.find(w => w.id === AppState.currentWardId);
+        const wardId = this._eventWardById?.get(String(btn.dataset.eventId || '')) || '';
+        const ward = AppState.wards.find(w => String(w.id) === wardId);
         PhoneDialog.showWardPhone(ward);
       });
     });
