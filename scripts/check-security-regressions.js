@@ -637,4 +637,20 @@ assert(
   'syncWardSelect() must re-render CallPanel so ward master changes (add/rename/delete) propagate to the call panel button list, not just to the #ward-select dropdown'
 );
 
+// スケジュール取り込みCSVの時刻列は現場ごとに区切り文字が : ： . と
+// 混在するため、parseScheduleDatetimeMsの時刻部分は3種いずれも許容し、
+// 秒も任意で拾えることを保証する(hh.mm.ss形式のみ通せなくなる退行を防ぐ)
+assert(
+  (() => {
+    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr) {');
+    if (idx < 0) return false;
+    const constIdx = main.indexOf('const SCHEDULE_TIME_RE_SRC');
+    if (constIdx < 0 || constIdx > idx) return false;
+    const timeReLine = main.slice(constIdx, main.indexOf('\n', constIdx));
+    return /\[.*：.*:.*\.\s*\]/.test(timeReLine) &&
+      main.slice(idx).includes('SCHEDULE_TIME_RE_SRC');
+  })(),
+  'parseScheduleDatetimeMs must accept :, ：, and . as the time separator (e.g. hh.mm.ss) via SCHEDULE_TIME_RE_SRC'
+);
+
 console.log('Security regression checks passed.');
