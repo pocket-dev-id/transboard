@@ -4939,6 +4939,44 @@ handleTrusted('check-for-update', async (event, { parentIp } = {}) => {
   }
 });
 
+// インストーラを直接spawnした直後にapp.quit()すると、旧exeのファイルロックが
+// まだ解放されていないうちに新インストーラのサイレントアンインストール
+// (electron-builder製NSISは旧バージョンを検出すると新規インストール前に
+// 自動でこれを実行する)が走ってしまい、「古いアプリをアンインストールできません」
+// という失敗の主因になっていた。app.quit()自体は非同期(before-quitでの
+// HTTPサーバー停止・ウォッチャー停止等の後始末を含む)で、その所要時間は
+// 接続端末数や状況によって変動するため、固定の待機時間では確実性が無い。
+// PowerShellのWait-Processで自プロセス(PID)の実際の終了をポーリングし、
+// それを確認してからインストーラを起動するラッパーを挟むことで、
+// シャットダウン処理の所要時間に関わらずファイルロックの解放を待ってから
+// インストーラが走るようにする(最大30秒待って、それでも終了しなければ
+// 諦めて起動する。無期限にハングしないための安全弁)。
+function spawnInstallerAfterOwnExit(installerPath) {
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$installerPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TRANSBOARD_INSTALLER_PATH_B64))
+$parentPid = [int]$env:TRANSBOARD_WAIT_PID
+try { Wait-Process -Id $parentPid -Timeout 30 } catch {}
+Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden
+`.trim();
+  const encodedCommand = Buffer.from(script, 'utf16le').toString('base64');
+  const child = spawn(
+    POWERSHELL_EXE,
+    ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodedCommand],
+    {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: {
+        ...process.env,
+        TRANSBOARD_INSTALLER_PATH_B64: Buffer.from(installerPath, 'utf8').toString('base64'),
+        TRANSBOARD_WAIT_PID: String(process.pid),
+      },
+    }
+  );
+  child.unref();
+}
+
 // 更新のダウンロード → sha512検証 → DB退避 → サイレントインストール起動
 handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
@@ -5000,9 +5038,8 @@ handleTrusted('download-and-install-update', async (event, { parentIp } = {}) =>
     }
 
     console.log(`[Updater] v${info.version} のインストールを開始します`);
-    const child = spawn(installerPath, ['/S'], { detached: true, stdio: 'ignore' });
-    child.unref();
-    setTimeout(() => app.quit(), 500);
+    spawnInstallerAfterOwnExit(installerPath);
+    app.quit();
     return { success: true, version: info.version };
   } catch (e) {
     return { success: false, message: e.message };

@@ -915,19 +915,25 @@ Object.assign(Settings, {
       
       // マップ配置の座標は患者データと無関係のため、他端末での病床更新（患者割当・
       // 在室状況の変化等）と衝突して保存全体が失敗しないよう、楽観的排他ロックを
-      // 使わずに保存する
-      const promises = [];
+      // 使わずに保存する。
+      // 以前は病床ごとに個別のPATCHリクエストをPromise.allで並列送信していたが、
+      // 各リクエストは親機側で独立にDB全体を読み書きするため、病床数が多い病棟では
+      // 実質的に直列化して合計の所要時間が病床数に比例して伸びる。特に子機からの
+      // 保存はHTTP+IPC中継の往復が病床数分積み重なり、8秒のリクエストタイムアウトを
+      // 超えて保存が失敗する・画面が固まって見える不具合の原因になっていた。
+      // bulkPatchで1回のリクエスト・1回のDB書き込みにまとめる。
+      const bedUpdates = [];
       for (const [key, cell] of Object.entries(this._grid.cells)) {
         if (cell?.bedId) {
           const [col, row] = key.split(',').map(Number);
-          promises.push(API.patch('beds', cell.bedId, { map_col: col, map_row: row }, { skipRevisionCheck: true }));
+          bedUpdates.push({ id: cell.bedId, map_col: col, map_row: row });
         }
       }
       // 未配置のものは null に更新
       for (const bed of beds) {
         const placed = Object.values(this._grid.cells).some(c => c?.bedId === bed.id);
         if (!placed) {
-          promises.push(API.patch('beds', bed.id, { map_col: null, map_row: null }, { skipRevisionCheck: true }));
+          bedUpdates.push({ id: bed.id, map_col: null, map_row: null });
         }
       }
 
@@ -938,6 +944,10 @@ Object.assign(Settings, {
         cells: this._grid.cells
       };
 
+      const promises = [];
+      if (bedUpdates.length > 0) {
+        promises.push(API.bulkPatch('beds', bedUpdates, { skipRevisionCheck: true }));
+      }
       promises.push(API.create('system_settings', {
         id: `map_layout_${wardId}`,
         value: JSON.stringify(layoutData)

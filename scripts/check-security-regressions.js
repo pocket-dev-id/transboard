@@ -40,10 +40,11 @@ assert(
   'All IPC handlers must be registered through handleTrusted'
 );
 
-const updateVerifyIndex = main.indexOf('verifyWindowsCodeSignature(installerPath)');
-const updateSpawnIndex = main.indexOf("spawn(installerPath, ['/S']");
+const updateHandlerIdx = main.indexOf("handleTrusted('download-and-install-update'");
+const updateVerifyIndex = main.indexOf('verifyWindowsCodeSignature(installerPath)', updateHandlerIdx);
+const updateSpawnIndex = main.indexOf('spawnInstallerAfterOwnExit(installerPath)', updateHandlerIdx);
 assert(
-  updateVerifyIndex >= 0 && updateSpawnIndex > updateVerifyIndex,
+  updateHandlerIdx >= 0 && updateVerifyIndex >= 0 && updateSpawnIndex > updateVerifyIndex,
   'The updater must verify Authenticode before launching an installer'
 );
 assert(
@@ -719,6 +720,57 @@ assert(
       main.slice(idx).includes('SCHEDULE_TIME_RE_SRC');
   })(),
   'parseScheduleDatetimeMs must accept :, ：, and . as the time separator (e.g. hh.mm.ss) via SCHEDULE_TIME_RE_SRC'
+);
+
+// インストーラをspawnした直後に固定時間(setTimeout)でapp.quit()すると、
+// 旧exeのファイルロックがまだ解放されていないうちに新インストーラの
+// サイレントアンインストール(electron-builder製NSISが旧バージョン検出時に
+// 自動実行)が走り、「古いアプリをアンインストールできません」という
+// 失敗の原因になる。spawnInstallerAfterOwnExitがPowerShellのWait-Processで
+// 自プロセスの実際の終了を待ってからインストーラを起動することを保証する
+assert(
+  (() => {
+    const idx = main.indexOf('function spawnInstallerAfterOwnExit(installerPath) {');
+    if (idx < 0) return false;
+    const end = main.indexOf('handleTrusted(\'download-and-install-update\'', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    const waitIdx = body.indexOf('Wait-Process');
+    const startIdx = body.indexOf('Start-Process');
+    return waitIdx >= 0 && startIdx > waitIdx &&
+      body.includes('TRANSBOARD_WAIT_PID') &&
+      body.includes('process.pid') &&
+      body.includes("detached: true");
+  })(),
+  'spawnInstallerAfterOwnExit must wait for this process to actually exit (Wait-Process on its own PID) before launching the installer'
+);
+assert(
+  !main.includes('setTimeout(() => app.quit(), 500)'),
+  'The updater must not rely on a fixed 500ms delay before quitting; the installer launch must be sequenced after this process actually exits'
+);
+
+// 病床マップの配置保存(_saveMapLayout)は、以前は病床ごとに独立したPATCH
+// リクエストをPromise.allで並列送信しており、親機側では各リクエストが個別に
+// DB全体を読み書きするため実質的に直列化し、病床数が多い病棟では合計の
+// 所要時間が伸びてリクエストタイムアウト(8秒)を超え、子機からの保存が
+// 失敗・画面が固まる不具合の原因になっていた。1回のbulkPatchにまとめる
+// ことで、親機側のDB書き込みが1回のリクエストにつき1回で済むことを保証する
+assert(
+  (() => {
+    const idx = masters.indexOf('async _saveMapLayout() {');
+    if (idx < 0) return false;
+    const end = masters.indexOf('await Promise.all(promises);', idx);
+    if (end < 0 || end <= idx) return false;
+    const body = masters.slice(idx, end);
+    return body.includes("API.bulkPatch('beds', bedUpdates, { skipRevisionCheck: true })") &&
+      !body.includes("API.patch('beds',");
+  })(),
+  '_saveMapLayout must batch all bed position updates into a single bulkPatch request instead of one API.patch call per bed'
+);
+assert(
+  api.includes('async bulkPatch(table, data, { skipRevisionCheck = false } = {})') &&
+  /skipRevisionCheck\s*\?\s*data\s*:/.test(api),
+  'API.bulkPatch must support skipRevisionCheck so map-layout-style bulk saves are not blocked by unrelated concurrent master edits'
 );
 
 console.log('Security regression checks passed.');
