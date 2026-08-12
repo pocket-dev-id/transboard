@@ -404,15 +404,26 @@ const Timeline = {
     }
     this._dateEvents = events;
 
-    // ── スケジュールアイテム取得（現在病棟でフィルタ）──
+    // ── スケジュールアイテム取得（現在病棟・フィード有効状態でフィルタ）──
     let schedItems = [];
     try {
       const allItems = await API.getScheduleItemsForRange(dayStart, dayEnd);
       const wardId = AppState.currentWardId;
-      // ward_ids が空/未設定 = 全病棟に表示。特定病棟指定時は一致するものだけ表示
-      schedItems = allItems.filter(item =>
-        !item.ward_ids?.length || item.ward_ids.includes(wardId)
+      const feedsById = new Map(
+        (AppState.scheduleFeeds || []).map(feed => [String(feed.id), feed])
       );
+      // ward_ids が空/未設定 = 全病棟に表示。特定病棟指定時は一致するものだけ表示。
+      // フィードが無効化(is_active=false)された場合は取り込み済みアイテムも
+      // 非表示にする(bedmap.jsのis_activeフィルタと同じ考え方。
+      // show_on_bed_mapは「病床マップ表示」専用設定のためここでは見ない)
+      schedItems = allItems.filter(item => {
+        if (item.ward_ids?.length && !item.ward_ids.includes(wardId)) return false;
+        const feedId = item?.feed_id == null ? '' : String(item.feed_id);
+        const feed = feedId ? feedsById.get(feedId) : null;
+        if (feedId && !feed) return false;
+        if (feed?.is_active === false) return false;
+        return true;
+      });
     } catch(e) {}
     this._scheduleItems = schedItems;
 
