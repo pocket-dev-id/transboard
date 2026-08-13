@@ -345,8 +345,8 @@ const webrtcSignaling = createWebrtcSignalingService();
 // データベースの初期シードデータ（マスタデータ）
 const SEEDS = {
   wards: [
-    { id: "ward-1", name: "7階東病棟", phone: "7101", note: "7階東 ナースステーション" },
-    { id: "ward-2", name: "7階西病棟", phone: "7201", note: "7階西 ナースステーション" }
+    { id: "ward-1", name: "7階東病棟", phone: "7101", note: "7階東 ナースステーション", sort_order: 1 },
+    { id: "ward-2", name: "7階西病棟", phone: "7201", note: "7階西 ナースステーション", sort_order: 2 }
   ],
   beds: [
     { id: "bed-701", ward_id: "ward-1", bed_number: "701", room_number: "701", sort_order: 1, map_col: 0, map_row: 0 },

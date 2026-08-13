@@ -1303,6 +1303,10 @@ Object.assign(Settings, {
   //  病棟マスタ管理
   // ──────────────────────────────────
   _renderWards(body) {
+    const wards = [...AppState.wards].sort((a, b) =>
+      (Number(a.sort_order) || 999999) - (Number(b.sort_order) || 999999) ||
+      String(a.name || '').localeCompare(String(b.name || ''), 'ja')
+    );
     body.innerHTML = `
       <div class="settings-panel">
         <div class="settings-panel-header">
@@ -1321,11 +1325,15 @@ Object.assign(Settings, {
         </div>
         <table class="settings-table">
           <thead>
-            <tr><th>病棟名</th><th>ID</th><th>内線番号</th><th>備考</th><th>操作</th></tr>
+            <tr><th>順番</th><th>病棟名</th><th>ID</th><th>内線番号</th><th>備考</th><th>操作</th></tr>
           </thead>
           <tbody>
-            ${AppState.wards.map(w => `
+            ${wards.map((w, index) => `
               <tr>
+                <td style="white-space:nowrap;">
+                  <button class="btn btn-outline btn-sm btn-move-ward" data-ward-id="${UI.escapeHTML(w.id)}" data-direction="up" ${index === 0 ? 'disabled' : ''} title="上へ">▲</button>
+                  <button class="btn btn-outline btn-sm btn-move-ward" data-ward-id="${UI.escapeHTML(w.id)}" data-direction="down" ${index === wards.length - 1 ? 'disabled' : ''} title="下へ">▼</button>
+                </td>
                 <td class="font-bold">${UI.escapeHTML(w.name)}</td>
                 <td>${UI.escapeHTML(w.id)}</td>
                 <td>
@@ -1386,7 +1394,34 @@ Object.assign(Settings, {
       };
     });
 
-    this._setupCsvHandlers('wards', 'wards', ['id', 'name', 'phone', 'note']);
+    body.querySelectorAll('.btn-move-ward').forEach(btn => {
+      btn.onclick = () => this._moveWard(btn.dataset.wardId, btn.dataset.direction);
+    });
+
+    this._setupCsvHandlers('wards', 'wards', ['id', 'name', 'phone', 'note', 'sort_order']);
+  },
+
+  async _moveWard(wardId, direction) {
+    const wards = [...AppState.wards].sort((a, b) =>
+      (Number(a.sort_order) || 999999) - (Number(b.sort_order) || 999999) ||
+      String(a.name || '').localeCompare(String(b.name || ''), 'ja')
+    );
+    const index = wards.findIndex(w => String(w.id) === String(wardId));
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (index < 0 || targetIndex < 0 || targetIndex >= wards.length) return;
+
+    const reordered = [...wards];
+    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
+    try {
+      await Promise.all(reordered.map((ward, order) =>
+        API.patch('wards', ward.id, { sort_order: order + 1 })
+      ));
+      await App.loadMasters();
+      if (typeof App !== 'undefined' && App.syncWardSelect) App.syncWardSelect();
+      this._renderWards(document.getElementById('settings-tab-body'));
+    } catch (e) {
+      UI.toast('病棟の順番変更に失敗しました: ' + e.message, 'danger');
+    }
   },
 
   _openWardForm(ward) {
@@ -1458,6 +1493,11 @@ Object.assign(Settings, {
         phone: document.getElementById('wf-phone').value.trim(),
         note: document.getElementById('wf-note').value.trim(),
       };
+      if (isNew) {
+        data.sort_order = AppState.wards.reduce(
+          (max, item) => Math.max(max, Number(item.sort_order) || 0), 0
+        ) + 1;
+      }
 
       try {
         if (isNew) {

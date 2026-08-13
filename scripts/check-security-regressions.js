@@ -869,6 +869,16 @@ assert(
   /skipRevisionCheck\s*\?\s*data\s*:/.test(api),
   'API.bulkPatch must support skipRevisionCheck so map-layout-style bulk saves are not blocked by unrelated concurrent master edits'
 );
+assert(
+  masters.includes("const wards = [...AppState.wards].sort") &&
+  masters.includes("data-direction=\"up\"") &&
+  masters.includes("data-direction=\"down\"") &&
+  masters.includes("async _moveWard(wardId, direction)") &&
+  masters.includes("API.patch('wards', ward.id, { sort_order: order + 1 })") &&
+  masters.includes("['id', 'name', 'phone', 'note', 'sort_order']") &&
+  app.includes("AppState.wards = wards.slice().sort"),
+  'Ward master order must be persisted with move controls and applied to shared ward selectors'
+);
 
 // isValidApiTokenはsystem_settingsの1レコードを読むだけで一切
 // ミューテーションしないため、DB全体をディープコピーするreadDB()は不要。

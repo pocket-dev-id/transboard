@@ -1764,7 +1764,10 @@ const App = {
         API.getAllStaffs().catch(() => null),
         API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : []).catch(() => [])
       ]);
-      AppState.wards = wards;
+      AppState.wards = wards.slice().sort((a, b) =>
+        (Number(a.sort_order) || 999999) - (Number(b.sort_order) || 999999) ||
+        String(a.name || '').localeCompare(String(b.name || ''), 'ja')
+      );
       AppState.beds = beds;
       AppState.allExamRooms = examRooms;
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
