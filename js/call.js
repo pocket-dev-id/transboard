@@ -1080,7 +1080,7 @@ const CallPanel = {
           <!-- ローカル映像 (右上重ね合わせ) -->
           <video id="webrtc-local-video" autoplay playsinline muted style="position: absolute; top: 10px; right: 10px; width: 110px; height: 82px; object-fit: cover; border: 2px solid white; border-radius: 6px; background: #1e293b; box-shadow: var(--shadow-md); z-index: 5;"></video>
           <!-- 全画面ボタン -->
-          <button id="webrtc-btn-fullscreen" title="全画面表示" style="position:absolute; bottom:8px; right:8px; background:rgba(0,0,0,0.5); border:none; color:white; width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center; z-index:10;">
+          <button type="button" id="webrtc-btn-fullscreen" title="全画面表示" aria-label="全画面表示" style="position:absolute; bottom:8px; right:8px; background:rgba(0,0,0,0.5); border:none; color:white; width:32px; height:32px; border-radius:6px; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center; z-index:10;">
             <i class="fas fa-expand"></i>
           </button>
         </div>
@@ -1163,15 +1163,44 @@ const CallPanel = {
     // 全画面ボタン
     const fsBtn = document.getElementById('webrtc-btn-fullscreen');
     if (fsBtn) {
-      fsBtn.onclick = () => {
+      const getFullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+      const requestFullscreen = element => {
+        if (element.requestFullscreen) return element.requestFullscreen();
+        if (element.webkitRequestFullscreen) {
+          element.webkitRequestFullscreen();
+          return Promise.resolve();
+        }
+        return Promise.reject(new Error('Fullscreen API is not supported'));
+      };
+      const exitFullscreen = () => {
+        if (document.exitFullscreen) return document.exitFullscreen();
+        if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+          return Promise.resolve();
+        }
+        return Promise.reject(new Error('Fullscreen API is not supported'));
+      };
+      const updateFullscreenButton = () => {
+        const active = !!getFullscreenElement();
+        fsBtn.innerHTML = `<i class="fas ${active ? 'fa-compress' : 'fa-expand'}"></i>`;
+        fsBtn.title = active ? '全画面表示を終了' : '全画面表示';
+        if (typeof fsBtn.setAttribute === 'function') fsBtn.setAttribute('aria-label', fsBtn.title);
+      };
+      fsBtn.onclick = async event => {
+        event.preventDefault();
         const container = document.getElementById('webrtc-video-container');
         if (!container) return;
-        if (!document.fullscreenElement) {
-          container.requestFullscreen().catch(() => {});
-          fsBtn.innerHTML = '<i class="fas fa-compress"></i>';
-        } else {
-          document.exitFullscreen().catch(() => {});
-          fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
+        try {
+          if (!getFullscreenElement()) {
+            await requestFullscreen(container);
+          } else {
+            await exitFullscreen();
+          }
+          updateFullscreenButton();
+        } catch (error) {
+          console.warn('[Fullscreen] ビデオ通話の全画面切替に失敗しました:', error);
+          updateFullscreenButton();
+          UI.toast('全画面表示に切り替えられませんでした', 'warning');
         }
       };
       // 通話ごとに古いリスナーを外してから登録する。{once:true}だと通話中に一度も
@@ -1181,11 +1210,11 @@ const CallPanel = {
         document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
       }
       this._fullscreenChangeHandler = () => {
-        if (!document.fullscreenElement && fsBtn) {
-          fsBtn.innerHTML = '<i class="fas fa-expand"></i>';
-        }
+        updateFullscreenButton();
       };
       document.addEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      document.addEventListener('webkitfullscreenchange', this._fullscreenChangeHandler);
+      updateFullscreenButton();
     }
 
   },
@@ -1214,6 +1243,7 @@ const CallPanel = {
 
     if (this._fullscreenChangeHandler) {
       document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
+      document.removeEventListener('webkitfullscreenchange', this._fullscreenChangeHandler);
       this._fullscreenChangeHandler = null;
     }
 
