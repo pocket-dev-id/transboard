@@ -2836,10 +2836,17 @@ function getHiddenTransferStatuses(db) {
 }
 
 function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIONS) {
-  // 非表示設定は表示だけを変える。永続化される遷移を自動的に
-  // スキップすると、UIと履歴の意味が一致しなくなるため、遷移規則は
-  // 常に明示的な1段階遷移として評価する。
-  return [...(actionMap[fromStatus] || [])];
+  const hidden = getHiddenTransferStatuses(db);
+  const targets = [...(actionMap[fromStatus] || [])];
+  if (hidden.has('ARRIVED')) {
+    const expanded = [];
+    for (const target of targets) {
+      if (target === 'ARRIVED') expanded.push(...(actionMap.ARRIVED || []));
+      else expanded.push(target);
+    }
+    return [...new Set(expanded)];
+  }
+  return targets;
 }
 
 function isScopedTransferStatusTransitionAllowed(fromStatus, toStatus, db, scope = 'ward') {

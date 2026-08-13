@@ -150,9 +150,17 @@ const CONFIG = {
 
   getAllowedActions(status, scope = 'ward') {
     const source = scope === this.STATUS_SCOPE.EXAM ? this.EXAM_ROOM_ACTIONS : this.ACTION_BUTTONS;
-    // 非表示設定は表示だけを変える。中間状態をここで自動的に
-    // スキップすると、UI上の遷移と保存された履歴が一致しなくなる。
-    return [...(source[status] || [])];
+    // ARRIVEDを非表示にした場合だけ、到着操作を検査開始へ統合する。
+    const actions = [...(source[status] || [])];
+    if (!this.isStatusHidden('ARRIVED')) return actions;
+    const expanded = [];
+    for (const action of actions) {
+      if (action.toStatus === 'ARRIVED') expanded.push(...(source.ARRIVED || []));
+      else expanded.push(action);
+    }
+    return expanded.filter((action, index, list) =>
+      list.findIndex(item => item.toStatus === action.toStatus) === index
+    );
   },
 
   ROLES: {

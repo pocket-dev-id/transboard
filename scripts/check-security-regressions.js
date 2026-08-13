@@ -345,13 +345,14 @@ assert(
   'Status history must preserve trusted local operation sources while forcing external requests to child_api'
 );
 assert(
-  !main.includes('if (hidden.has(status))') &&
+  main.includes("hidden.has('ARRIVED')") &&
   !api.includes('maintenance: true'),
-  'Hidden statuses must not be auto-skipped and the removed maintenance payload must not be sent'
+  'Arrival/exam-start integration must be conditional and the removed maintenance payload must not be sent'
 );
 assert(
-  config.includes('return [...(source[status] || [])];'),
-  'Renderer action availability must use explicit one-step transitions'
+  config.includes("if (!this.isStatusHidden('ARRIVED')) return actions;") &&
+  config.includes('source.ARRIVED || []'),
+  'Renderer action availability must expose the combined arrival/exam-start action when ARRIVED is hidden'
 );
 
 // 患者取り違え・移送の取りこぼしにつながる3つのガード。いずれも processDbRequest や
