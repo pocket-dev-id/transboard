@@ -173,7 +173,7 @@ Object.assign(Settings, {
         </div>
         <p class="settings-hint">
           <i class="fas fa-info-circle"></i>
-          病床番号・部屋番号・タイプを管理します。マップ上の配置は「マップ配置」タブで設定してください。
+          病床番号・部屋番号を管理します。マップ上の配置は「マップ配置」タブで設定してください。
         </p>
         <table class="settings-table">
           <thead>
@@ -181,7 +181,6 @@ Object.assign(Settings, {
               <th>病室コード</th>
               <th>病床コード</th>
               <th>病床番号(結合)</th>
-              <th>タイプ</th>
               <th>備考</th>
               <th>操作</th>
             </tr>
