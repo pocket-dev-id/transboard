@@ -3,9 +3,10 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
-const uiSource = fs.readFileSync(path.join(root, 'js/ui.js'), 'utf8');
-const historySource = fs.readFileSync(path.join(root, 'js/history.js'), 'utf8');
-const mastersSource = fs.readFileSync(path.join(root, 'js/settings/masters.js'), 'utf8');
+const uiSource = fs.readFileSync(path.join(root, 'frontend/js/ui.js'), 'utf8');
+const historySource = fs.readFileSync(path.join(root, 'frontend/js/history.js'), 'utf8');
+const mastersSource = fs.readFileSync(path.join(root, 'frontend/js/settings/masters.js'), 'utf8');
+const csvServiceSource = fs.readFileSync(path.join(root, 'frontend/js/csv-service.js'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -62,8 +63,11 @@ assert(
   'Both history CSV exporters must sanitize every field'
 );
 assert(
-  mastersSource.includes('const str = UI.sanitizeCsvValue(val);') &&
-    mastersSource.includes('val = UI.restoreSanitizedCsvValue(val);'),
+  ((mastersSource.includes('const str = UI.sanitizeCsvValue(val);') &&
+    mastersSource.includes('val = UI.restoreSanitizedCsvValue(val);')) ||
+   (mastersSource.includes('CSVService.generate(headers, rows)') &&
+    csvServiceSource.includes('UI.sanitizeCsvValue') &&
+    mastersSource.includes('val = UI.restoreSanitizedCsvValue(val);'))),
   'Master CSV export/import must apply and restore formula-injection protection'
 );
 

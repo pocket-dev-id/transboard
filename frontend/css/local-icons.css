@@ -1,0 +1,156 @@
+/* Local replacement for the subset of FontAwesome classes used by this app.
+   It avoids CDN access in offline hospital networks. */
+.fas, .far, .fab {
+  display: inline-block;
+  width: 1.15em;
+  min-width: 1.15em;
+  text-align: center;
+  font-family: 'Segoe UI Symbol', 'Yu Gothic UI', 'Meiryo', sans-serif;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+}
+.fas::before, .far::before, .fab::before { content: ''; }
+.fa-spin { animation: local-fa-spin 1s linear infinite; }
+@keyframes local-fa-spin { to { transform: rotate(360deg); } }
+.fa-arrow-circle-up::before { content: "\2191"; }
+.fa-arrow-right::before { content: "\2192"; }
+.fa-ban::before { content: "\2298"; }
+.fa-bed::before { content: "\25AD"; }
+.fa-bell::before { content: "\25D6"; }
+.fa-bolt::before { content: "\21AF"; }
+.fa-border-none::before { content: "\25A1"; }
+.fa-broadcast-tower::before { content: "\21DD"; }
+.fa-broom::before { content: "\2732"; }
+.fa-bullhorn::before { content: "\25B6"; }
+.fa-calendar::before { content: "\25A6"; }
+.fa-calendar-alt::before { content: "\25A6"; }
+.fa-calendar-check::before { content: "\2713"; }
+.fa-camera::before { content: "\25C9"; }
+.fa-check::before { content: "\2713"; }
+.fa-check-circle::before { content: "\2713"; }
+.fa-chevron-left::before { content: "\2039"; }
+.fa-chevron-right::before { content: "\203A"; }
+.fa-clipboard-list::before { content: "\25A4"; }
+.fa-clock::before { content: "\25F7"; }
+.fa-cloud-download-alt::before { content: "\21E9"; }
+.fa-code::before { content: "</>"; }
+.fa-code-branch::before { content: "Y"; }
+.fa-cog::before { content: "\2699"; }
+.fa-comment-alt::before { content: "\25A4"; }
+.fa-compress::before { content: "\2921"; }
+.fa-compress-alt::before { content: "\2921"; }
+.fa-compress-arrows-alt::before { content: "\2921"; }
+.fa-copy::before { content: "\29C9"; }
+.fa-database::before { content: "\25C9"; }
+.fa-desktop::before { content: "\25AD"; }
+.fa-door-open::before { content: "\21AA"; }
+.fa-download::before { content: "\21E9"; }
+.fa-edit::before { content: "\270E"; }
+.fa-eraser::before { content: "\232B"; }
+.fa-exchange-alt::before { content: "\21C4"; }
+.fa-exclamation-circle::before { content: "\2757"; }
+.fa-exclamation-triangle::before { content: "\26A0"; }
+.fa-expand::before { content: "\2922"; }
+.fa-expand-alt::before { content: "\2922"; }
+.fa-external-link-alt::before { content: "\2197"; }
+.fa-eye::before { content: "\25C9"; }
+.fa-eye-slash::before { content: "\2205"; }
+.fa-file-alt::before { content: "\25A4"; }
+.fa-file-csv::before { content: "CSV"; }
+.fa-file-download::before { content: "\21E9"; }
+.fa-file-import::before { content: "\21E6"; }
+.fa-file-medical-alt::before { content: "\271A"; }
+.fa-file-upload::before { content: "\21E7"; }
+.fa-filter::before { content: "\25BD"; }
+.fa-film::before { content: "\25A6"; }
+.fa-flask::before { content: "\25C7"; }
+.fa-folder::before { content: "\25F0"; }
+.fa-folder-open::before { content: "\25F0"; }
+.fa-globe::before { content: "\25CE"; }
+.fa-hand-paper::before { content: "\270B"; }
+.fa-hand-pointer::before { content: "\261D"; }
+.fa-heartbeat::before { content: "\2665"; }
+.fa-history::before { content: "\21BA"; }
+.fa-home::before { content: "\2302"; }
+.fa-hospital::before { content: "\271A"; }
+.fa-hospital-symbol::before { content: "\271A"; }
+.fa-hourglass-half::before { content: "\25F7"; }
+.fa-id-card::before { content: "ID"; }
+.fa-inbox::before { content: "\25A3"; }
+.fa-info-circle::before { content: "i"; }
+.fa-key::before { content: "\26BF"; }
+.fa-laptop::before { content: "\25AD"; }
+.fa-laptop-medical::before { content: "\25AD"; }
+.fa-layer-group::before { content: "\2261"; }
+.fa-link::before { content: "\221E"; }
+.fa-list::before { content: "\2630"; }
+.fa-list-ul::before { content: "\2630"; }
+.fa-lock::before { content: "\25A0"; }
+.fa-long-arrow-alt-right::before { content: "\27F6"; }
+.fa-magic::before { content: "\2726"; }
+.fa-magnet::before { content: "\25D6"; }
+.fa-map::before { content: "\25A7"; }
+.fa-map-marker-alt::before { content: "\2316"; }
+.fa-microphone::before { content: "\266A"; }
+.fa-microscope::before { content: "\25C7"; }
+.fa-minus::before { content: "\2212"; }
+.fa-moon::before { content: "\263D"; }
+.fa-network-wired::before { content: "\22C8"; }
+.fa-notes-medical::before { content: "\271A"; }
+.fa-palette::before { content: "\25D0"; }
+.fa-paper-plane::before { content: "\27A4"; }
+.fa-pen::before { content: "\270E"; }
+.fa-phone::before { content: "\260E"; }
+.fa-phone-alt::before { content: "\260E"; }
+.fa-phone-slash::before { content: "\260E"; }
+.fa-phone-volume::before { content: "\260E"; }
+.fa-play::before { content: "\25B6"; }
+.fa-plug::before { content: "\26A1"; }
+.fa-plus::before { content: "+"; }
+.fa-power-off::before { content: "\23FB"; }
+.fa-print::before { content: "\2399"; }
+.fa-procedures::before { content: "\25AD"; }
+.fa-project-diagram::before { content: "\22C8"; }
+.fa-question-circle::before { content: "?"; }
+.fa-radiation::before { content: "\2622"; }
+.fa-redo::before { content: "\21BB"; }
+.fa-rotate-left::before { content: "\21BA"; }
+.fa-save::before { content: "\25A3"; }
+.fa-search::before { content: "\2315"; }
+.fa-search-plus::before { content: "\2315"; }
+.fa-search-minus::before { content: "\2212"; }
+.fa-server::before { content: "\25AD"; }
+.fa-shield-alt::before { content: "\25C8"; }
+.fa-shipping-fast::before { content: "\21E2"; }
+.fa-signal::before { content: "\26A1"; }
+.fa-sliders-h::before { content: "\2699"; }
+.fa-spinner::before { content: "\25CC"; }
+.fa-square::before { content: "\25A1"; }
+.fa-stethoscope::before { content: "\271A"; }
+.fa-sticky-note::before { content: "\25A4"; }
+.fa-stopwatch::before { content: "\25F7"; }
+.fa-stream::before { content: "\2630"; }
+.fa-sync::before { content: "\21BB"; }
+.fa-sync-alt::before { content: "\21BB"; }
+.fa-table::before { content: "\25A6"; }
+.fa-tag::before { content: "\25A4"; }
+.fa-tags::before { content: "\25A4"; }
+.fa-th-large::before { content: "\25A6"; }
+.fa-times::before { content: "\00D7"; }
+.fa-times-circle::before { content: "\00D7"; }
+.fa-toggle-on::before { content: "\25C9"; }
+.fa-trash::before { content: "\232B"; }
+.fa-trash-alt::before { content: "\232B"; }
+.fa-toolbox::before { content: "\25A3"; }
+.fa-undo::before { content: "\21BA"; }
+.fa-user-edit::before { content: "\25C9"; }
+.fa-user-nurse::before { content: "\25C9"; }
+.fa-user-plus::before { content: "\25C9"; }
+.fa-vial::before { content: "\25C7"; }
+.fa-video::before { content: "\25B6"; }
+.fa-volume-off::before { content: "\00D7"; }
+.fa-volume-up::before { content: "\25B6"; }
+.fa-walking::before { content: "\2192"; }
+.fa-wave-square::before { content: "\223F"; }
+.fa-x-ray::before { content: "X"; }

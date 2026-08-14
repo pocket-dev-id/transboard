@@ -18,6 +18,16 @@
 
 ---
 
+## TransBoard 2.0 現行実装に関する注意
+
+この文書には1.xのネットワーク設計を比較資料として残しています。2.0の実行時は、親機HTTPサーバー、APIトークン認証、Heartbeat、WebRTCシグナリング、更新配信をGoの `internal/network` が担当します。TLSは院内LAN向けHTTP互換を維持しつつ、将来差し替えられる境界に分離しています。
+
+保存データと資格情報の保護はElectron `safeStorage` ではなく、Go版のWindows DPAPIアダプターを使用します。既存のElectron暗号化値は形式を確認してから移行し、復号できない場合は元データを上書きしません。
+
+2.0の更新配布は新しい `manifest.json`（ファイル名、サイズ、SHA-256）を正とし、1.x互換の `latest.yml` も移行期間中は併配信できます。
+
+---
+
 ## 使用ポート・プロトコル
 
 | ポート | プロトコル | 方向 | 用途 |
@@ -97,3 +107,9 @@ Test-NetConnection -ComputerName <親機IP> -Port 3005
 ```
 
 子機の設定画面「接続テスト」ボタンでもGUIから確認可能。
+
+## Go / Wails 2.0
+
+Go版も親機HTTP互換APIを `net/http` でポート3005に提供します。外部リクエストは `X-API-Token` を必須とし、トークン比較はconstant-timeで行います。子機からの接続先はプライベートIPv4に限定し、将来HTTPSへ移行できるようDomain層へHTTP詳細を持ち込みません。
+
+WebRTCのメディア処理はWebView2のJavaScriptに残し、Goは `/webrtc/send` と `/webrtc/poll` のシグナリングキューだけを担当します。キューにはサイズ上限と有効期限を設定しています。

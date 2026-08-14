@@ -1,10 +1,30 @@
 # TransBoard — 病棟移送管理ダッシュボード
 
+## TransBoard 2.0 (Go / Wails 移行版)
+
+`rewrite/go-wails` ブランチでは、既存の Electron 1.x を参照実装として、Go + Wails + WebView2 版を構築しています。既存の `index.html`、`css/`、`js/`、`assets/` は `frontend/` にコピーして再利用し、`window.electronAPI` はWails Bindingへ接続します。
+
+開発環境:
+
+```powershell
+go test ./...
+wails dev
+wails build
+```
+
+TransBoard 2.0 is a Go/Wails desktop application for Windows 10/11. The
+runtime no longer starts Electron or Node.js; the existing browser UI calls the
+Wails bindings through `frontend/bridge/electron-api-compat.js` for API
+compatibility. Existing 1.x `db.json`, backups, and update distribution files
+are handled by the Go migration adapters.
+
+Go版は初回起動時に既存の `db.json` を検査し、移行前バックアップを作成してからスキーマ・旧状態を変換します。Electron版の暗号化DBを復号できない場合は元ファイルを変更せず、Electron版での復旧を案内します。
+
 > 病棟から検査室への患者移送をリアルタイムで管理する、無料・オープンソースのデスクトップアプリです。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)](https://github.com/pocket-dev-id/transboard/releases)
-[![Electron](https://img.shields.io/badge/Built%20with-Electron-47848F)](https://www.electronjs.org/)
+[![Go/Wails](https://img.shields.io/badge/Built%20with-Go%20%2B%20Wails-00ADD8)](https://wails.io/)
 [![Latest Release](https://img.shields.io/github/v/release/pocket-dev-id/transboard)](https://github.com/pocket-dev-id/transboard/releases/latest)
 
 ---
@@ -87,17 +107,17 @@ git clone https://github.com/pocket-dev-id/transboard.git
 cd transboard
 
 # 依存パッケージをインストール
-npm install
+go test ./...
 
 # 開発モードで起動
-npm start
+wails dev
 ```
 
 ### ビルド
 
 ```bash
 # Windowsインストーラーを生成
-npm run dist
+wails build
 ```
 
 ---
@@ -181,7 +201,7 @@ npm run dist
 
 - 本アプリの親機サーバーは院内LANでの使用を前提としています。**インターネットへの公開は行わないでください。**
 - デフォルトのパスコード `0000` は初回起動後すぐに変更してください。
-- ODBCパスワード・SMBパスワードはOS標準の暗号化機能（Electron `safeStorage`）で保護されます。
+- ODBCパスワード・SMBパスワードはWindows DPAPIで保護されます。Go版ではElectron `safeStorage` の保存値を直接DPAPIへ渡さず、復号可能性を確認できた場合だけ移行します。
 - 外部からのHTTPアクセスに対して、パスコード等の機密設定項目へのアクセスは自動的にブロックされます。
 
 ---
@@ -190,12 +210,12 @@ npm run dist
 
 | カテゴリ | 技術 |
 |----------|------|
-| デスクトップフレームワーク | [Electron](https://www.electronjs.org/) v41 |
+| デスクトップフレームワーク | Go + Wails + WebView2 |
 | フロントエンド | バニラ JavaScript / HTML / CSS |
 | データベース | ローカル JSON ファイル |
-| CSV処理 | [csv-parser](https://github.com/mafintosh/csv-parser) |
-| ファイル監視 | [chokidar](https://github.com/paulmillr/chokidar) |
-| 院内通話 | WebRTC（HTTP ポーリングシグナリング） |
+| CSV処理 | Go CSV importer (UTF-8/BOM/CP932) |
+| ファイル監視 | fsnotify |
+| 院内通話 | JavaScript WebRTC media + Go signaling |
 
 ---
 

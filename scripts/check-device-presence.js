@@ -4,7 +4,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'js/device-presence.js'), 'utf8');
+const source = fs.readFileSync(path.join(ROOT, 'frontend/js/device-presence.js'), 'utf8');
 const DevicePresence = vm.runInNewContext(`${source}\nDevicePresence;`, {
   Date,
   Math,

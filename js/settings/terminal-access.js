@@ -273,6 +273,7 @@ Object.assign(Settings, {
       try {
         const result = await API.setAdminPasscode(raw);
         if (!result?.success) throw new Error(result?.message || 'パスコードを保存できませんでした');
+        window.maintenanceToken = result.maintenanceToken || null;
         const obj = AppState.systemSettings?.find(s => s.id === 'admin_passcode');
         if (obj) obj.value = '********';
         else AppState.systemSettings.push({ id: 'admin_passcode', value: '********' });

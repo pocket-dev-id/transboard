@@ -212,3 +212,9 @@ DBファイル自体もsafeStorageが利用可能な環境では`ENCDB1:`プレ�
 - **患者情報を除去した平文**: 患者氏名・ID等を`null`化して出力。障害調査用途向け
 
 復元時は元の形式（暗号化・平文どちらも）を自動判別する。
+
+## Go / Wails 2.0 migration contract
+
+Go版の初期スキーマバージョンは `2` です。既存テーブル名・ID・フィールド名を維持し、`system_settings.schema_version` で移行状態を管理します。起動時に `db.json.pre-go-migration` を作成してから、欠落テーブル、旧 `DEPART_REGISTERED`、旧 `beds.bed_type` を検査・変換します。
+
+Go版の監査証跡はDB本体と分離した `audit-log.jsonl` に1行1JSONで追記します。既存データが読めない場合は移行・置換を実行せず、入力ファイルを保持します。

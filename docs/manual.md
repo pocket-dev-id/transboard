@@ -209,6 +209,12 @@ TransBoardはper-userインストール（`%LOCALAPPDATA%\Programs\`配下）の
 
 ### リリースの作成（開発者向け）
 
+> **TransBoard 2.0 (Go/Wails) の現行手順**
+>
+> 2.0.0以降はNode/Electronの配布コマンドを使用しません。GoツールチェーンとWails CLIを準備し、リポジトリルートで `go test ./...`、続けて `wails build -nsis` を実行します。成果物は `build/bin/TransBoard.exe` と、NSISが利用可能な場合は `build/bin/TransBoard-amd64-installer.exe` です。GitHub ActionsではNSISをセットアップして同じ手順を実行します。
+>
+> 旧Electron版の手順は1.xの再現・保守用資料です。2.0のランタイム配布には使用しないでください。
+
 1. `npm version patch`（または`minor`/`major`）でバージョンを上げてコミットし、タグ`vX.Y.Z`をpush
 2. GitHub Actionsが自動でインストーラ（.exe）・`latest.yml`・`.blockmap`をビルドし、GitHub Releasesに添付
 

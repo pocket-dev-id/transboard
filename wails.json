@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "version": "2",
+  "name": "TransBoard",
+  "outputfilename": "TransBoard",
+  "frontend:dir": "frontend",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev": "",
+  "info": {
+    "productVersion": "2.0.0",
+    "productName": "TransBoard",
+    "companyName": "pocket-dev-id",
+    "comments": "TransBoard 2.0 Go/Wails desktop client"
+  },
+  "author": {
+    "name": "pocket-dev-id",
+    "email": ""
+  }
+}

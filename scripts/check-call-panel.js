@@ -8,7 +8,7 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'js/call.js'), 'utf8');
+const source = fs.readFileSync(path.join(ROOT, 'frontend/js/call.js'), 'utf8');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

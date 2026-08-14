@@ -5,8 +5,12 @@ node_modules/
 dist/
 out/
 release/
+build/bin/
+build/windows/
+build/appicon.png
+build/manifest.json
 
-# Electron builder cache
+# Tool cache
 .cache/
 
 # OS files

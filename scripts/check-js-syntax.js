@@ -3,8 +3,12 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const ENTRY_FILES = ['main.js', 'preload.js'];
-const JS_DIRS = ['js', 'main-modules'];
+const ENTRY_FILES = [];
+const JS_DIRS = [
+  'frontend/js',
+  'frontend/shared',
+  'frontend/bridge',
+];
 
 function walk(dir, out = []) {
   if (!fs.existsSync(dir)) return out;

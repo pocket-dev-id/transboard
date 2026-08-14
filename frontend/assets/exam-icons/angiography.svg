@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>血管撮影</title>
+  <rect x="5" y="5" width="54" height="54" rx="13" fill="#fce7f3"/>
+  <path d="M32 49V30M32 30l-10-9M32 30l10-9M22 21l-4-7M42 21l4-7M32 30l-7 8M32 30l7 8" fill="none" stroke="#be185d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="20" r="5" fill="#f9a8d4" stroke="#be185d" stroke-width="3"/>
+</svg>
