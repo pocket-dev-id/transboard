@@ -122,6 +122,7 @@ const BedMap = {
         }
       });
     });
+    this._bindScheduleBadgeHandlers(grid);
 
     // 付箋機能は削除されました
 
@@ -143,6 +144,7 @@ const BedMap = {
     grid.querySelectorAll('.bed-card').forEach(card => {
       card.addEventListener('click', () => BedModal.open(card.dataset.bedId));
     });
+    this._bindScheduleBadgeHandlers(grid);
 
     // フィルターを適用
     this.applyFilter();
@@ -192,8 +194,18 @@ const BedMap = {
       const feedName = String(feed?.name || item?.feed_name || '本日スケジュール');
       const title = abbreviation ? `${feedName}（${abbreviation}）` : feedName;
       const abbreviationHtml = abbreviation ? `<span>${UI.escapeHTML(abbreviation)}</span>` : '';
-      return `<div class="bed-schedule-badge" style="background:#fff;color:${color};padding:2px 5px;border-radius:4px;font-size:9px;font-weight:${bold ? '800' : '600'};display:inline-flex;align-items:center;gap:2px;border:1px solid ${color};margin-bottom:2px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${UI.escapeHTML(title)}"><i class="fas fa-${icon}"></i>${abbreviationHtml}</div>`;
+      return `<div class="bed-schedule-badge" data-sched-id="${UI.escapeHTML(String(item?.id || ''))}" style="background:#fff;color:${color};padding:2px 5px;border-radius:4px;font-size:9px;font-weight:${bold ? '800' : '600'};display:inline-flex;align-items:center;gap:2px;border:1px solid ${color};margin-bottom:2px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="${UI.escapeHTML(title)}"><i class="fas fa-${icon}"></i>${abbreviationHtml}</div>`;
     }).join('');
+  },
+
+  _bindScheduleBadgeHandlers(grid) {
+    grid.querySelectorAll('.bed-schedule-badge[data-sched-id]').forEach(badge => {
+      badge.addEventListener('click', evt => {
+        evt.stopPropagation();
+        const item = (AppState.scheduleItems || []).find(x => String(x.id) === badge.dataset.schedId);
+        if (item) Timeline._showScheduleItemPopup(item, evt.clientX, evt.clientY);
+      });
+    });
   },
 
   _renderBedCard(bed) {
