@@ -158,29 +158,33 @@ const BedMap = {
     const feedsById = new Map(
       (AppState.scheduleFeeds || []).map(feed => [String(feed.id), feed])
     );
-    const seenFeedIds = new Set();
+    const now = Date.now();
+    const groups = new Map();
 
-    return (AppState.scheduleItems || []).reduce((schedules, item) => {
-      if (String(item?.identifier || '').trim() !== patientId) return schedules;
+    (AppState.scheduleItems || []).forEach(item => {
+      if (String(item?.identifier || '').trim() !== patientId) return;
 
       const feedId = item?.feed_id == null ? '' : String(item.feed_id);
       const feed = feedId ? feedsById.get(feedId) : null;
-      if (feedId && !feed) return schedules;
-      if (feed?.is_active === false) return schedules;
-      if (feed?.show_on_bed_map === false) return schedules;
+      if (feedId && !feed) return;
+      if (feed?.is_active === false) return;
+      if (feed?.show_on_bed_map === false) return;
 
       const wardIds = Array.isArray(feed?.ward_ids)
         ? feed.ward_ids
         : (Array.isArray(item?.ward_ids) ? item.ward_ids : []);
-      if (wardIds.length > 0 && wardId && !wardIds.includes(wardId)) return schedules;
+      if (wardIds.length > 0 && wardId && !wardIds.includes(wardId)) return;
 
       // 同じフィード内に予定が複数あっても、病床マップ上は1つの表示にまとめる。
+      // 進行中 > 次に控えている予定 > 直近に終わった予定、の優先順位で1件選ぶ。
       const key = feedId || String(item?.id || 'legacy-schedule');
-      if (seenFeedIds.has(key)) return schedules;
-      seenFeedIds.add(key);
-      schedules.push({ item, feed });
-      return schedules;
-    }, []);
+      const existing = groups.get(key);
+      if (!existing || this._isCloserScheduleItem(item, existing.item, now)) {
+        groups.set(key, { item, feed });
+      }
+    });
+
+    return Array.from(groups.values());
   },
 
   _renderTodayScheduleBadges(bed) {
@@ -206,6 +210,24 @@ const BedMap = {
         if (item) Timeline._showScheduleItemPopup(item, evt.clientX, evt.clientY);
       });
     });
+  },
+
+  _isCloserScheduleItem(candidate, current, now) {
+    const rank = (it) => {
+      const start = Number(it?.start_ms) || 0;
+      const end = it?.duration_min ? start + it.duration_min * 60000 : start;
+      if (now >= start && now <= end) return 0; // 進行中
+      if (start > now) return 1;                // 次に控えている
+      return 2;                                  // 終了済み
+    };
+    const rc = rank(candidate);
+    const rr = rank(current);
+    if (rc !== rr) return rc < rr;
+    const sc = Number(candidate?.start_ms) || 0;
+    const sr = Number(current?.start_ms) || 0;
+    // 進行中/次に控えている場合は開始が早い方(＝直近)を優先。
+    // 終了済み同士は開始が遅い方(＝より最近終わった方)を優先。
+    return rc <= 1 ? sc < sr : sc > sr;
   },
 
   _renderBedCard(bed) {
