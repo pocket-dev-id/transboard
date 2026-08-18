@@ -1550,4 +1550,29 @@ assert(
   'answer/ice/hangup/busy handlers must verify the sender matches the current call partner (targetId)'
 );
 
+// #webrtc-video-container/#webrtc-remote-videoはjs/call.jsでインラインstyle
+// (width:100%;height:260px;等)を持つため、:fullscreenのCSSルールに!important
+// が無いとインラインstyleに常に負け、フルスクリーンにしても見た目が一切
+// 変わらない(横だけ100vwになり縦は260pxのまま、という壊れた表示になる)
+assert(
+  (() => {
+    const idx = styles.indexOf('#webrtc-video-container:fullscreen {');
+    const end = styles.indexOf('}', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = styles.slice(idx, end);
+    return body.includes('width: 100vw !important') && body.includes('height: 100vh !important');
+  })(),
+  '#webrtc-video-container:fullscreen must use !important on width/height to override the element\'s inline style from js/call.js'
+);
+assert(
+  (() => {
+    const idx = styles.indexOf('#webrtc-video-container:fullscreen #webrtc-remote-video {');
+    const end = styles.indexOf('}', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = styles.slice(idx, end);
+    return body.includes('width: 100% !important') && body.includes('height: 100% !important');
+  })(),
+  '#webrtc-video-container:fullscreen #webrtc-remote-video must use !important on width/height to override the video element\'s inline style'
+);
+
 console.log('Security regression checks passed.');

@@ -2899,17 +2899,20 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 
 
 
-/* ビデオ通話 全画面対応 */
+/* ビデオ通話 全画面対応
+   #webrtc-video-container/#webrtc-remote-videoはjs/call.jsでインラインstyle
+   (width:100%;height:260px;等)を持つため、!important無しではこのルールが
+   一切効かない(インラインstyleはID+擬似クラスより常に優先される) */
 #webrtc-video-container:fullscreen {
-  width: 100vw;
-  height: 100vh;
-  border-radius: 0;
-  border: none;
+  width: 100vw !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+  border: none !important;
 }
 #webrtc-video-container:fullscreen #webrtc-remote-video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
 }
 
 /* 接続断バナー */
