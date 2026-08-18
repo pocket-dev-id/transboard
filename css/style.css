@@ -2881,6 +2881,11 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   opacity: 1;
 }
 
+.bed-cell-empty.is-corridor,
+.bed-cell-empty.is-wall {
+  /* 廊下・壁は病床カードと見分けやすいよう枠線を付けない */
+  border: none;
+}
 .bed-cell-empty.is-corridor:hover,
 .bed-cell-empty.is-wall:hover {
   background: inherit !important;
