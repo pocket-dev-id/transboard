@@ -6,6 +6,9 @@ const CONFIG = {
   // ポーリング間隔 (ms)
   POLL_INTERVAL: 5000,
 
+  // モーダルウィンドウを操作なしで放置したときに自動的に閉じるまでの時間 (ms)
+  MODAL_IDLE_AUTO_CLOSE_MS: 120000,
+
   // 状態表示名（施設ごとのカスタム表示名で上書きされる可能性がある実行時の値）
   STATUS_LABEL: {
     IN_BED: '在床',

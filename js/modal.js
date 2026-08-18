@@ -31,6 +31,7 @@ const BedModal = {
   _pendingFlash: false,
   _previousFocus: null,
   _historyRequestId: 0,
+  _idleCancelAutoClose: null,
 
   open(bedId) {
     if (this.currentBedId !== bedId) {
@@ -61,6 +62,11 @@ const BedModal = {
         this.close();
       }
     };
+    if (this._idleCancelAutoClose) this._idleCancelAutoClose();
+    this._idleCancelAutoClose = UI.armIdleAutoClose(overlay, () => {
+      this.close();
+      UI.toast('操作が無いため画面を自動的に閉じました', 'info');
+    });
 
     // 在室管理モード判定
     const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
@@ -171,6 +177,7 @@ const BedModal = {
 
   close() {
     this._historyRequestId += 1;
+    if (this._idleCancelAutoClose) { this._idleCancelAutoClose(); this._idleCancelAutoClose = null; }
     document.getElementById('bed-modal-overlay').classList.add('hidden');
     this.currentBedId = null;
     this.currentEventId = null;
@@ -1233,10 +1240,14 @@ const PatientRegModal = {
     `;
     document.body.appendChild(overlay);
 
-    const close = () => overlay.remove();
-    const closeAndReopen = () => { overlay.remove(); BedModal.open(bedId); };
+    const close = () => { idleCancel(); overlay.remove(); };
+    const closeAndReopen = () => { idleCancel(); overlay.remove(); BedModal.open(bedId); };
     document.getElementById('prm-close').onclick = closeAndReopen;
     document.getElementById('prm-cancel').onclick = closeAndReopen;
+    const idleCancel = UI.armIdleAutoClose(overlay, () => {
+      closeAndReopen();
+      UI.toast('操作が無いため画面を自動的に閉じました', 'info');
+    });
 
     // 退院ボタン
     document.getElementById('prm-discharge')?.addEventListener('click', async () => {
@@ -1250,6 +1261,7 @@ const PatientRegModal = {
         });
         await App.loadMasters();
         BedMap.render();
+        idleCancel();
         overlay.remove();
         UI.toast('退院しました', 'success');
         BedModal.open(bedId);
@@ -1288,6 +1300,7 @@ const PatientRegModal = {
         });
         await App.loadMasters();
         BedMap.render();
+        idleCancel();
         overlay.remove();
         UI.toast(isEdit ? '患者情報を更新しました' : `${UI.escapeHTML(UI.getPatientName(name))} さんを登録しました`, 'success');
         BedModal.open(bedId);
