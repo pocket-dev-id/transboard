@@ -193,6 +193,7 @@ key-valueペアで管理。重要なキー一覧:
 | `odbc_connection_string` | `` | ODBC接続文字列（`ENCRYPTED:`プレフィックス付きで暗号化保存） |
 | `api_token` | `` | 子機↔親機のAPI認証トークン（`ENCRYPTED:`プレフィックス付きで暗号化保存、初回起動時に自動生成） |
 | `smb_password__<feedId>` | （無し） | スケジュールフィード個別のSMBパスワード（`ENCRYPTED:`プレフィックス付きで暗号化保存）。下記 `schedule_feeds` を参照 |
+| `parent_instance_id` | （親機の初回起動時に自動生成） | 親機を識別するID。APIトークンは全端末共通のため、バックアップ復元などで別のPCが親機になっても子機は無警告で追従してしまう。子機はこの値の変化を検知して「接続先の親機が入れ替わりました」と警告する（同時に2台の親機が存在する状態そのものの検知ではない） |
 
 `smb_password` / `odbc_connection_string` / `api_token` / `admin_passcode` および
 `smb_password__` で始まるIDは機密扱いで、次の4つの保護がまとめて適用される:

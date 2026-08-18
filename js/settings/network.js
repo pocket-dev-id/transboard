@@ -470,12 +470,21 @@ Object.assign(Settings, {
           this._writeLocalSetting('enable_patient_ic_association', enablePatientIc);
         }
 
+        // 子機へ切り替えた場合は、その場で共有サーバー(3005)と取り込み監視を止める。
+        // 再起動の確認は下で出すが拒否できるため、これが無いと3005で配信を続けたまま
+        // 子機として振る舞う（＝LAN上に2台目の親機がいる）状態が残ってしまう。
+        if (isClientSave) {
+          try { await window.electronAPI?.stopParentServer?.(); } catch (e) {
+            console.warn('[Network] 共有サーバーの停止に失敗:', e);
+          }
+        }
+
         if (isClientSave && sharedFailed) {
           UI.toast('この端末の接続設定は保存しました。共有設定は接続または権限の問題で反映できませんでした。', 'warning', 8000);
         } else {
           UI.toast('共有・ネットワーク設定を保存しました。稼働モードや接続先は再起動後に確実に反映されます。', 'success');
         }
-        
+
         // 再起動アラートの提示
         if (await UI.confirmModal('設定を完全に反映するためには、アプリケーションの再起動が必要です。今すぐ再起動しますか？', { confirmLabel: '再起動' })) {
           if (window.electronAPI && window.electronAPI.relaunchApp) {
@@ -575,8 +584,12 @@ Object.assign(Settings, {
           btn.onclick = async () => {
             if (!btn.dataset.id) return;
             if (!await UI.confirmModal('この端末を接続一覧から削除しますか？', { title: '端末を接続一覧から削除', type: 'warning', confirmLabel: '削除' })) return;
-            await API.disconnectDevice(btn.dataset.id);
-            UI.toast('接続機器を一覧から削除しました', 'success');
+            const result = await API.disconnectDevice(btn.dataset.id);
+            if (result?.success === false) {
+              UI.toast(result.message || '接続機器を削除できませんでした', 'danger');
+            } else {
+              UI.toast('接続機器を一覧から削除しました', 'success');
+            }
             renderRows();
           };
         });

@@ -112,7 +112,7 @@ const CarryoverModal = {
       }
       UI.toast(action === 'RETURNED' ? '帰棟完了にしました' : '移送をキャンセルしました', 'success');
       // 盤面へ反映
-      await App.refreshData();
+      await App.refreshData({ force: true });
       const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
       if (currentPage === 'ward-dashboard') WardDashboard.render();
       else if (currentPage === 'exam-room') ExamRoom._renderQueue();

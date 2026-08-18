@@ -968,7 +968,7 @@ Object.assign(Settings, {
           if (res.success) {
             UI.toast(`✅ データベース同期が完了しました (${res.count}件のレコードを処理)`, 'success');
             await App.loadMasters();
-            await App.refreshData();
+            await App.refreshData({ force: true });
             this.render();
           } else {
             UI.toast(`❌ 同期失敗: ${res.message}`, 'danger');

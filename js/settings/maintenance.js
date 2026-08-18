@@ -117,10 +117,13 @@ Object.assign(Settings, {
         </div>
         <div style="display:flex; gap:8px; margin-top:8px;">
           <button class="btn btn-primary btn-sm" id="btn-save-event-retention"><i class="fas fa-save"></i> 保持期間を保存</button>
+          ${currentMode === 'parent' ? `
           <button class="btn btn-outline btn-sm" id="btn-run-event-cleanup" style="border-color:#ef4444; color:#ef4444;">
             <i class="fas fa-broom"></i> 今すぐ削除を実行
-          </button>
+          </button>` : ''}
         </div>
+        ${currentMode === 'parent' ? '' : `
+        <p class="settings-note" style="margin-top:6px;">手動での削除実行は親機でのみ行えます（保持期間の保存はこの端末からでも反映されます）。</p>`}
 
         <p class="settings-note" style="margin-top:16px; margin-bottom:12px; padding-top:14px; border-top:1px dashed var(--clr-border);">
           病床の入退室記録（検査室への移送を伴わないものを含む）を、指定した日数より古い場合に自動削除します。
@@ -424,8 +427,12 @@ Object.assign(Settings, {
         if (!await UI.confirmModal(`帰棟済・キャンセル済のイベントのうち${label}のものを削除します。この操作は元に戻せません。続けますか？`, { danger: true, confirmLabel: '削除' })) return;
         runCleanupBtn.disabled = true;
         try {
-          await EventRetentionManager.run();
-          UI.toast('古いイベントデータを削除しました', 'success');
+          const result = await EventRetentionManager.run();
+          if (result?.success === false) {
+            UI.toast(result.message || '削除を実行できませんでした', 'danger');
+          } else {
+            UI.toast('古いイベントデータを削除しました', 'success');
+          }
         } catch (e) {
           UI.toast('削除中にエラーが発生しました: ' + e.message, 'danger');
         } finally {
@@ -512,13 +519,18 @@ Object.assign(Settings, {
     const restoreBtn = document.getElementById('btn-restore-db');
     if (restoreBtn) {
       restoreBtn.onclick = async () => {
-        if (!await UI.confirmModal('バックアップから復元を実行しますか？', { title: 'バックアップから復元', detail: '現在のすべてのマスターデータ、履歴、設定が消去・上書きされ、アプリが自動再起動します。', danger: true, confirmLabel: '復元を実行' })) {
+        if (!await UI.confirmModal('バックアップから復元を実行しますか？', { title: 'バックアップから復元', detail: '現在のすべてのマスターデータ、履歴、設定が消去・上書きされ、アプリが自動再起動します。バックアップに含まれる稼働モード（親機/子機）と親機IPも復元されるため、この端末の役割が変わる場合があります。', danger: true, confirmLabel: '復元を実行' })) {
           return;
         }
         const password = document.getElementById('cfg-backup-password')?.value || '';
         try {
           const res = await window.electronAPI.restoreDatabase({ password });
           if (res && res.success) {
+            // メインプロセスはlocalStorageを触れないため、復元後の役割をここで揃える。
+            // 放置すると「DBと役割ファイルは親機／localStorageは子機」のような
+            // 食い違いが残り、3005で配信しつつ子機として振る舞う状態になる。
+            if (res.shareMode) localStorage.setItem('cfg_share_mode', res.shareMode);
+            if (typeof res.parentIp === 'string') localStorage.setItem('cfg_parent_ip', res.parentIp);
             UI.toast('復元に成功しました。アプリケーションを再起動します...', 'success');
             setTimeout(() => { window.electronAPI.relaunchApp(); }, 1500);
           } else if (res && res.passwordRequired) {

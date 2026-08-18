@@ -81,6 +81,21 @@ function ensureMutationSuccess(result) {
   return result;
 }
 
+// 親機からのレスポンスは、401でも本文が正常なJSONとして返る。res.okを見ずに
+// r.json()だけすると「認証エラー」が「正常な空応答」と区別できなくなり、
+// ハートビートが接続中を報告して切断バナーを打ち消す等の誤検知につながる。
+async function assertParentResponseOk(res) {
+  if (res && res.ok === false) {
+    const error = new Error(res.status === 401
+      ? 'APIトークンが親機と一致しません'
+      : `親機がエラーを返しました (HTTP ${res.status})`);
+    if (res.status === 401) error.unauthorized = true;
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+}
+
 function requireDataArray(result, label) {
   if (!Array.isArray(result?.data)) {
     const error = new Error(result?.message || `${label}の取得に失敗しました`);
@@ -669,7 +684,9 @@ const API = {
       return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {
         headers: apiToken ? { 'X-API-Token': apiToken } : {},
       }, API_SIGNALING_TIMEOUT_MS)
-        .then(r => r.json());
+        // res.okを見ないと401のJSONが正常な空ポーリングとして扱われ、
+        // トークン不一致の子機で着信が一切鳴らないまま無警告になる
+        .then(assertParentResponseOk);
     }
 
     if (window.electronAPI && window.electronAPI.webrtcRequest) {
@@ -696,7 +713,12 @@ const API = {
         ...(apiToken ? { 'X-API-Token': apiToken } : {}),
       },
       body: JSON.stringify(info)
-    }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json()).catch(() => null);
+      // 401を成功として扱うと、10秒ごとのハートビートが「接続中」を報告し、
+      // 5秒ポーリングが上げたトークン不一致バナーを打ち消してしまう。
+      // 失敗の理由(認証エラーかどうか)は呼び出し元のバナー表示に必要なので保持する。
+    }, API_HEARTBEAT_TIMEOUT_MS)
+      .then(assertParentResponseOk)
+      .catch(e => (e?.unauthorized ? { success: false, unauthorized: true } : null));
   },
 
   async getConnectedDevices() {
@@ -706,7 +728,7 @@ const API = {
     if (shareMode === 'client' || shareMode === 'child') {
       return parentFetch(`http://${parentIp}:3005/api/device/list`, {
         headers: apiToken ? { 'X-API-Token': apiToken } : {},
-      }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
+      }, API_HEARTBEAT_TIMEOUT_MS).then(assertParentResponseOk);
     }
     if (window.electronAPI) {
       return window.electronAPI.dbRequest({ url: 'device/list', options: { method: 'GET' } }).catch(() => ({ success: false, devices: [] }));

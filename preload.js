@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 監視フォルダパスの更新
   updateWatchDirectory: (newPath) => ipcRenderer.invoke('update-watch-directory', newPath),
+  stopParentServer: () => ipcRenderer.invoke('stop-parent-server'),
   
   // システム全体の初期化リセット
   resetDatabase: () => ipcRenderer.invoke('reset-database'),

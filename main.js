@@ -1182,6 +1182,12 @@ function normalizeTerminalRole(value) {
   return value === 'exam' ? 'exam' : 'ward';
 }
 
+// 端末が子機かどうか（渡されたdbのshare_modeで判定する）。
+// CSV/スケジュールの取り込みなど「親機だけが行うべき処理」のガードに使う。
+function isClientTerminal(db) {
+  return normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) === 'client';
+}
+
 function maskAuditValue(table, id, value) {
   if (table === 'system_settings' && isAuditSecretSettingId(id)) {
     return value === undefined ? undefined : '[changed]';
@@ -1693,6 +1699,16 @@ function setupImportTrigger() {
     currentIntervalTimer = null;
   }
 
+  // 取り込みは親機だけが行う。import_directoryは共有DBにあるため、ガードが無いと
+  // 全子機が親機と同じフォルダを監視し、取り込み後のアーカイブ/削除
+  // (archiveFile)でソースCSVを先に消してしまい、親機が取り込めなくなる。
+  // 停止処理のあとに置くことで、親機→子機へ切り替えた直後の呼び出しでも
+  // 既存の監視を確実に止めてから抜ける。
+  if (isClientTerminal(db)) {
+    console.log('[Watcher] 子機のため取り込み監視は開始しません');
+    return;
+  }
+
   const watchPath = resolveWatchDir();
   currentWatchDir = watchPath;
 
@@ -1775,6 +1791,16 @@ function setupScheduleFeedTriggers() {
   scheduleFeedTimers = [];
 
   const db = readDB();
+
+  // 取り込みは親機だけが行う。schedule_feedsは共有DBにあるため、ガードが無いと
+  // 全子機が親機と同じフォルダを監視し、取り込み後のアーカイブ/削除
+  // (archiveScheduleFeedFile)でソースCSVを先に消してしまう。
+  // 既存の監視・タイマーを停止したあとに置く（上部の停止処理を参照）。
+  if (isClientTerminal(db)) {
+    console.log('[ScheduleFeed] 子機のためスケジュール監視は開始しません');
+    return;
+  }
+
   const feeds = (db.schedule_feeds || []).filter(f => f.is_active && f.watch_dir);
   let retryRequired = false;
 
@@ -2383,11 +2409,39 @@ handleTrusted('get-watch-directory', () => {
   return currentWatchDir;
 });
 
-function validateWatchDirectoryOnParent(newPath) {
+// 親機が既にSMB接続するよう設定されているサーバーの集合。
+// 子機が指定したパスに対して親機の資格情報で net use するのは、
+// 「既に設定済みのサーバーへ接続し直す」場合に限る。
+function getConfiguredSmbServerKeys(db) {
+  const keys = new Set();
+  const collect = (p) => {
+    const t = parseUncTarget(p);
+    if (t) keys.add(t.serverKey);
+  };
+  collect(getSettingRecord(db, 'import_directory')?.value || '');
+  (db.schedule_feeds || []).forEach(feed => collect(String(feed?.watch_dir || '').trim()));
+  return keys;
+}
+
+function validateWatchDirectoryOnParent(newPath, { isExternal = false } = {}) {
   const resolved = newPath && newPath.trim()
     ? newPath.trim()
     : path.join(app.getPath('userData'), 'import_folder');
-  
+
+  // 子機からの要求で、まだ設定されていないサーバーのUNCパスが来た場合は拒否する。
+  // ここを通すと、子機が指定した任意のホストへ親機が保存済みのSMB資格情報で
+  // net use しに行き（authenticateSMBSync）、さらに mkdirSync まで実行してしまう。
+  // 設定済みのフィード/監視先だけを触るという schedule-feed-headers と同じ方針。
+  if (isExternal) {
+    const target = parseUncTarget(resolved);
+    if (target && !getConfiguredSmbServerKeys(readDB()).has(target.serverKey)) {
+      return {
+        success: false,
+        message: `新しいネットワーク共有（\\\\${target.server}）の追加は親機で行ってください。`,
+      };
+    }
+  }
+
   // UNCパスの場合のみSMBネットワーク共有フォルダの認証を実行
   authenticateSMBSync(resolved);
 
@@ -2416,8 +2470,8 @@ function validateWatchDirectoryOnParent(newPath) {
   return { success: true, path: resolved };
 }
 
-function updateWatchDirectoryOnParent(newPath) {
-  const validation = validateWatchDirectoryOnParent(newPath);
+function updateWatchDirectoryOnParent(newPath, { isExternal = false } = {}) {
+  const validation = validateWatchDirectoryOnParent(newPath, { isExternal });
   if (!validation.success) return validation;
   setupImportTrigger();
   setupScheduleFeedTriggers();
@@ -2426,6 +2480,16 @@ function updateWatchDirectoryOnParent(newPath) {
 
 // IPC通信で監視対象フォルダを動的に切り替える
 handleTrusted('update-watch-directory', (event, newPath) => updateWatchDirectoryOnParent(newPath));
+
+// 子機へ切り替えたとき、再起動を待たずに共有サーバーを閉じるためのIPC。
+// あわせて取り込み監視も止める（setupImportTrigger/setupScheduleFeedTriggersは
+// 子機なら停止処理だけ行って抜ける）。
+handleTrusted('stop-parent-server', () => {
+  const result = stopParentServer();
+  setupImportTrigger();
+  setupScheduleFeedTriggers();
+  return result;
+});
 
 async function triggerManualImportOnParent() {
   const watchPath = resolveWatchDir();
@@ -2597,6 +2661,12 @@ async function getOdbcTablesOnParent({ connectionString }) {
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
     return { success: false, error: connResult.message, tables: [] };
+  }
+  // 他のODBC操作（test/preview/sync）と同じくDSN指定を必須にする。
+  // これが無いと、子機が任意の接続文字列（Driver=…;Server=…）を指定して
+  // 親機に外部ホストへ接続させられる。
+  if (!connResult.connectionString.includes('DSN=')) {
+    return { success: false, error: '接続文字列にDSN指定が見つかりません。例: DSN=EMR_DB;UID=admin;PWD=pass;', tables: [] };
   }
 
   const result = await execOdbcPowerShell(connResult.connectionString, `
@@ -5623,8 +5693,12 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
       const restoredShareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
       const restoredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '');
       writeTerminalRole({ shareMode: restoredShareMode, parentIp: restoredParentIp });
+      // localStorageはメインプロセスから触れないため、復元後の役割をrendererへ返して
+      // 再起動の前に cfg_share_mode / cfg_parent_ip を揃えてもらう。これが無いと
+      // 「DBと役割ファイルは親機／localStorageは子機」のような食い違いが残り、
+      // 3005で配信しつつ子機として振る舞う状態になる。
+      return { success: true, shareMode: restoredShareMode, parentIp: restoredParentIp };
     }
-    return { success: true };
   } catch (err) {
     console.error('[DB Restore Error]', err);
     return { success: false, message: err.message };
@@ -6060,6 +6134,28 @@ function ensureApiToken() {
   return token;
 }
 
+// 親機を識別するID。APIトークンは全機共通のため、別マシンが親機になっても
+// 子機は何の警告もなくそちらへ接続してしまう。子機がこの値の変化を見て
+// 「接続先の親機が入れ替わった」ことに気づけるようにする。
+// 注: これは切り替わりの検知であって、同一LAN上に親機が同時に2台存在する
+// 状態そのものの検知ではない（それにはmDNS等の探索が必要）。
+function ensureParentInstanceId() {
+  const db = readDB();
+  const setting = getSettingRecord(db, 'parent_instance_id');
+  if (setting && setting.value) return setting.value;
+
+  const instanceId = crypto.randomBytes(16).toString('hex');
+  if (setting) {
+    setting.value = instanceId;
+  } else {
+    db.system_settings = db.system_settings || [];
+    db.system_settings.push({ id: 'parent_instance_id', value: instanceId });
+  }
+  writeDB(db);
+  console.log('[Server] 親機インスタンスIDを生成しました');
+  return instanceId;
+}
+
 function isValidApiToken(apiToken) {
   // system_settingsの1レコードを読むだけで一切ミューテーションしないため、
   // DB全体をディープコピーするreadDB()ではなく非クローン版で十分。
@@ -6111,7 +6207,7 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
       // DBへ書き込む前に監視先を検証し、設定だけ保存されて監視が壊れる状態を防ぐ。
       let watchValidation = null;
       if (hasImportDirectory) {
-        watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''));
+        watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''), { isExternal: true });
         if (!watchValidation.success) return watchValidation;
       }
       const db = readDB();
@@ -6146,7 +6242,7 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
     case 'manual-import':
       return appendParentActionAudit(action, await triggerManualImportOnParent(), requestMeta);
     case 'update-watch-directory':
-      return appendParentActionAudit(action, updateWatchDirectoryOnParent(payload.path || payload.newPath || ''), requestMeta);
+      return appendParentActionAudit(action, updateWatchDirectoryOnParent(payload.path || payload.newPath || '', { isExternal: true }), requestMeta);
     case 'odbc-dsns':
       return appendParentActionAudit(action, { success: true, ...getOdbcDsnsOnParent() }, requestMeta);
     case 'odbc-tables':
@@ -6206,9 +6302,22 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
 
 // 親機としてのHTTP共有サーバー起動
 let parentHttpServer = null;
+
+// 共有サーバーを停止する。親機→子機へ切り替えたとき、再起動を促すだけでは
+// 断られた場合に3005で配信を続けたまま子機として振る舞う（＝実質2台目の親機）
+// ため、役割変更時にその場で閉じられる手段を用意する。
+function stopParentServer() {
+  if (!parentHttpServer) return { success: true, stopped: false };
+  try { parentHttpServer.close(); } catch {}
+  parentHttpServer = null;
+  console.log('[Server] 共有サーバー（ポート3005）を停止しました');
+  return { success: true, stopped: true };
+}
+
 function startParentServer() {
   if (parentHttpServer) return;
   ensureApiToken();
+  ensureParentInstanceId();
   
   parentHttpServer = http.createServer((req, res) => {
     // CORSヘッダーを追加し、他のPC（子機）からの接続を許可
@@ -6400,10 +6509,11 @@ function startParentServer() {
           } else if (action === 'list' && req.method === 'GET') {
             result = { success: true, devices: getActiveDevices() };
           } else if (action === 'disconnect' && req.method === 'POST') {
-            let info;
-            try { info = JSON.parse(body || '{}'); } catch { info = {}; }
-            delete connectedDevices[info.deviceId];
-            result = { success: true };
+            // 認証は全端末共通のAPIトークン1個のみで、プロトコル上「どの子機か」を
+            // 識別できない。そのためHTTP経由で許すと、任意の子機が他端末のdeviceIdを
+            // 指定して一覧から消せてしまう（しかも消えた端末は約10秒後の
+            // ハートビートで再登録されるだけで実効性も無い）。親機のUIからのみ行う。
+            result = { success: false, message: '接続端末の切断は親機で行ってください' };
           } else {
             result = { success: false, message: 'Unknown device action' };
           }
@@ -6467,10 +6577,7 @@ if (!gotTheLock) {
       clearTimeout(scheduleFeedRetryTimer);
       scheduleFeedRetryTimer = null;
     }
-    if (parentHttpServer) {
-      try { parentHttpServer.close(); } catch {}
-      parentHttpServer = null;
-    }
+    stopParentServer();
     if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
       powerSaveBlocker.stop(powerSaveBlockerId);
       powerSaveBlockerId = null;

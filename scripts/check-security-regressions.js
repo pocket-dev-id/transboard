@@ -54,6 +54,7 @@ const terminalAccess = read('js/settings/terminal-access.js');
 const styles = read('css/style.css');
 const modal = read('js/modal.js');
 const carryover = read('js/carryover.js');
+const maintenance = read('js/settings/maintenance.js');
 const examroom = read('js/examroom.js');
 
 assert(!main.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
@@ -1254,6 +1255,138 @@ assert(
     return main.slice(idx, idx + 400).includes('feedSmbPasswordSettingId');
   })(),
   'Deleting a schedule feed must also drop its stored SMB password setting'
+);
+
+// ── 親機/子機の関係 ─────────────────────────────────────────
+// A-1: import_directory も schedule_feeds も共有DBにあるため、ガードが無いと
+// 全子機が親機と同じフォルダを監視し、取り込み後のアーカイブ/削除でソースCSVを
+// 先に消してしまう（親機が永久に取り込めなくなる無言のデータ損失）
+assert(
+  (() => {
+    const idx = main.indexOf('function setupImportTrigger()');
+    const end = main.indexOf('\nfunction ', idx + 10);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    // 停止処理より後、監視を張る前にガードがあること
+    return body.includes('isClientTerminal(db)')
+      && body.indexOf('isClientTerminal(db)') < body.indexOf('resolveWatchDir()');
+  })(),
+  'setupImportTrigger must not start a watcher on a child terminal (children would consume the CSVs the parent needs)'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function setupScheduleFeedTriggers()');
+    const end = main.indexOf('function scanAndImportScheduleFolder', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('isClientTerminal(db)')
+      && body.indexOf('isClientTerminal(db)') < body.indexOf('feeds.forEach');
+  })(),
+  'setupScheduleFeedTriggers must not start watchers on a child terminal'
+);
+// A-2: 親機でのみ実行できる操作を子機で押したとき、成功を騙らないこと
+assert(
+  (() => {
+    const idx = app.indexOf('const EventRetentionManager');
+    const end = app.indexOf('\n};', idx);
+    return idx >= 0 && end > idx && app.slice(idx, end).includes('return result;');
+  })(),
+  'EventRetentionManager.run must return the IPC result so callers can detect a parent-only rejection'
+);
+assert(
+  maintenance.includes("result?.success === false") && maintenance.includes('btn-run-event-cleanup'),
+  'The manual retention cleanup button must surface a failed result instead of always reporting success'
+);
+// A-3: 401でも本文は正常なJSONなので、res.okを見ないと認証エラーが
+// 「正常な空応答」と区別できず、ハートビートが切断バナーを打ち消す
+assert(
+  api.includes('async function assertParentResponseOk(')
+  && (api.match(/assertParentResponseOk/g) || []).length >= 4,
+  'deviceHeartbeat / getConnectedDevices / webrtcPoll must check res.ok instead of parsing a 401 body as success'
+);
+// A-4: 書き込み直後の refreshData が force 無しだと、書き込み前に発行された
+// ポーリングのPromiseがそのまま返り、画面が変わらないまま成功トーストが出る
+assert(
+  !modal.includes('App.refreshData()')
+  && !examroom.includes('App.refreshData()')
+  && !timeline.includes('App.refreshData()')
+  && !carryover.includes('App.refreshData()'),
+  'refreshData() after a mutation must pass { force: true }, otherwise it can return an in-flight pre-write poll'
+);
+// B-1: localStorage欠落時に既定の'parent'で修復すると、子機が黙って
+// 2台目の親機へ昇格する（APIトークンは全機共通なので誰にも検知されない）
+assert(
+  (() => {
+    const idx = app.indexOf('async _repairLocalShareMode()');
+    const end = app.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes("const storedMode = localStorage.getItem('cfg_share_mode');")
+      && body.includes('if (!storedMode)')
+      && !body.includes("localStorage.getItem('cfg_share_mode') || 'parent'");
+  })(),
+  'A terminal with no stored cfg_share_mode must not promote itself to parent'
+);
+// B-3: 再起動を断られても3005が生き続けると、子機として振る舞いながら配信を続ける
+assert(
+  main.includes('function stopParentServer()') && main.includes("handleTrusted('stop-parent-server'"),
+  'There must be a way to stop the parent HTTP server without a restart'
+);
+assert(
+  networkSettings.includes('stopParentServer'),
+  'Switching a terminal to child mode must stop the shared server immediately'
+);
+// B-4: メインプロセスはlocalStorageを触れないため、復元後の役割をrendererへ返す
+assert(
+  (() => {
+    const idx = main.indexOf("handleTrusted('restore-db'");
+    const end = main.indexOf("handleTrusted('get-local-ips'", idx);
+    return idx >= 0 && end > idx
+      && main.slice(idx, end).includes('return { success: true, shareMode: restoredShareMode, parentIp: restoredParentIp };');
+  })(),
+  'restore-db must report the restored role so the renderer can sync localStorage before relaunching'
+);
+assert(
+  maintenance.includes("localStorage.setItem('cfg_share_mode', res.shareMode)"),
+  'The restore handler must sync cfg_share_mode to the restored role'
+);
+// B-5: 別マシンが親機になっても子機は無警告で追従してしまう
+assert(
+  main.includes('function ensureParentInstanceId()') && app.includes('_checkParentIdentity('),
+  'Children must be able to notice that the parent they talk to has been replaced'
+);
+// C-1: 子機の指定した任意のUNCパスへ親機が保存済み資格情報で net use しに行かないこと
+assert(
+  (() => {
+    const idx = main.indexOf('function validateWatchDirectoryOnParent(');
+    const end = main.indexOf('function updateWatchDirectoryOnParent(', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('isExternal')
+      && body.includes('getConfiguredSmbServerKeys')
+      && body.indexOf('getConfiguredSmbServerKeys') < body.indexOf('authenticateSMBSync(resolved)');
+  })(),
+  'External callers must not be able to point the parent at an unconfigured SMB server'
+);
+// C-2: 他のODBC操作と同じくDSN必須。無いと任意ホストへ接続させられる
+assert(
+  (() => {
+    const idx = main.indexOf('async function getOdbcTablesOnParent(');
+    const end = main.indexOf('execOdbcPowerShell', idx);
+    return idx >= 0 && end > idx && main.slice(idx, end).includes("includes('DSN=')");
+  })(),
+  'getOdbcTablesOnParent must require a DSN like the other ODBC actions do'
+);
+// C-3: 共有トークンしかないため、HTTP経由では他端末になりすまして切断できてしまう
+assert(
+  (() => {
+    const idx = main.indexOf("} else if (cleanUrl.startsWith('device/')) {");
+    const end = main.indexOf('Unknown device action', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes("action === 'disconnect'") && !body.includes('delete connectedDevices[info.deviceId]');
+  })(),
+  'device/disconnect must not be reachable over HTTP (any child could evict any other terminal)'
 );
 
 console.log('Security regression checks passed.');
