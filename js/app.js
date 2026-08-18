@@ -705,6 +705,9 @@ const App = {
       await this.refreshData();
       this._primeNotificationBaseline();
       WardDashboard.render();
+      if (document.querySelector('.tab-btn.active')?.dataset.page === 'timeline') {
+        Timeline.render();
+      }
       this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
       if (Settings && ['beds', 'map', 'staffs'].includes(Settings._activeTab)) {
         Settings.render();

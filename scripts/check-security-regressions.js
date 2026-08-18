@@ -973,6 +973,96 @@ assert(
   'Timeline bed-linking must scope the bed search to AppState.currentWardId, otherwise a same-identifier patient in another ward leaks into this ward\'s timeline'
 );
 
+// _buildSegmentsの区間終端は、次の段階がまだ到達していない(=現在進行中)
+// 場合に現在時刻へフォールバックしなければならない。三項演算子の`p.to ?`
+// 判定は常に真(pairs配列のtoは常に非空文字列)のため、`event[p.to] || now`
+// でなければ進行中の段階(移動中以外)が現在時刻まで描画されず、タイムライン
+// 上でその区間が丸ごと消えてしまう
+assert(
+  (() => {
+    const idx = timeline.indexOf('_buildSegments(event, winStart, winEnd, toPercent) {');
+    const end = timeline.indexOf('return segments;', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes("event[p.to] || now") && !/p\.to\s*\?\s*event\[p\.to\]\s*:\s*now/.test(body);
+  })(),
+  'Timeline _buildSegments must fall back to "now" when the next milestone has not happened yet, otherwise in-progress stages beyond MOVING vanish from the timeline'
+);
+
+// タイムラインの「迎え目安」時刻変更は、病床詳細モーダル(js/modal.js)の
+// 同じフィールドの変更と同様にexpectedStatusを伴うpatchEventFieldsを
+// 使わなければならない。生のAPI.patchだとサーバー側の楽観的排他チェックが
+// 発動せず、他端末が既にその移送を完了/キャンセルしていても検知できない
+assert(
+  (() => {
+    const idx = timeline.indexOf("document.getElementById('tl-popup-save')?.addEventListener");
+    const end = timeline.indexOf('_showScheduleItemPopup(item, x, y) {', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes('API.patchEventFields(event.id, { estimated_pickup_at: base.getTime() }, event.current_status)') &&
+      body.includes('App.handleDataConflict(err)');
+  })(),
+  'Timeline pickup-time update must use API.patchEventFields with expectedStatus and handle conflicts, matching js/modal.js'
+);
+
+// スケジュールバーのツールチップ(title属性)に埋め込むitem.identifierは、
+// 同じフィールドを表示する_showScheduleItemPopupと同様にエスケープしな
+// ければならない。CSV/ODBC取り込みの外部データがそのまま入る値のため、
+// 未エスケープだと属性値からのマークアップ注入を許してしまう
+assert(
+  (() => {
+    const idx = timeline.indexOf('const _schedBarHtml = (item, color) => {');
+    const end = timeline.indexOf('// ── HTML構築 ──', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes("UI.escapeHTML(item.identifier)");
+  })(),
+  'Timeline schedule bar tooltip must escape item.identifier, otherwise externally-imported data can break out of the title attribute'
+);
+
+// スケジュールバーのクリックハンドラは、右クリックのコンテキストメニュー
+// (TimelineContextMenu)が開いたままになっていないよう、ポップアップを
+// 開く前に必ず非表示にしなければならない(他の2つのクリック/右クリック
+// ハンドラは対になるオーバーレイを既に非表示にしている)
+assert(
+  (() => {
+    const idx = timeline.indexOf('_bindScheduleClickHandlers(container) {');
+    const end = timeline.indexOf('},', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes('TimelineContextMenu.hide();');
+  })(),
+  'Timeline schedule bar click handler must hide TimelineContextMenu before opening the schedule popup'
+);
+
+// 病棟セレクトの変更ハンドラは、現在タイムラインを表示中であれば
+// Timeline.renderを呼ばなければならない。呼ばないと病棟切替後、次の
+// ポーリングtickまで前の病棟のタイムラインが表示され続ける
+assert(
+  (() => {
+    const idx = app.indexOf("document.getElementById('ward-select').addEventListener('change'");
+    const end = app.indexOf('_renderDevicePresence', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('Timeline.render()') && body.includes("dataset.page === 'timeline'");
+  })(),
+  'Ward-select change handler must call Timeline.render() when the timeline tab is active, otherwise switching wards leaves stale timeline data on screen'
+);
+
+// タイムラインの迎え目安マーカーは、病床マップ/優先度パネル/病床詳細
+// モーダルと同じくUI.remainingClassで遅延度合いを強調しなければならない
+assert(
+  (() => {
+    const idx = timeline.indexOf("filtered.forEach(e => {");
+    const end = timeline.indexOf('linkedItems.length > 0', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = timeline.slice(idx, end);
+    return body.includes('UI.remainingClass(e.estimated_pickup_at - now)') &&
+      body.includes('timeline-pickup-marker${pickupClass');
+  })(),
+  'Timeline pickup marker must be highlighted via UI.remainingClass based on how overdue the estimated pickup time is'
+);
+
 // current_statusの変更はstatus/update(processStatusUpdateRequest)の1経路に
 // 集約しなければならない。単体PATCH・一括PATCH・POST-as-updateのいずれかが
 // current_status変更を素通しにすると、スコープ別ルールではなく緩い判定

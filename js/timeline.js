@@ -229,19 +229,13 @@ const Timeline = {
 
     for (const p of pairs) {
       const fromMs = event[p.from]; if (!fromMs) continue;
-      let toMs = p.to === '_returned_end' ? fromMs + 30*60*1000 : (p.to ? event[p.to] : now);
-      if (!toMs) continue;
+      // 次の区間の到達時刻がまだ無い(=この段階が現在進行中)場合は現在時刻まで伸ばす
+      const toMs = p.to === '_returned_end' ? fromMs + 30*60*1000 : (event[p.to] || now);
       const sStart = Math.max(fromMs, winStart), sEnd = Math.min(toMs, winEnd);
       if (sStart >= winEnd || sEnd <= winStart) continue;
       const left = toPercent(sStart), width = toPercent(sEnd) - left;
       if (width < 0.5) continue;
       segments.push({ left, width, cls: p.cls, color: p.color, label: p.label });
-    }
-
-    if (segments.length === 0 && event.departed_at) {
-      const left = toPercent(Math.max(event.departed_at, winStart));
-      const right = toPercent(Math.min(now, winEnd));
-      if (right > left) segments.push({ left, width: right - left, cls:'seg-moving', color:'#93c5fd', label:'...' });
     }
     return segments;
   },
@@ -289,13 +283,16 @@ const Timeline = {
       const base = new Date(event.departed_at || Date.now());
       base.setHours(h, m, 0, 0);
       try {
-        await API.patch('transfer_events', event.id, { estimated_pickup_at: base.getTime() });
+        await API.patchEventFields(event.id, { estimated_pickup_at: base.getTime() }, event.current_status);
         await API.addStatusLog(event.id, event.current_status, event.current_status, `目安時間変更 (${UI.formatTime(base.getTime())})`);
         await App.refreshData({ force: true });
         Timeline.render();
         TimelinePopup.hide();
         UI.toast('迎え目安時間を変更しました', 'success');
-      } catch (err) { UI.toast('時間の変更に失敗しました', 'danger'); }
+      } catch (err) {
+        if (await App.handleDataConflict(err)) return;
+        UI.toast('時間の変更に失敗しました', 'danger');
+      }
     });
   },
 
@@ -322,12 +319,11 @@ const Timeline = {
   },
 
   // ── 左クリックハンドラ ───────────────────────────────────
-  _bindClickHandlers(container, selector, eventSource) {
+  _bindClickHandlers(container, selector) {
     container.querySelectorAll(selector).forEach(track => {
       if (track.dataset.editable === 'false') return;
       track.addEventListener('click', evt => {
-        const src = eventSource === 'activeEvents' ? AppState.activeEvents : this._dateEvents;
-        const event = src?.find(x => x.id === track.dataset.eventId);
+        const event = this._dateEvents?.find(x => x.id === track.dataset.eventId);
         if (!event || ['RETURNED','CANCELLED'].includes(event.current_status)) return;
         TimelineContextMenu.hide();
         this._showEventPopup(event, evt.clientX, evt.clientY);
@@ -336,12 +332,11 @@ const Timeline = {
   },
 
   // ── 右クリックコンテキストメニュー ───────────────────────
-  _bindContextMenu(container, selector, eventSource) {
+  _bindContextMenu(container, selector) {
     container.querySelectorAll(selector).forEach(track => {
       track.addEventListener('contextmenu', evt => {
         evt.preventDefault();
-        const src = eventSource === 'activeEvents' ? AppState.activeEvents : this._dateEvents;
-        const event = src?.find(x => x.id === track.dataset.eventId);
+        const event = this._dateEvents?.find(x => x.id === track.dataset.eventId);
         if (!event || ['RETURNED','CANCELLED'].includes(event.current_status)) return;
         TimelinePopup.hide();
         TimelineContextMenu.show(event, evt.clientX, evt.clientY);
@@ -353,6 +348,7 @@ const Timeline = {
     container.querySelectorAll('.tl-sched-bar[data-sched-id]').forEach(bar => {
       bar.addEventListener('click', evt => {
         evt.stopPropagation();
+        TimelineContextMenu.hide();
         const item = (this._scheduleItems || []).find(x => x.id === bar.dataset.schedId);
         if (item) this._showScheduleItemPopup(item, evt.clientX, evt.clientY);
       });
@@ -412,6 +408,7 @@ const Timeline = {
 
     // ── スケジュールアイテム取得（現在病棟・フィード有効状態でフィルタ）──
     let schedItems = [];
+    let scheduleFetchFailed = false;
     try {
       const allItems = await API.getScheduleItemsForRange(dayStart, dayEnd);
       const wardId = AppState.currentWardId;
@@ -437,7 +434,7 @@ const Timeline = {
         if (wardIds.length > 0 && wardId && !wardIds.includes(wardId)) return false;
         return true;
       });
-    } catch(e) {}
+    } catch(e) { scheduleFetchFailed = true; }
     this._scheduleItems = schedItems;
 
     // ── 日付フィルタ ──
@@ -448,7 +445,7 @@ const Timeline = {
 
 
     // ── フィルタバー描画 (A2) ──
-    this._renderFilterBar(filtered.length + schedItems.length);
+    this._renderFilterBar(filtered.length + schedItems.length, scheduleFetchFailed);
 
     if (filtered.length === 0 && schedItems.length === 0) {
       container.innerHTML = '<div class="empty-state"><i class="fas fa-calendar"></i><p>この日のデータがありません</p></div>';
@@ -511,7 +508,7 @@ const Timeline = {
           display:flex;align-items:center;overflow:hidden;padding:0 6px;
           box-sizing:border-box;font-size:10px;color:#fff;font-weight:600;white-space:nowrap;
           opacity:0.92;border:1px solid rgba(255,255,255,0.3);"
-        title="${UI.escapeHTML(item.title)}${item.identifier?' ['+item.identifier+']':''}">
+        title="${UI.escapeHTML(item.title)}${item.identifier ? ' [' + UI.escapeHTML(item.identifier) + ']' : ''}">
         ${width > 4 ? UI.escapeHTML(item.title.length > 14 ? item.title.slice(0,14)+'…' : item.title) : ''}
       </div>`;
     };
@@ -540,16 +537,18 @@ const Timeline = {
         const segs = this._buildSegments(e, winStart, winEnd, toPercent);
         const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
         const linkedItems = bedScheduleMap[e.bed_id] || [];
+        // 進行中の移送のみ、迎え目安の遅延度合いに応じてマーカーを強調する
+        // (病床マップ/優先度パネル/病床詳細モーダルと同じUI.remainingClassの判定基準)
+        const pickupClass = editable && e.estimated_pickup_at ? UI.remainingClass(e.estimated_pickup_at - now) : '';
         html += `<div class="tl-row${linkedItems.length ? ' tl-row--has-sched' : ''}">
           <div class="tl-row-label">${this._renderBedPatientLabel(e, bed)}</div>
           <div class="tl-row-track" data-event-id="${e.id}"
-            data-window-start="${winStart}" data-window-end="${winEnd}"
             data-editable="${editable}"
             style="${editable?'cursor:pointer;':''}position:relative;">
             ${segs.map(s => `<div class="tl-seg ${s.cls}" style="left:${s.left}%;width:${s.width}%;background:${s.color};" title="${s.label}">
               ${s.width > 5 ? s.label : ''}</div>`).join('')}
             ${e.estimated_pickup_at && e.estimated_pickup_at >= winStart && e.estimated_pickup_at <= winEnd
-              ? `<div class="timeline-pickup-marker" style="left:${toPercent(e.estimated_pickup_at)}%;" title="迎え目安 ${UI.formatTime(e.estimated_pickup_at)}"></div>` : ''}
+              ? `<div class="timeline-pickup-marker${pickupClass ? ' ' + pickupClass : ''}" style="left:${toPercent(e.estimated_pickup_at)}%;" title="迎え目安 ${UI.formatTime(e.estimated_pickup_at)}"></div>` : ''}
           </div>
         </div>`;
         // 連携スケジュールを同行のサブトラックに表示
@@ -605,18 +604,19 @@ const Timeline = {
     html += '</div></div>';
     container.innerHTML = html;
 
-    this._bindClickHandlers(container, '.tl-row-track[data-event-id]', 'dateEvents');
-    this._bindContextMenu(container, '.tl-row-track[data-event-id]', 'dateEvents');
+    this._bindClickHandlers(container, '.tl-row-track[data-event-id]');
+    this._bindContextMenu(container, '.tl-row-track[data-event-id]');
     this._bindScheduleClickHandlers(container);
   },
 
   // A2: フィルタバー描画
-  _renderFilterBar(totalCount) {
+  _renderFilterBar(totalCount, scheduleFetchFailed = false) {
     const bar = document.getElementById('timeline-filter-bar');
     if (!bar) return;
 
     bar.innerHTML = `<div class="tl-filter-bar">
       <span class="tl-filter-count">${totalCount}件</span>
+      ${scheduleFetchFailed ? '<span class="tl-filter-warning"><i class="fas fa-exclamation-triangle"></i> スケジュール取得エラー</span>' : ''}
     </div>`;
 
   },
