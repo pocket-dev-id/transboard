@@ -117,6 +117,8 @@ class FakeRTCPeerConnection {
   constructor() {
     this._senders = [];
     this.connectionState = 'new';
+    this.remoteDescription = null;
+    this.addedCandidates = [];
     this.onicecandidate = null;
     this.ontrack = null;
     this.onconnectionstatechange = null;
@@ -129,8 +131,8 @@ class FakeRTCPeerConnection {
   createOffer() { return Promise.resolve({ type: 'offer', sdp: 'fake-offer-sdp' }); }
   createAnswer() { return Promise.resolve({ type: 'answer', sdp: 'fake-answer-sdp' }); }
   setLocalDescription() { return Promise.resolve(); }
-  setRemoteDescription() { return Promise.resolve(); }
-  addIceCandidate() { return Promise.resolve(); }
+  setRemoteDescription(desc) { this.remoteDescription = desc; return Promise.resolve(); }
+  addIceCandidate(candidate) { this.addedCandidates.push(candidate); return Promise.resolve(); }
   getSenders() { return this._senders; }
   getStats() { return Promise.resolve(new Map()); }
   close() { this._closed = true; }
@@ -356,6 +358,136 @@ async function main() {
   assert.strictEqual(CallPanel.getNameById('east-7f'), '東7階病棟', "'ward-'接頭辞を持たない病棟IDでも病棟名を解決できること");
   assert.strictEqual(CallPanel.getNameById('room-1'), 'CT検査室', '検査室IDの解決は従来通り機能すること');
   assert.strictEqual(CallPanel.getNameById('nonexistent-id'), '不明', '存在しないIDは「不明」を返すこと');
+
+  // 9) 着信呼び出し中(応答前でpeerConnection未作成)に届いたICE候補が保留され、
+  //    応答後のsetRemoteDescription直後にまとめて適用されること
+  await resetAll();
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake-offer' } });
+  assert.strictEqual(CallPanel.targetId, 'room-1', 'offer受信でtargetIdが発信元に設定されること');
+  assert.strictEqual(CallPanel._isRinging, true, 'offer受信で呼び出し中フラグが立つこと');
+  assert.strictEqual(CallPanel.peerConnection, null, '応答前はpeerConnectionが未作成であること');
+
+  await CallPanel.handleSignalingMessage({ type: 'ice', from: 'room-1', candidate: { candidate: 'cand-1' } });
+  await CallPanel.handleSignalingMessage({ type: 'ice', from: 'room-1', candidate: { candidate: 'cand-2' } });
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 2, '呼び出し中に届いたICE候補が捨てられず保留キューに積まれること');
+
+  await CallPanel.acceptCall('room-1', { type: 'offer', sdp: 'fake-offer' });
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 0, '応答後は保留キューが空になること');
+  assert.strictEqual(CallPanel.peerConnection.addedCandidates.length, 2, '保留していたICE候補が応答直後にすべて適用されること');
+
+  // 10) 発信側でも、answer受信(setRemoteDescription)より前に届いたICE候補が保留され、
+  //     answer受信直後にフラッシュされること
+  await resetAll();
+  await CallPanel.startCall('east-7f', 'ward-1');
+  assert.strictEqual(CallPanel.peerConnection.remoteDescription, null, 'answer受信前はremoteDescriptionが未設定であること');
+
+  await CallPanel.handleSignalingMessage({ type: 'ice', from: 'east-7f', candidate: { candidate: 'cand-a' } });
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 1, 'remoteDescription未設定の間に届いたICE候補は保留されること');
+  assert.strictEqual(CallPanel.peerConnection.addedCandidates.length, 0, 'remoteDescription未設定の間はaddIceCandidateが呼ばれないこと');
+
+  await CallPanel.handleSignalingMessage({ type: 'answer', from: 'east-7f', sdp: { type: 'answer', sdp: 'fake-answer' } });
+  assert.strictEqual(CallPanel.isConnected, true, 'answer受信で接続状態になること');
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 0, 'answer受信後は保留キューが空になること');
+  assert.strictEqual(CallPanel.peerConnection.addedCandidates.length, 1, '保留していたICE候補がanswer受信直後に適用されること');
+
+  // 11) 現在の通話相手以外から届いたICE候補は保留キューに積まれないこと
+  await resetAll();
+  await CallPanel.startCall('east-7f', 'ward-1');
+  await CallPanel.handleSignalingMessage({ type: 'ice', from: 'someone-else', candidate: { candidate: 'cand-x' } });
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 0, '現在の通話相手以外からのICE候補は保留されないこと');
+
+  // 12) 保留キューが上限を超えたら古いものから捨てられること
+  await resetAll();
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake' } });
+  CallPanel.MAX_PENDING_ICE_CANDIDATES = 3;
+  for (let i = 0; i < 5; i++) {
+    await CallPanel.handleSignalingMessage({ type: 'ice', from: 'room-1', candidate: { candidate: `cand-${i}` } });
+  }
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 3, '保留キューは上限を超えないこと');
+  assert.strictEqual(CallPanel._pendingIceCandidates[0].candidate, 'cand-2', '上限超過時は古いものから捨てられること');
+  CallPanel.MAX_PENDING_ICE_CANDIDATES = 50;
+
+  // 13) cleanupCall後は保留キューが空になること(通話をまたいで残さない)
+  await resetAll();
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake' } });
+  await CallPanel.handleSignalingMessage({ type: 'ice', from: 'room-1', candidate: { candidate: 'cand-1' } });
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 1);
+  await CallPanel.cleanupCall();
+  assert.strictEqual(CallPanel._pendingIceCandidates.length, 0, 'cleanupCall後は保留キューが空であること');
+
+  // 14) cleanupCallは状態フラグをDB書き込み(API.patch)の完了を待たずにクリアすること。
+  //     従来はawaitの後でフラグを倒していたため、子機で親機が不達だと最大8秒間
+  //     isCalling/isConnectedが真のままになり、新規の発信も着信もできなくなっていた
+  await resetAll();
+  CallPanel.currentCallId = 'call-flag-order-test';
+  CallPanel.isCalling = true;
+  CallPanel.isConnected = true;
+  CallPanel.targetId = 'east-7f';
+  let patchResolved = false;
+  const originalPatch = API.patch;
+  API.patch = (table, id, data) => {
+    apiCalls.patch.push({ table, id, data });
+    return new Promise((resolve) => {
+      setTimeout(() => { patchResolved = true; resolve({ success: true }); }, 30);
+    });
+  };
+  const cleanupPromise = CallPanel.cleanupCall('test');
+  assert.strictEqual(CallPanel.isCalling, false, 'DB書き込みの完了を待たずisCallingがfalseになること');
+  assert.strictEqual(CallPanel.isConnected, false, 'DB書き込みの完了を待たずisConnectedがfalseになること');
+  assert.strictEqual(patchResolved, false, '検証時点ではまだAPI.patchが未解決であること(この前提が崩れるとテストの意味がない)');
+  await cleanupPromise;
+  API.patch = originalPatch;
+
+  // 15) 呼び出し中(応答前)に2件目のofferが来たらbusyを返し、1件目の着信状態が維持されること
+  await resetAll();
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake-1' } });
+  const firstRingTimeoutId = CallPanel._incomingRingTimeoutId;
+  assert.ok(firstRingTimeoutId, '1件目の着信で無応答タイマーが設定されること');
+
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'other-room', sdp: { type: 'offer', sdp: 'fake-2' } });
+  assert.ok(
+    apiCalls.webrtcSend.some((m) => m.type === 'busy' && m.to === 'other-room'),
+    '呼び出し中(応答前)に届いた2件目のofferにはbusyを返すこと'
+  );
+  assert.strictEqual(CallPanel.targetId, 'room-1', '1件目の発信者情報が2件目のofferで上書きされないこと');
+  assert.strictEqual(CallPanel._incomingRingTimeoutId, firstRingTimeoutId, '1件目の無応答タイマーが2件目のofferで差し替えられないこと');
+
+  // 16) answered受信で無応答タイマーと呼び出し中フラグが解除され、後からタイマーが
+  //     発火してもbusyを送らないこと(同一IDの別端末が応答した後、確立済みの通話を
+  //     誤って切ってしまうバグの受け入れテスト)
+  await resetAll();
+  CallPanel.CALL_RING_TIMEOUT_MS = 40;
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake' } });
+  await CallPanel.handleSignalingMessage({ type: 'answered', from: CallPanel.getMyId() });
+  assert.strictEqual(CallPanel._incomingRingTimeoutId, null, 'answered受信で無応答タイマーが解除されること');
+  assert.strictEqual(CallPanel._isRinging, false, 'answered受信で呼び出し中フラグが解除されること');
+  apiCalls.webrtcSend.length = 0;
+  await sleep(200);
+  assert.ok(
+    !apiCalls.webrtcSend.some((m) => m.type === 'busy'),
+    '解除済みの無応答タイマーは発火せず、他端末が応答した通話にbusyを送らないこと'
+  );
+  CallPanel.CALL_RING_TIMEOUT_MS = 30000;
+
+  // 17) 現在の通話相手以外からのhangup/busyは無視され、正しい相手からのものは従来通り切れること
+  await resetAll();
+  await CallPanel.startCall('east-7f', 'ward-1');
+  await CallPanel.handleSignalingMessage({ type: 'hangup', from: 'someone-else' });
+  assert.strictEqual(CallPanel.isCalling, true, '無関係な相手からのhangupでは通話状態が変わらないこと');
+  await CallPanel.handleSignalingMessage({ type: 'busy', from: 'someone-else' });
+  assert.strictEqual(CallPanel.isCalling, true, '無関係な相手からのbusyでも通話状態が変わらないこと');
+  await CallPanel.handleSignalingMessage({ type: 'hangup', from: 'east-7f' });
+  assert.strictEqual(CallPanel.isCalling, false, '正しい相手からのhangupでは従来通り通話が終了すること');
+
+  // 18) 通話の文脈(targetId)が全く無いときのhangup/busyはcleanupCallすら呼ばないこと
+  await resetAll();
+  let cleanupCallCount = 0;
+  const originalCleanup = CallPanel.cleanupCall;
+  CallPanel.cleanupCall = async (...args) => { cleanupCallCount++; return originalCleanup.apply(CallPanel, args); };
+  await CallPanel.handleSignalingMessage({ type: 'hangup', from: 'east-7f' });
+  await CallPanel.handleSignalingMessage({ type: 'busy', from: 'east-7f' });
+  assert.strictEqual(cleanupCallCount, 0, '通話の文脈が無いときのhangup/busyはcleanupCallを呼ばないこと');
+  CallPanel.cleanupCall = originalCleanup;
 
   await resetAll();
   console.log('Call panel checks passed.');

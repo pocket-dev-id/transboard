@@ -1389,4 +1389,75 @@ assert(
   'device/disconnect must not be reachable over HTTP (any child could evict any other terminal)'
 );
 
+// ── 通話機能: ICE候補の保留・呼び出し中の状態管理・シグナリングの送信元検証 ──
+// 発信側のhost candidateはミリ秒単位で収集・送信されるのに対し、着信側は応答するまで
+// peerConnection自体が存在しない。保留せずに捨てると発信側のICE候補がほぼ全て失われ、
+// 「通話がつながらない」の主因になる
+assert(
+  (() => {
+    const idx = call.indexOf("else if (msg.type === 'ice') {");
+    const end = call.indexOf("else if (msg.type === 'hangup')", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('_pendingIceCandidates.push') && body.includes('remoteDescription');
+  })(),
+  'ICE candidates arriving before remoteDescription is set must be queued (_pendingIceCandidates), not dropped'
+);
+assert(
+  call.includes('_flushPendingIceCandidates') &&
+  (call.match(/await this\._flushPendingIceCandidates\(\)/g) || []).length >= 2,
+  'Queued ICE candidates must be flushed after setRemoteDescription on both the caller (answer) and callee (accept) paths'
+);
+// cleanupCallはDB書き込み(API.patch、子機では最大8秒かかりうる)の完了を待たずに
+// isCalling/isConnectedを倒す必要がある。そうしないと「通話を終了」を押してから
+// 最大8秒間、新規の発信も着信もできなくなる
+assert(
+  (() => {
+    const idx = call.indexOf('async cleanupCall(message');
+    const flagIdx = call.indexOf('this.isCalling = false;', idx);
+    const patchIdx = call.indexOf("await API.patch('calls'", idx);
+    return idx >= 0 && flagIdx > idx && patchIdx > flagIdx;
+  })(),
+  'cleanupCall must clear isCalling/isConnected before awaiting the calls-table DB patch, not after'
+);
+// 着信呼び出し中(応答前)はpeerConnection/isCalling/isConnectedのいずれも真にならないため、
+// 話し中判定にこれらしか使わないと2件目の着信で1件目のダイアログが上書きされ、
+// 1件目の発信者にbusyも拒否も返らないまま無応答タイムアウトまで鳴り続けてしまう
+assert(
+  (() => {
+    const idx = call.indexOf("if (msg.type === 'offer') {");
+    const end = call.indexOf("else if (msg.type === 'answer')", idx);
+    return idx >= 0 && end > idx && call.slice(idx, end).includes('this._isRinging');
+  })(),
+  'The busy-check on incoming offers must include _isRinging (peerConnection/isCalling/isConnected are all false while ringing)'
+);
+assert(
+  (() => {
+    const idx = call.indexOf("else if (msg.type === 'answered')");
+    const end = call.indexOf("else if (msg.type === 'speech')", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('_incomingRingTimeoutId') && body.includes('_isRinging = false');
+  })(),
+  "Receiving 'answered' (another terminal with the same id picked up) must clear the no-answer timeout, or it later fires busy against an already-connected call"
+);
+// シグナリングメッセージはキューに最大30秒残るため、送信元を見ずにhangup/busyを
+// 処理すると、通信が数秒詰まった後に再開した際、直前の通話のhangupが次の通話を切る。
+// 呼び出し箇所の存在だけでなく、_isFromCurrentPeer自体が実際にtargetIdと比較して
+// いること（常にtrueを返すよう空洞化されていないこと）も確認する
+assert(
+  (() => {
+    const idx = call.indexOf('_isFromCurrentPeer(msg) {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    return call.slice(idx, end).includes('msg.from === this.targetId');
+  })(),
+  '_isFromCurrentPeer must actually compare msg.from against this.targetId, not be a stub'
+);
+assert(
+  call.includes('_isFromCurrentPeer(msg)') &&
+  (call.match(/if \(!this\._isFromCurrentPeer\(msg\)/g) || []).length >= 4,
+  'answer/ice/hangup/busy handlers must verify the sender matches the current call partner (targetId)'
+);
+
 console.log('Security regression checks passed.');
