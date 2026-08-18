@@ -39,6 +39,17 @@ const CallPanel = {
   _incomingRingTimeoutId: null,
   CALL_RING_TIMEOUT_MS: 30000,
 
+  // 着信呼び出し中フラグ。話し中判定(peerConnection/isCalling/isConnected)は
+  // 着信呼び出し中(応答前でpeerConnection未作成)を捕捉できないため別途持つ
+  _isRinging: false,
+
+  // setRemoteDescription前に届いたICE候補の保留キュー。着信側は応答するまで
+  // peerConnection自体が存在せず、発信側のhost候補はミリ秒単位で収集・送信
+  // されるため、応答を待つ間に届いた候補を保持してsetRemoteDescription直後に
+  // 適用する（保持しないとICE候補がほぼ全て失われ、接続できないことがある）
+  _pendingIceCandidates: [],
+  MAX_PENDING_ICE_CANDIDATES: 50,
+
   // ビデオ品質・統計・デバイス選択
   _videoQualityPreset: localStorage.getItem('tbs_video_quality') || 'medium',
   _statsInterval: null,
@@ -307,11 +318,32 @@ const CallPanel = {
     }, 500);
   },
 
+  // 通話の文脈(targetId)が無い、または相手が現在の通話相手と異なるメッセージは無視する。
+  // シグナリングメッセージはキューに最大30秒残るため、これが無いと通信が数秒詰まった
+  // あとに再開した際、直前の通話のhangup/busyが次の通話を切ってしまうことがある
+  _isFromCurrentPeer(msg) {
+    return !!this.targetId && msg.from === this.targetId;
+  },
+
+  // setRemoteDescription前に保留していたICE候補をまとめて適用する
+  async _flushPendingIceCandidates() {
+    if (!this.peerConnection || this._pendingIceCandidates.length === 0) return;
+    const queued = this._pendingIceCandidates;
+    this._pendingIceCandidates = [];
+    for (const candidate of queued) {
+      try {
+        await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error('[WebRTC] addIceCandidate (queued) error:', e);
+      }
+    }
+  },
+
   async handleSignalingMessage(msg) {
     console.log('[WebRTC Signaling] Received:', msg.type, 'from:', msg.from);
 
     if (msg.type === 'offer') {
-      if (this.peerConnection || this.isCalling || this.isConnected) {
+      if (this.peerConnection || this.isCalling || this.isConnected || this._isRinging) {
         // 話し中の場合は拒否シグナル
         await API.webrtcSend({
           from: this._getCallFromId(),
@@ -323,35 +355,51 @@ const CallPanel = {
       this.targetId = msg.from;
       this.isVideoCall = !!msg.video;
       this.showIncomingCallDialog(msg.from, msg.sdp);
-    } 
+    }
     else if (msg.type === 'answer') {
+      if (!this._isFromCurrentPeer(msg)) return;
       if (this.peerConnection) {
         try {
           await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          await this._flushPendingIceCandidates();
           this.setConnectedState();
         } catch (e) {
           console.error('[WebRTC] setRemoteDescription Answer error:', e);
         }
       }
-    } 
+    }
     else if (msg.type === 'ice') {
-      if (this.peerConnection && msg.candidate) {
+      if (!this._isFromCurrentPeer(msg) || !msg.candidate) return;
+      if (this.peerConnection && this.peerConnection.remoteDescription) {
         try {
           await this.peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
         } catch (e) {
           console.error('[WebRTC] addIceCandidate error:', e);
         }
+      } else {
+        // remoteDescription未設定(着信呼び出し中はpeerConnection自体が未作成)。
+        // 捨てずに溜め、setRemoteDescription直後にフラッシュする
+        this._pendingIceCandidates.push(msg.candidate);
+        if (this._pendingIceCandidates.length > this.MAX_PENDING_ICE_CANDIDATES) {
+          this._pendingIceCandidates.shift();
+        }
       }
-    } 
+    }
     else if (msg.type === 'hangup') {
+      if (!this._isFromCurrentPeer(msg)) return;
       this.cleanupCall('相手が切断しました');
     }
     else if (msg.type === 'busy') {
+      if (!this._isFromCurrentPeer(msg)) return;
       this.cleanupCall('話し中、または応答がありません');
     }
     else if (msg.type === 'answered') {
-      // 同じIDを持つ別端末が応答した → ダイアログを静かに閉じる
+      // 同じIDを持つ別端末が応答した → ダイアログを静かに閉じる。
+      // 無応答タイムアウトを解除し忘れると、この端末で後からタイマーが発火して
+      // busyを送り、既に確立済みの通話を切ってしまう
       if (!this.isConnected && !this.isCalling) {
+        if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
+        this._isRinging = false;
         this.stopRingTone();
         const overlay = document.getElementById('webrtc-call-overlay');
         if (overlay) overlay.remove();
@@ -677,10 +725,11 @@ const CallPanel = {
   showIncomingCallDialog(callerId, offerSdp) {
     const callerName = this.getNameById(callerId);
     const callerNameHtml = UI.escapeHTML(callerName);
-    
+
     const old = document.getElementById('webrtc-call-overlay');
     if (old) old.remove();
 
+    this._isRinging = true;
     this.playIncomingRingTone();
 
     const isVideo = this.isVideoCall;
@@ -732,6 +781,7 @@ const CallPanel = {
   // 着信を拒否する（手動での「拒否」ボタン、および無応答タイムアウトの両方から呼ばれる）
   async _declineIncomingCall(callerId, message = '着信を拒否しました') {
     if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
+    this._isRinging = false;
     this.stopRingTone();
     await API.webrtcSend({
       from: this.getMyId(),
@@ -753,6 +803,7 @@ const CallPanel = {
   async acceptCall(callerId, offerSdp) {
     this.isCalling = false;
     this.isConnected = true;
+    this._isRinging = false;
     this._callSourceId = this.getMyId();
 
     this.showConnectedDialog(callerId);
@@ -767,6 +818,7 @@ const CallPanel = {
       });
 
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(offerSdp));
+      await this._flushPendingIceCandidates();
 
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
@@ -1269,15 +1321,29 @@ const CallPanel = {
       this.remoteAudio = null;
     }
 
-    // 通話終了をDBに反映
-    if (this.currentCallId) {
+    this._pendingIceCandidates = [];
+
+    // 状態フラグはDB書き込み(await)より前に確実にクリアする。子機で親機が
+    // 不達だと下のAPI.patchは最大8秒のタイムアウトまで待つため、awaitの後に
+    // フラグを倒す実装だと「通話を終了」を押してから最大8秒間、新規の発信も
+    // 着信もできなくなる（isConnected/isCallingが真のままのため）
+    this.isCalling = false;
+    this.isConnected = false;
+    this._isRinging = false;
+    this.targetId = null;
+    this._callSourceId = null;
+
+    // 通話終了をDBに反映（currentCallIdは退避してから即座にクリアし、
+    // cleanupCallが二重に走ってもPATCHが二重発行されないようにする）
+    const endedCallId = this.currentCallId;
+    this.currentCallId = null;
+    if (endedCallId) {
       try {
-        await API.patch('calls', this.currentCallId, {
+        await API.patch('calls', endedCallId, {
           status: 'ended',
           ended_at: Date.now()
         });
       } catch (e) {}
-      this.currentCallId = null;
     }
 
     const overlay = document.getElementById('webrtc-call-overlay');
@@ -1298,11 +1364,6 @@ const CallPanel = {
         overlay.remove();
       }
     }
-
-    this.isCalling = false;
-    this.isConnected = false;
-    this.targetId = null;
-    this._callSourceId = null;
 
     // 通話履歴リロード
     if (typeof History !== 'undefined' && History._loadCalls) {
