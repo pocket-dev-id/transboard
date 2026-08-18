@@ -1,6 +1,6 @@
 {
   "name": "transboard",
-  "version": "1.2.27",
+  "version": "1.2.28",
   "description": "TransBoard - Hospital Ward Transfer Management Dashboard",
   "main": "main.js",
   "scripts": {
