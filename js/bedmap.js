@@ -99,9 +99,9 @@ const BedMap = {
           html += this._renderBedCard(bedMap[cell.bedId]);
         } else if (cell) {
           if (cell.special === 'corridor') {
-            html += `<div class="bed-cell-empty is-corridor" style="background:#f0fdf4; border:1px solid #86efac; border-radius:6px; min-height:55px; box-sizing:border-box;"></div>`;
+            html += `<div class="bed-cell-empty is-corridor" style="background:#f0fdf4; border-radius:6px; min-height:55px; box-sizing:border-box;"></div>`;
           } else if (cell.special === 'wall') {
-            html += `<div class="bed-cell-empty is-wall" style="background:#e2e8f0; border:1px solid #cbd5e0; border-radius:6px; min-height:55px; box-sizing:border-box;"></div>`;
+            html += `<div class="bed-cell-empty is-wall" style="background:#e2e8f0; border-radius:6px; min-height:55px; box-sizing:border-box;"></div>`;
           } else {
             html += `<div class="bed-cell-empty" style="min-height:55px;"></div>`;
           }
