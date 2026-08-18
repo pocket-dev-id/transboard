@@ -120,6 +120,30 @@ Object.assign(Settings, {
       : window.electronAPI?.reloadScheduleFeedTriggers?.();
   },
 
+  // フィード個別のSMBパスワードは system_settings の `smb_password__<feedId>` に入る。
+  // このIDは子機からの直接書き込みが遮断されているため、子機は親機アクション経由で保存する。
+  // 親機は当該行が初期状態では存在しないため、作成と更新を出し分ける。
+  async _saveFeedSmbPassword(feedId, password) {
+    if (this._isChildTerminal()) {
+      const result = await this._parentAction('save-schedule-feed-smb-password', { feedId, password });
+      if (result?.success === false) throw new Error(result.message || 'SMB認証情報を保存できませんでした');
+      return result;
+    }
+    const settingId = `smb_password__${feedId}`;
+    const exists = AppState.systemSettings?.some(s => s.id === settingId);
+    if (!password) {
+      if (exists) {
+        await API.remove('system_settings', settingId);
+        AppState.systemSettings = (AppState.systemSettings || []).filter(s => s.id !== settingId);
+      }
+      return { success: true };
+    }
+    if (exists) await API.patch('system_settings', settingId, { value: password });
+    else await API.create('system_settings', { id: settingId, value: password });
+    this._writeLocalSetting(settingId, password);
+    return { success: true };
+  },
+
   _triggerParentScheduleFeedImport(feedId) {
     return this._isChildTerminal()
       ? this._parentAction('schedule-feed-import', { feedId }, { timeoutMs: 60000 })
@@ -1808,6 +1832,19 @@ Object.assign(Settings, {
           const watchDirHtml = UI.escapeHTML(String(f.watch_dir || ''));
           const titleColHtml = UI.escapeHTML(String(titleCol));
           const dateColHtml = UI.escapeHTML(String(dateCol));
+          // UNC監視先のときだけ、どの資格情報で接続するかを一覧に出す。
+          // 同一サーバーに別々の資格情報を割り当ててしまった状態に気づけるようにするため。
+          let smbHtml = '';
+          if (String(f.watch_dir || '').trim().startsWith('\\\\')) {
+            const feedSmbMode = f.smb_auth_mode === 'custom' || f.smb_auth_mode === 'current'
+              ? f.smb_auth_mode
+              : 'inherit';
+            const smbUser = UI.escapeHTML(String(f.smb_username || '').trim());
+            const smbLabel = feedSmbMode === 'custom'
+              ? `個別${smbUser ? ` (${smbUser})` : ''}`
+              : (feedSmbMode === 'current' ? '現在のユーザー' : '共通設定');
+            smbHtml = `<span><i class="fas fa-network-wired" style="margin-right:3px;color:#94a3b8;"></i>SMB: ${smbLabel}</span>`;
+          }
           return `
           <div class="settings-row" style="border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px;background:#fff;overflow:hidden;">
             <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;">
@@ -1836,6 +1873,7 @@ Object.assign(Settings, {
               ${titleCol ? `<span><i class="fas fa-tag" style="margin-right:3px;color:#94a3b8;"></i>タイトル列: <code>${titleColHtml}</code></span>` : ''}
               <span><i class="fas fa-hospital" style="margin-right:3px;color:#94a3b8;"></i>${wardNames}</span>
               <span><i class="fas fa-bed" style="margin-right:3px;color:${bedMapColor};"></i>${bedMapLabel}${bedMapPreview ? `: ${bedMapPreview}` : ''}</span>
+              ${smbHtml}
             </div>
           </div>`;
         }).join('');
@@ -1895,6 +1933,28 @@ Object.assign(Settings, {
                 </button>
               </div>
               <p style="font-size:11px;color:#718096;margin:4px 0 0;">CSVが配置されるフォルダのパスを指定します（UNCパス可）。</p>
+
+              <!-- SMBネットワーク共有認証（フィード個別） -->
+              <div style="border-top:1px dashed #cbd5e0; margin-top:12px; padding-top:12px;">
+                <label style="font-size:12px; font-weight:700; color:#4a5568;"><i class="fas fa-network-wired"></i> SMB共有アクセス権限（ネットワークパス用）</label>
+                <select id="sched-form-smb-auth-mode" style="width:100%; padding:6px; margin-top:4px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
+                  <option value="inherit">共通設定を使う（既定）</option>
+                  <option value="current">現在のサインインユーザー権限を使用</option>
+                  <option value="custom">別のユーザー権限（認証情報を指定）</option>
+                </select>
+                <p id="sched-form-smb-inherit-hint" style="font-size:11px;color:#718096;margin:6px 0 0;"></p>
+                <div id="sched-form-smb-credentials" style="display:none; flex-direction:column; gap:8px; margin-top:8px;">
+                  <div class="form-row">
+                    <label style="font-size:11px; margin-bottom:2px;">ユーザー名 (Domain\\User もしくは User)</label>
+                    <input type="text" id="sched-form-smb-username" placeholder="例: domain\\username" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;">
+                  </div>
+                  <div class="form-row">
+                    <label style="font-size:11px; margin-bottom:2px;">パスワード</label>
+                    <input type="password" id="sched-form-smb-password" placeholder="変更する場合のみ入力" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;">
+                    <p style="font-size:11px;color:#718096;margin:4px 0 0;">空欄のまま保存すると現在のパスワードを維持します。</p>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- ③ 取り込みスケジュール -->
@@ -2045,6 +2105,25 @@ Object.assign(Settings, {
     const bedMapBoldInput = body.querySelector('#sched-form-bed-map-bold');
     const bedMapEnabledInput = body.querySelector('#sched-form-bed-map');
     const bedMapPreview = body.querySelector('#sched-form-bed-map-preview');
+    const smbModeInput = body.querySelector('#sched-form-smb-auth-mode');
+    const smbUsernameInput = body.querySelector('#sched-form-smb-username');
+    const smbPasswordInput = body.querySelector('#sched-form-smb-password');
+    const smbCredentialsBox = body.querySelector('#sched-form-smb-credentials');
+    const smbInheritHint = body.querySelector('#sched-form-smb-inherit-hint');
+
+    // 共通設定(system_settings)の現在値を、継承時のヒントとして見せる
+    const describeGlobalSmb = () => {
+      const mode = AppState.systemSettings?.find(s => s.id === 'smb_auth_mode')?.value;
+      // 旧ウィザードが書いた 'credential' も 'custom' と同じ意味として扱う
+      if (mode !== 'custom' && mode !== 'credential') return '共通設定: 現在のサインインユーザー権限';
+      const user = AppState.systemSettings?.find(s => s.id === 'smb_username')?.value || '';
+      return `共通設定: 別のユーザー権限${user ? `（${user}）` : ''}`;
+    };
+    smbModeInput.addEventListener('change', () => {
+      smbCredentialsBox.style.display = smbModeInput.value === 'custom' ? 'flex' : 'none';
+      smbInheritHint.style.display = smbModeInput.value === 'inherit' ? 'block' : 'none';
+      smbInheritHint.textContent = describeGlobalSmb();
+    });
 
     const updateBedMapPreview = () => {
       const selectedIcon = bedMapIconOptions.some(option => option.value === bedMapIconInput.value)
@@ -2153,6 +2232,17 @@ Object.assign(Settings, {
       body.querySelector('#sched-form-bed-map-bold').checked = feed?.bed_map_bold === true;
       body.querySelector('#sched-form-active').checked = feed ? (feed.is_active !== false) : true;
 
+      // パスワードは意図的にprefillしない。子機はそもそも値を読めず（親機側で
+      // マスク・単体GET禁止）、親機でも平文をDOMへ置く必要がない。空欄のまま
+      // 保存＝現在の値を維持、という扱いにして「開いて保存しただけで消える」
+      // 事故を構造的に防ぐ。
+      smbModeInput.value = ['current', 'custom'].includes(feed?.smb_auth_mode)
+        ? feed.smb_auth_mode
+        : 'inherit';
+      smbUsernameInput.value = feed?.smb_username || '';
+      smbPasswordInput.value = '';
+      smbModeInput.dispatchEvent(new Event('change'));
+
       const color = feed?.color || '#7c3aed';
       colorInput.value = color;
       body.querySelectorAll('.sched-color-chip').forEach(c => {
@@ -2207,6 +2297,20 @@ Object.assign(Settings, {
       if (!watchDir) { UI.toast('監視フォルダを入力してください', 'warning'); return; }
       if (!titleCol) { UI.toast('タイトル列を入力してください', 'warning'); return; }
 
+      const smbMode = smbModeInput.value;
+      const smbUsername = smbUsernameInput.value.trim();
+      const smbPassword = smbPasswordInput.value;
+      const existingFeedId = body.querySelector('#sched-form-id').value;
+      if (smbMode === 'custom') {
+        if (!smbUsername) { UI.toast('個別指定の場合はユーザー名を入力してください', 'warning'); return; }
+        // 新規作成時は空欄＝維持すべき既存の値が無いため、必ず入力してもらう
+        if (!existingFeedId && !smbPassword) { UI.toast('個別指定の場合はパスワードを入力してください', 'warning'); return; }
+        if (smbPassword === '********') { UI.toast('このパスワードは使用できません', 'warning'); return; }
+        if (!watchDir.startsWith('\\\\')) {
+          UI.toast('SMB認証はネットワークパス(\\\\server\\share)のときだけ使用されます', 'warning');
+        }
+      }
+
       const mode = body.querySelector('input[name="sched-form-mode"]:checked').value;
       const schedule = { mode };
       if (mode === 'interval') schedule.intervalMin = body.querySelector('#sched-form-interval').value;
@@ -2242,6 +2346,9 @@ Object.assign(Settings, {
         bed_map_bold: bedMapBoldInput.checked,
         is_active: body.querySelector('#sched-form-active').checked,
         ward_ids: wardIds, // 空配列 = 全病棟
+        // パスワードはここには入れない（system_settingsのフィード専用IDへ別途保存）
+        smb_auth_mode: smbMode,
+        smb_username: smbMode === 'custom' ? smbUsername : '',
       };
 
       try {
@@ -2250,10 +2357,21 @@ Object.assign(Settings, {
         } else {
           await API.create('schedule_feeds', data);
         }
-        await this._reloadParentScheduleFeedTriggers();
+        // 個別指定をやめたときは資格情報を残さない。個別指定のまま空欄の場合は
+        // 「変更なし」として現在のパスワードを維持する。
+        if (smbMode !== 'custom') {
+          await this._saveFeedSmbPassword(data.id, '');
+        } else if (smbPassword) {
+          await this._saveFeedSmbPassword(data.id, smbPassword);
+        }
+        const reload = await this._reloadParentScheduleFeedTriggers();
         await App.refreshData({ force: true });
         closeForm();
         UI.toast('スケジュール取り込み設定を保存しました', 'success');
+        // SMBの資格情報競合（Windowsは1サーバー1資格情報）を通知する
+        if (reload?.warnings?.length) {
+          UI.toast(reload.warnings.map(w => w.message).join('\n'), 'warning', 12000);
+        }
         this._renderScheduleFeeds(body);
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');

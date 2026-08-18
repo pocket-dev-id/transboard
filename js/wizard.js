@@ -24,7 +24,10 @@ const Wizard = {
       import_directory:             gs('import_directory')             || '',
       odbc_connection_string:       gs('odbc_connection_string')       || '',
       odbc_sql_query:               gs('odbc_sql_query')               || 'SELECT BED_NO, PATIENT_ID, PATIENT_NAME, IS_PRESENT FROM V_BED_STATUS',
-      smb_auth_mode:                gs('smb_auth_mode')                || 'current',
+      // 旧版のウィザードは 'credential' を書いていたが、main.js・設定画面はいずれも
+      // 'custom' しか解釈しない（＝当時の設定は一度も効いていなかった）。読み取り時に
+      // 読み替えて、保存し直すだけで自動的に復旧するようにする。
+      smb_auth_mode:                (gs('smb_auth_mode') === 'credential' ? 'custom' : gs('smb_auth_mode')) || 'current',
       smb_username:                 gs('smb_username')                 || '',
       smb_password:                 gs('smb_password')                 || '',
       admission_mode:               gs('admission_mode') === 'hybrid' ? 'hybrid' : 'csv',
@@ -204,16 +207,16 @@ const Wizard = {
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <label class="wiz-inline-radio">
               <input type="radio" name="smb_auth_mode" value="current"
-                ${this.config.smb_auth_mode !== 'credential' ? 'checked' : ''}>
+                ${this.config.smb_auth_mode !== 'custom' ? 'checked' : ''}>
               現在のWindowsユーザーで接続
             </label>
             <label class="wiz-inline-radio">
-              <input type="radio" name="smb_auth_mode" value="credential"
-                ${this.config.smb_auth_mode === 'credential' ? 'checked' : ''}>
+              <input type="radio" name="smb_auth_mode" value="custom"
+                ${this.config.smb_auth_mode === 'custom' ? 'checked' : ''}>
               別アカウントで接続
             </label>
           </div>
-          <div id="smb-cred-fields" style="display:${this.config.smb_auth_mode === 'credential' ? 'grid' : 'none'}; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+          <div id="smb-cred-fields" style="display:${this.config.smb_auth_mode === 'custom' ? 'grid' : 'none'}; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
             <div>
               <label class="wiz-label">ユーザー名</label>
               <input type="text" id="wizard-smb-user" value="${UI.escapeHTML(this.config.smb_username)}" class="wiz-input" placeholder="domain\\user">
@@ -552,7 +555,7 @@ const Wizard = {
     overlay.querySelectorAll('input[name="smb_auth_mode"]').forEach(r => {
       r.addEventListener('change', () => {
         const credFields = document.getElementById('smb-cred-fields');
-        if (credFields) credFields.style.display = r.value === 'credential' ? 'grid' : 'none';
+        if (credFields) credFields.style.display = r.value === 'custom' ? 'grid' : 'none';
         this.config.smb_auth_mode = r.value;
       });
     });

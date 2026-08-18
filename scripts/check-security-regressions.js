@@ -1155,4 +1155,105 @@ assert(
   'Exam room cards must show 患者なし only when total is zero, even if hidden statuses leave no visible breakdown pills'
 );
 
+// ── スケジュールフィード個別のSMB認証情報 ─────────────────────────
+// パスワードは system_settings の `smb_password__<feedId>` に置き、暗号化・子機マスク・
+// 監査マスク・エクスポート除外の4機構(いずれもsystem_settings限定)にそのまま乗せる。
+// どれか一つでも完全一致リストへ後退すると、平文のまま保存・配信されてしまう
+assert(
+  (() => {
+    const idx = main.indexOf('function isSensitiveSettingId(');
+    if (idx < 0) return false;
+    return main.slice(idx, idx + 300).includes('isFeedSmbPasswordSettingId');
+  })(),
+  'isSensitiveSettingId must cover feed-scoped SMB password ids so they are encrypted at rest'
+);
+assert(
+  (() => {
+    const writeIdx = main.indexOf('const dbForDisk');
+    const writeEnd = main.indexOf('safeWriteFile(DB_FILE', writeIdx);
+    const readIdx = main.indexOf('// センシティブな設定情報の復号化');
+    if (writeIdx < 0 || writeEnd < 0 || readIdx < 0) return false;
+    return main.slice(writeIdx, writeEnd).includes('isSensitiveSettingId(s.id)')
+      && main.slice(readIdx, readIdx + 400).includes('isSensitiveSettingId(s.id)');
+  })(),
+  'readDB/writeDB must go through isSensitiveSettingId, not the exact-match SENSITIVE_SETTING_IDS list'
+);
+assert(
+  (() => {
+    const idx = main.indexOf("if (isExternal && table === 'system_settings')");
+    if (idx < 0) return false;
+    const body = main.slice(idx, idx + 2000);
+    return body.includes('isFeedSmbPasswordSettingId')
+      && body.includes('isBlockedSecret')
+      && body.includes('isWriteBlocked');
+  })(),
+  'Child terminals must have feed-scoped SMB passwords masked on read and blocked on write'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function maskAuditValue(');
+    const end = main.indexOf('function summarizeAuditRecord', idx);
+    return idx >= 0 && end > idx && main.slice(idx, end).includes('isAuditSecretSettingId');
+  })(),
+  'Audit masking must redact feed-scoped SMB passwords via isAuditSecretSettingId'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function redactCredentials(');
+    return idx >= 0 && main.slice(idx, main.indexOf('\n}', idx)).includes('isExportRedactedSettingId');
+  })(),
+  'Redacted backups must strip feed-scoped SMB passwords via isExportRedactedSettingId'
+);
+// 子機は機密設定をマスク値で受け取るため、設定画面を開いて保存しただけで
+// マスク文字列が実パスワードを上書きしてしまう(過去に実在した不具合)
+assert(
+  (() => {
+    const idx = main.indexOf("case 'save-import-settings'");
+    const end = main.indexOf("case 'manual-import'", idx);
+    return idx >= 0 && end > idx && main.slice(idx, end).includes('MASKED_SECRET_VALUE');
+  })(),
+  'save-import-settings must ignore masked secret placeholders instead of storing them over the real password'
+);
+// UNC監視先のスケジュールフィードは認証しないと fs.existsSync で失敗し続ける
+assert(
+  (() => {
+    const idx = main.indexOf('function setupScheduleFeedTriggers()');
+    const end = main.indexOf('function scanAndImportScheduleFolder', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('authenticateSMBSync') && body.includes('readFeedSmbCredentials')
+      && body.includes('pruneUnusedSmbSessions');
+  })(),
+  'setupScheduleFeedTriggers must authenticate UNC feed folders and release sessions that no feed uses any more'
+);
+// 稼働中のwatcherが掴んでいる共有を net use /delete すると、監視は生きたまま
+// イベントが二度と来ない無言故障になる。同一資格情報での再接続は行わないこと
+assert(
+  (() => {
+    const idx = main.indexOf('function authenticateSMBSync(');
+    const end = main.indexOf('\n}', main.indexOf("'/persistent:no'", idx));
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('smbSessionRegistry.plan')
+      && body.includes("planned.action === 'skip'")
+      && body.includes("planned.action === 'conflict'")
+      && body.includes('planned.deleteFirst');
+  })(),
+  'authenticateSMBSync must reuse an existing session and must not tear one down for conflicting credentials'
+);
+// ウィザードは 'credential' を書いていたが main.js は 'custom' しか解釈しない
+assert(
+  !wizard.includes("value=\"credential\"") && !wizard.includes("=== 'credential' ? 'grid'"),
+  "The setup wizard must write the same 'custom' SMB auth mode value that main.js understands"
+);
+// フィードを削除したら資格情報も残さない
+assert(
+  (() => {
+    const idx = main.indexOf("if (table === 'schedule_feeds')");
+    if (idx < 0) return false;
+    return main.slice(idx, idx + 400).includes('feedSmbPasswordSettingId');
+  })(),
+  'Deleting a schedule feed must also drop its stored SMB password setting'
+);
+
 console.log('Security regression checks passed.');
