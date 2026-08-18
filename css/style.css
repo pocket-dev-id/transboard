@@ -1035,6 +1035,7 @@ h1, h2, h3, h4,
 .tl-filter-chip:hover { border-color: var(--clr-primary); color: var(--clr-primary); }
 .tl-filter-chip.active { background: var(--clr-primary); color: #fff; border-color: var(--clr-primary); }
 .tl-filter-count { font-size: 11px; color: var(--clr-text-muted); margin-left: 4px; }
+.tl-filter-warning { font-size: 11px; color: #dc2626; margin-left: 4px; }
 
 /* A3: コンテキストメニュー */
 .tl-ctx-menu {
@@ -1245,6 +1246,12 @@ h1, h2, h3, h4,
   z-index: 4;
   box-shadow: 0 0 6px #f59e0b;
   border-style: dashed;
+}
+.timeline-pickup-marker.urgent { background: #ea580c; box-shadow: 0 0 6px #ea580c; }
+.timeline-pickup-marker.overdue {
+  background: #dc2626;
+  box-shadow: 0 0 8px #dc2626, 0 0 15px rgba(220, 38, 38, 0.5);
+  animation: pulse-glowing-tl 2s infinite alternate;
 }
 @keyframes pulse-glowing-tl {
   0% { box-shadow: 0 0 4px #dc2626; opacity: 0.8; }
