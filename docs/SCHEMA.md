@@ -192,6 +192,49 @@ key-valueペアで管理。重要なキー一覧:
 | `smb_password` | `` | SMBパスワード（`ENCRYPTED:`プレフィックス付きで暗号化保存） |
 | `odbc_connection_string` | `` | ODBC接続文字列（`ENCRYPTED:`プレフィックス付きで暗号化保存） |
 | `api_token` | `` | 子機↔親機のAPI認証トークン（`ENCRYPTED:`プレフィックス付きで暗号化保存、初回起動時に自動生成） |
+| `smb_password__<feedId>` | （無し） | スケジュールフィード個別のSMBパスワード（`ENCRYPTED:`プレフィックス付きで暗号化保存）。下記 `schedule_feeds` を参照 |
+| `parent_instance_id` | （親機の初回起動時に自動生成） | 親機を識別するID。APIトークンは全端末共通のため、バックアップ復元などで別のPCが親機になっても子機は無警告で追従してしまう。子機はこの値の変化を検知して「接続先の親機が入れ替わりました」と警告する（同時に2台の親機が存在する状態そのものの検知ではない） |
+
+`smb_password` / `odbc_connection_string` / `api_token` / `admin_passcode` および
+`smb_password__` で始まるIDは機密扱いで、次の4つの保護がまとめて適用される:
+保存時のsafeStorage暗号化・子機への非開示（一覧取得では `********`、単体取得と
+書き込みは拒否）・監査ログでの `[changed]` 化・平文バックアップでの `[REDACTED]` 化。
+
+---
+
+### `schedule_feeds` — スケジュール取り込み定義
+
+任意のCSVを定期的に取り込み、タイムライン・病床マップに予定として表示するための設定。
+1レコードが1つの「取り込み」に対応する。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | フィードID（UI側で `feed-<timestamp>` として採番） |
+| `name` | string | 取り込み名 |
+| `color` | string | 表示色（`#rrggbb`） |
+| `watch_dir` | string | 監視フォルダ。ローカルパスまたはUNCパス（`\\server\share`） |
+| `encoding` | string | `auto` / `utf-8` / `shift-jis` など |
+| `schedule` | object | `{ mode: 'realtime'\|'interval'\|'time', intervalMin?, times? }` |
+| `mapping` | object | CSV列の対応（`col_date` / `col_time` / `col_title` / `col_id` / `col_duration_min`） |
+| `retention_policy` | object | `{ action }` 取り込み済みデータの扱い |
+| `show_on_bed_map` | boolean | 病床マップへ表示するか |
+| `bed_map_icon` / `bed_map_abbreviation` / `bed_map_bold` | string / string / boolean | 病床マップのバッジ表示 |
+| `is_active` | boolean | 取り込みの有効/無効（無効時は取り込みも表示も止まる） |
+| `ward_ids` | string[] | 対象病棟。空配列 = 全病棟 |
+| `smb_auth_mode` | string | `inherit`（既定・フィールド自体が無い場合も同じ） / `current` / `custom` |
+| `smb_username` | string | `smb_auth_mode` が `custom` のときのユーザー名（機密ではない） |
+
+**SMB認証情報の扱い**: UNCパスの監視フォルダに接続するための資格情報は、
+`smb_auth_mode` で「共通設定（`system_settings` の `smb_auth_mode` /
+`smb_username` / `smb_password`）を継承する」か「フィード個別に指定する」かを選ぶ。
+パスワードだけは **このレコードには保存せず**、`system_settings` の
+`smb_password__<feedId>` に置く。上記4つの保護機構がいずれも `system_settings`
+のみを対象としているため、フィードのレコードへ直接書くと平文で保存・配信されて
+しまうことによる。フィードを削除すると対応する設定行も併せて削除される。
+
+なお Windows はサーバー単位でしか資格情報を保持できないため、同一サーバーに対して
+複数のフィードが異なる資格情報を指定することはできない（システムエラー1219）。
+その場合は保存時に警告が表示される。
 
 ---
 

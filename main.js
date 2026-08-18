@@ -12,6 +12,16 @@ const { execFileSync, execFile, spawn } = require('child_process');
 const { pathToFileURL } = require('url');
 const packageMetadata = require('./package.json');
 const { createWebrtcSignalingService } = require('./main-modules/webrtc-signaling');
+const {
+  MASKED_SECRET_VALUE,
+  isFeedSmbPasswordSettingId,
+  feedSmbPasswordSettingId,
+  normalizeGlobalSmbMode,
+  parseUncTarget,
+  credentialFingerprint,
+  resolveFeedSmbCredentials,
+  createSmbSessionRegistry,
+} = require('./main-modules/smb-credentials');
 
 const { Readable } = require('stream');
 const WINDOWS_SYSTEM_ROOT = process.env.SystemRoot || 'C:\\Windows';
@@ -448,6 +458,15 @@ const SEEDS = {
 // センシティブな設定情報の暗号化リストと暗号・復号ヘルパー
 const SENSITIVE_SETTING_IDS = ['odbc_connection_string', 'smb_password', 'api_token'];
 const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_password', 'odbc_connection_string']);
+// スケジュールフィード個別のSMBパスワード(smb_password__<feedId>)は動的なIDのため
+// 完全一致のリストでは拾えない。暗号化・子機マスク・監査マスク・エクスポート除外の
+// 4機構すべてを以下の述語経由にし、フィード用IDも同じ保護を受けるようにする。
+function isSensitiveSettingId(id) {
+  return SENSITIVE_SETTING_IDS.includes(id) || isFeedSmbPasswordSettingId(id);
+}
+function isAuditSecretSettingId(id) {
+  return AUDIT_SECRET_SETTING_IDS.has(String(id || '')) || isFeedSmbPasswordSettingId(id);
+}
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 20000;
 // 監査ログ専用ファイルの間引き(rewriteAuditLogFile、O(n))は追記のたびではなく、
@@ -971,7 +990,7 @@ function readDbShared() {
     // センシティブな設定情報の復号化
     if (db.system_settings && Array.isArray(db.system_settings)) {
       db.system_settings.forEach(s => {
-        if (SENSITIVE_SETTING_IDS.includes(s.id)) {
+        if (isSensitiveSettingId(s.id)) {
           if (s.value && !s.value.startsWith('ENCRYPTED:')) {
             needsEncryptionRewrite = true;
           }
@@ -1100,7 +1119,7 @@ function writeDB(data) {
       ? {
           ...dbWithoutAuditLogs,
           system_settings: dbWithoutAuditLogs.system_settings.map(s => (
-            SENSITIVE_SETTING_IDS.includes(s.id)
+            isSensitiveSettingId(s.id)
               ? { ...s, value: encryptSensitiveValue(s.value) }
               : s
           )),
@@ -1163,8 +1182,14 @@ function normalizeTerminalRole(value) {
   return value === 'exam' ? 'exam' : 'ward';
 }
 
+// 端末が子機かどうか（渡されたdbのshare_modeで判定する）。
+// CSV/スケジュールの取り込みなど「親機だけが行うべき処理」のガードに使う。
+function isClientTerminal(db) {
+  return normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) === 'client';
+}
+
 function maskAuditValue(table, id, value) {
-  if (table === 'system_settings' && AUDIT_SECRET_SETTING_IDS.has(String(id || ''))) {
+  if (table === 'system_settings' && isAuditSecretSettingId(id)) {
     return value === undefined ? undefined : '[changed]';
   }
   if (AUDIT_PATIENT_FIELD_IDS.has(String(id || ''))) {
@@ -1410,39 +1435,101 @@ function repairShareModeBeforeServerStart() {
   return roleShareMode;
 }
 
+// このプロセスが張ったSMBセッションの記録。無用な張り直し（稼働中のchokidarが
+// 掴んでいる共有を切ると、監視は生きたままイベントが二度と来ない無言故障になる）と、
+// 同一サーバーへの資格情報競合（Windowsのシステムエラー1219）を避けるために使う。
+const smbSessionRegistry = createSmbSessionRegistry();
+// 直近のsetupScheduleFeedTriggers実行で発生した資格情報の競合。UIへ返して通知する。
+let smbAuthWarnings = [];
+
+// 共通のSMB認証情報（system_settings）を読む
+function readGlobalSmbCredentials(db) {
+  const mode = normalizeGlobalSmbMode(getSettingRecord(db, 'smb_auth_mode')?.value);
+  return {
+    mode,
+    username: String(getSettingRecord(db, 'smb_username')?.value || '').trim(),
+    password: String(getSettingRecord(db, 'smb_password')?.value || '').trim(),
+  };
+}
+
+// スケジュールフィードが実際に使う認証情報を決める（inherit=共通設定を継承）。
+// パスワードはフィード行ではなくsystem_settingsのフィード専用IDに入っている。
+function readFeedSmbCredentials(db, feed) {
+  const feedWithPassword = {
+    smb_auth_mode: feed?.smb_auth_mode,
+    smb_username: feed?.smb_username,
+    smb_password: getSettingRecord(db, feedSmbPasswordSettingId(feed?.id))?.value || '',
+  };
+  return resolveFeedSmbCredentials(feedWithPassword, readGlobalSmbCredentials(db));
+}
+
 // SMBネットワーク共有フォルダの同期認証（Windows用）
-function authenticateSMBSync(watchPath) {
-  if (!watchPath || !watchPath.startsWith('\\\\')) return;
-  const db = readDB();
-  const smbModeSetting = db.system_settings?.find(s => s.id === 'smb_auth_mode');
-  const smbMode = smbModeSetting ? smbModeSetting.value : 'current';
-  if (smbMode !== 'custom') return;
+// credentials省略時は共通設定を使う（従来の呼び出し元はそのまま動く）。
+function authenticateSMBSync(watchPath, credentials = null) {
+  if (!watchPath || !watchPath.startsWith('\\\\')) return { skipped: true };
+  const cred = credentials || readGlobalSmbCredentials(readDB());
+  if (cred.mode !== 'custom') return { skipped: true };
 
-  const usernameSetting = db.system_settings?.find(s => s.id === 'smb_username');
-  const passwordSetting = db.system_settings?.find(s => s.id === 'smb_password');
-  const username = usernameSetting ? usernameSetting.value.trim() : '';
-  const password = passwordSetting ? passwordSetting.value.trim() : '';
+  const username = String(cred.username || '').trim();
+  const password = String(cred.password || '').trim();
+  if (!username || !password) return { skipped: true };
 
-  if (!username || !password) return;
+  const uncTarget = parseUncTarget(watchPath);
+  if (!uncTarget) return { skipped: true };
+  const targetShare = uncTarget.target;
 
-  const parts = watchPath.split('\\').filter(p => p.length > 0);
-  if (parts.length < 2) return;
-  const targetShare = `\\\\${parts[0]}\\${parts[1]}`;
+  const fingerprint = credentialFingerprint(username, password);
+  const planned = smbSessionRegistry.plan(uncTarget, fingerprint);
+  if (planned.action === 'skip') {
+    return { success: true, reused: true };
+  }
+  if (planned.action === 'conflict') {
+    console.warn(`[SMB Auth Conflict] ${planned.message}`);
+    return { success: false, conflict: true, message: planned.message };
+  }
 
   console.log(`[SMB Auth] 同期認証中: target=${targetShare}, user=${username}`);
 
   try {
-    // 既存セッションの削除
-    try {
-      execFileSync('net', ['use', targetShare, '/delete', '/y'], { stdio: 'ignore', timeout: 3000 });
-    } catch(e) {}
-    
+    // 前回起動の残骸を掃除する。同一資格情報で共有を追加するだけのときは
+    // 切断すると稼働中の監視まで巻き添えにするため、初回だけに限定する。
+    if (planned.deleteFirst) {
+      try {
+        execFileSync('net', ['use', targetShare, '/delete', '/y'], { stdio: 'ignore', timeout: 3000 });
+      } catch(e) {}
+    }
+
     // 新規接続セッションの作成
+    // 注: パスワードはargv要素として渡るため、実行中はローカル管理者から
+    // Win32_Process.CommandLineで見えうる（既存実装からの継承事項）。
     execFileSync('net', ['use', targetShare, password, `/user:${username}`, '/persistent:no'], { stdio: 'ignore', timeout: 5000 });
+    smbSessionRegistry.commit(uncTarget, fingerprint);
     console.log(`[SMB Auth Success] ネットワークパス認証成功: ${targetShare}`);
+    return { success: true };
   } catch (err) {
     console.error(`[SMB Auth Error] ネットワークパス認証失敗:`, err.message);
+    return { success: false, message: `ネットワークパスの認証に失敗しました: ${targetShare}` };
   }
+}
+
+// 利用されなくなったサーバーのセッションを解放する。放置すると、フィード削除後に
+// 同じサーバーを別の資格情報で使おうとした瞬間にOSレベルで1219になる。
+function pruneUnusedSmbSessions(db) {
+  const activeServerKeys = new Set();
+  const collect = (p) => {
+    const t = parseUncTarget(p);
+    if (t) activeServerKeys.add(t.serverKey);
+  };
+  collect(getSettingRecord(db, 'import_directory')?.value || '');
+  (db.schedule_feeds || []).forEach(feed => {
+    if (feed?.is_active && feed?.watch_dir) collect(String(feed.watch_dir).trim());
+  });
+  smbSessionRegistry.prune([...activeServerKeys]).forEach(target => {
+    try {
+      execFileSync('net', ['use', target, '/delete', '/y'], { stdio: 'ignore', timeout: 3000 });
+      console.log(`[SMB Auth] 未使用のセッションを解放しました: ${target}`);
+    } catch (e) {}
+  });
 }
 
 // 監視フォルダパスの決定
@@ -1612,6 +1699,16 @@ function setupImportTrigger() {
     currentIntervalTimer = null;
   }
 
+  // 取り込みは親機だけが行う。import_directoryは共有DBにあるため、ガードが無いと
+  // 全子機が親機と同じフォルダを監視し、取り込み後のアーカイブ/削除
+  // (archiveFile)でソースCSVを先に消してしまい、親機が取り込めなくなる。
+  // 停止処理のあとに置くことで、親機→子機へ切り替えた直後の呼び出しでも
+  // 既存の監視を確実に止めてから抜ける。
+  if (isClientTerminal(db)) {
+    console.log('[Watcher] 子機のため取り込み監視は開始しません');
+    return;
+  }
+
   const watchPath = resolveWatchDir();
   currentWatchDir = watchPath;
 
@@ -1694,9 +1791,35 @@ function setupScheduleFeedTriggers() {
   scheduleFeedTimers = [];
 
   const db = readDB();
+
+  // 取り込みは親機だけが行う。schedule_feedsは共有DBにあるため、ガードが無いと
+  // 全子機が親機と同じフォルダを監視し、取り込み後のアーカイブ/削除
+  // (archiveScheduleFeedFile)でソースCSVを先に消してしまう。
+  // 既存の監視・タイマーを停止したあとに置く（上部の停止処理を参照）。
+  if (isClientTerminal(db)) {
+    console.log('[ScheduleFeed] 子機のためスケジュール監視は開始しません');
+    return;
+  }
+
   const feeds = (db.schedule_feeds || []).filter(f => f.is_active && f.watch_dir);
   let retryRequired = false;
 
+  // 使われなくなったサーバーのセッションを先に解放する
+  pruneUnusedSmbSessions(db);
+
+  // パス1: 先に全フィードの認証を済ませる。認証と監視作成を1ループで混ぜると、
+  // 後続フィードの net use がすでに稼働中のwatcherの共有を切りうるため分ける。
+  smbAuthWarnings = [];
+  feeds.forEach(feed => {
+    const watchDir = feed.watch_dir.trim();
+    if (!watchDir.startsWith('\\\\')) return;
+    const result = authenticateSMBSync(watchDir, readFeedSmbCredentials(db, feed));
+    if (result && result.success === false) {
+      smbAuthWarnings.push({ feedId: feed.id, feedName: feed.name || '', message: result.message });
+    }
+  });
+
+  // パス2: 監視・タイマーを作成する
   feeds.forEach(feed => {
     const watchDir = feed.watch_dir.trim();
     if (!fs.existsSync(watchDir)) {
@@ -1749,6 +1872,11 @@ function setupScheduleFeedTriggers() {
 }
 
 function scanAndImportScheduleFolder(watchDir, feed) {
+  // UNC監視先はセッションが切れていることがあるため都度確認する
+  // （同一資格情報で接続済みならレジストリがskipするので実質無コスト）
+  if (String(watchDir || '').startsWith('\\\\')) {
+    authenticateSMBSync(watchDir, readFeedSmbCredentials(readDB(), feed));
+  }
   if (!fs.existsSync(watchDir)) return;
   fs.readdir(watchDir, (err, files) => {
     if (err) return;
@@ -1842,8 +1970,24 @@ function decodeScheduleCsvBuffer(buffer, requestedEncoding = 'auto') {
   return { text, encoding };
 }
 
-function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto') {
+// 監視フォルダのパスから、それを使っているスケジュールフィードを引き当てる。
+// ヘッダ読み込み時にそのフィードのSMB認証情報を使うために必要。
+function findFeedForFolder(db, folderPath) {
+  const target = String(folderPath || '').trim();
+  if (!target) return null;
+  const resolved = path.resolve(target).toLowerCase();
+  return (db.schedule_feeds || []).find(feed => {
+    const dir = String(feed?.watch_dir || '').trim();
+    return dir && path.resolve(dir).toLowerCase() === resolved;
+  }) || null;
+}
+
+function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto', credentials = null) {
   try {
+    const authResult = authenticateSMBSync(folderPath, credentials);
+    if (authResult && authResult.success === false) {
+      return { success: false, ok: false, reason: authResult.message };
+    }
     const files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.csv'));
     if (files.length === 0) return { success: false, ok: false, reason: 'no_csv' };
     const firstFile = path.join(folderPath, files[0]);
@@ -2265,11 +2409,39 @@ handleTrusted('get-watch-directory', () => {
   return currentWatchDir;
 });
 
-function validateWatchDirectoryOnParent(newPath) {
+// 親機が既にSMB接続するよう設定されているサーバーの集合。
+// 子機が指定したパスに対して親機の資格情報で net use するのは、
+// 「既に設定済みのサーバーへ接続し直す」場合に限る。
+function getConfiguredSmbServerKeys(db) {
+  const keys = new Set();
+  const collect = (p) => {
+    const t = parseUncTarget(p);
+    if (t) keys.add(t.serverKey);
+  };
+  collect(getSettingRecord(db, 'import_directory')?.value || '');
+  (db.schedule_feeds || []).forEach(feed => collect(String(feed?.watch_dir || '').trim()));
+  return keys;
+}
+
+function validateWatchDirectoryOnParent(newPath, { isExternal = false } = {}) {
   const resolved = newPath && newPath.trim()
     ? newPath.trim()
     : path.join(app.getPath('userData'), 'import_folder');
-  
+
+  // 子機からの要求で、まだ設定されていないサーバーのUNCパスが来た場合は拒否する。
+  // ここを通すと、子機が指定した任意のホストへ親機が保存済みのSMB資格情報で
+  // net use しに行き（authenticateSMBSync）、さらに mkdirSync まで実行してしまう。
+  // 設定済みのフィード/監視先だけを触るという schedule-feed-headers と同じ方針。
+  if (isExternal) {
+    const target = parseUncTarget(resolved);
+    if (target && !getConfiguredSmbServerKeys(readDB()).has(target.serverKey)) {
+      return {
+        success: false,
+        message: `新しいネットワーク共有（\\\\${target.server}）の追加は親機で行ってください。`,
+      };
+    }
+  }
+
   // UNCパスの場合のみSMBネットワーク共有フォルダの認証を実行
   authenticateSMBSync(resolved);
 
@@ -2298,8 +2470,8 @@ function validateWatchDirectoryOnParent(newPath) {
   return { success: true, path: resolved };
 }
 
-function updateWatchDirectoryOnParent(newPath) {
-  const validation = validateWatchDirectoryOnParent(newPath);
+function updateWatchDirectoryOnParent(newPath, { isExternal = false } = {}) {
+  const validation = validateWatchDirectoryOnParent(newPath, { isExternal });
   if (!validation.success) return validation;
   setupImportTrigger();
   setupScheduleFeedTriggers();
@@ -2308,6 +2480,16 @@ function updateWatchDirectoryOnParent(newPath) {
 
 // IPC通信で監視対象フォルダを動的に切り替える
 handleTrusted('update-watch-directory', (event, newPath) => updateWatchDirectoryOnParent(newPath));
+
+// 子機へ切り替えたとき、再起動を待たずに共有サーバーを閉じるためのIPC。
+// あわせて取り込み監視も止める（setupImportTrigger/setupScheduleFeedTriggersは
+// 子機なら停止処理だけ行って抜ける）。
+handleTrusted('stop-parent-server', () => {
+  const result = stopParentServer();
+  setupImportTrigger();
+  setupScheduleFeedTriggers();
+  return result;
+});
 
 async function triggerManualImportOnParent() {
   const watchPath = resolveWatchDir();
@@ -2479,6 +2661,12 @@ async function getOdbcTablesOnParent({ connectionString }) {
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
     return { success: false, error: connResult.message, tables: [] };
+  }
+  // 他のODBC操作（test/preview/sync）と同じくDSN指定を必須にする。
+  // これが無いと、子機が任意の接続文字列（Driver=…;Server=…）を指定して
+  // 親機に外部ホストへ接続させられる。
+  if (!connResult.connectionString.includes('DSN=')) {
+    return { success: false, error: '接続文字列にDSN指定が見つかりません。例: DSN=EMR_DB;UID=admin;PWD=pass;', tables: [] };
   }
 
   const result = await execOdbcPowerShell(connResult.connectionString, `
@@ -3691,24 +3879,28 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
   if (isExternal && table === 'system_settings') {
     // パスコードは検証APIで照合し、ハッシュ自体は子機へ返さない。
     // ODBC接続文字列・SMBパスワード・APIトークンも単体GETを禁止する。
-    const blockedSingleGet = ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'];
-    const blockedAll = ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'];
+    // フィード個別のSMBパスワード(smb_password__<feedId>)も同じ扱いにするため、
+    // 完全一致の配列ではなく述語で判定する
+    const isBlockedSecret = (settingId) =>
+      ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'].includes(settingId)
+      || isFeedSmbPasswordSettingId(settingId);
     // 稼働モード・親機IPは各端末ローカルの設定。外部（子機）からの書き換えを許すと
     // 親機のDBの share_mode が'client'に上書きされ、再起動後に共有サーバーが
     // 起動しなくなるため、書き込みのみ遮断する（読み取りは従来どおり許可）
-    const writeBlocked = [...blockedAll, 'share_mode', 'parent_ip', 'wizard_completed'];
+    const isWriteBlocked = (settingId) =>
+      isBlockedSecret(settingId) || ['share_mode', 'parent_ip', 'wizard_completed'].includes(settingId);
 
     if (method === 'GET') {
       if (id) {
-        if (blockedSingleGet.includes(id)) {
+        if (isBlockedSecret(id)) {
           return { success: false, message: 'Forbidden' };
         }
       } else {
         // 全件取得時は機密設定の値をマスクして返す
         const list = db[table] || [];
         const filteredList = list.map(s => {
-          if (blockedAll.includes(s.id)) {
-            return { ...s, value: '********' };
+          if (isBlockedSecret(s.id)) {
+            return { ...s, value: MASKED_SECRET_VALUE };
           }
           return s;
         });
@@ -3716,18 +3908,18 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       }
     } else {
       // POST/PUT/PATCH/DELETE による機密設定・端末ローカル設定の更新・削除を禁止
-      if (id && writeBlocked.includes(id)) {
+      if (id && isWriteBlocked(id)) {
         return { success: false, message: 'Forbidden' };
       }
       if (bodyStr) {
         try {
           const data = JSON.parse(bodyStr);
           if (Array.isArray(data)) {
-            if (data.some(x => writeBlocked.includes(x.id))) {
+            if (data.some(x => isWriteBlocked(x.id))) {
               return { success: false, message: 'Forbidden' };
             }
           } else {
-            if (writeBlocked.includes(data.id)) {
+            if (isWriteBlocked(data.id)) {
               return { success: false, message: 'Forbidden' };
             }
           }
@@ -4278,6 +4470,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       WRITE_HOOKS.beds.onDelete(db, id, occupancyNow);
       WRITE_HOOKS.beds.finalize(db, occupancyNow);
     }
+    if (table === 'schedule_feeds') {
+      // フィード個別のSMBパスワードはsystem_settings側にあるため、
+      // フィードを消したら資格情報も残さない（親機・子機どちらの削除経路も通る）
+      const settingId = feedSmbPasswordSettingId(id);
+      if (Array.isArray(db.system_settings)) {
+        db.system_settings = db.system_settings.filter(s => s.id !== settingId);
+      }
+    }
     appendAuditLog(db, 'DB_DELETE', {
       targetType: table,
       targetId: id,
@@ -4612,7 +4812,11 @@ handleTrusted('read-csv-headers', async (event, request) => {
       message: 'フォルダを選択ダイアログで選ぶか、スケジュール設定を保存してから読み込んでください。',
     };
   }
-  return readScheduleCsvHeaders(folderPath, encoding);
+  // UNCフォルダの場合、そのフォルダを使うフィードの認証情報で接続してから読む
+  const db = readDB();
+  const ownerFeed = findFeedForFolder(db, folderPath);
+  const credentials = ownerFeed ? readFeedSmbCredentials(db, ownerFeed) : readGlobalSmbCredentials(db);
+  return readScheduleCsvHeaders(folderPath, encoding, credentials);
 });
 
 // 開発/本番モード判定 (インフラ #4: 環境分離)
@@ -5212,7 +5416,13 @@ async function triggerScheduleFeedImportOnParent(feedId) {
   const db = readDB();
   const feed = (db.schedule_feeds || []).find(f => f.id === feedId);
   if (!feed) return { success: false, message: 'フィードが見つかりません' };
-  if (!feed.watch_dir || !fs.existsSync(feed.watch_dir)) {
+  if (!feed.watch_dir) return { success: false, message: '監視フォルダが存在しません' };
+  // 認証に失敗した場合は「フォルダが存在しません」ではなく実際の理由を返す
+  const authResult = authenticateSMBSync(feed.watch_dir, readFeedSmbCredentials(db, feed));
+  if (authResult && authResult.success === false) {
+    return { success: false, message: authResult.message };
+  }
+  if (!fs.existsSync(feed.watch_dir)) {
     return { success: false, message: '監視フォルダが存在しません' };
   }
   scanAndImportScheduleFolder(feed.watch_dir, feed);
@@ -5221,7 +5431,7 @@ async function triggerScheduleFeedImportOnParent(feedId) {
 
 function reloadScheduleFeedTriggersOnParent() {
   setupScheduleFeedTriggers();
-  return { success: true };
+  return { success: true, warnings: smbAuthWarnings.slice() };
 }
 
 // スケジュールフィードの手動取り込みとウォッチャー再起動
@@ -5337,10 +5547,13 @@ function redactPatientData(dbObj) {
 }
 
 const EXPORT_REDACTED_SETTING_IDS = [...SENSITIVE_SETTING_IDS, 'admin_passcode'];
+function isExportRedactedSettingId(id) {
+  return EXPORT_REDACTED_SETTING_IDS.includes(id) || isFeedSmbPasswordSettingId(id);
+}
 function redactCredentials(dbObj) {
   if (Array.isArray(dbObj.system_settings)) {
     dbObj.system_settings.forEach(s => {
-      if (EXPORT_REDACTED_SETTING_IDS.includes(s.id) && s.value) {
+      if (isExportRedactedSettingId(s.id) && s.value) {
         s.value = '[REDACTED]';
       }
     });
@@ -5480,8 +5693,12 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
       const restoredShareMode = normalizeShareMode(getSettingRecord(db, 'share_mode')?.value);
       const restoredParentIp = String(getSettingRecord(db, 'parent_ip')?.value || '');
       writeTerminalRole({ shareMode: restoredShareMode, parentIp: restoredParentIp });
+      // localStorageはメインプロセスから触れないため、復元後の役割をrendererへ返して
+      // 再起動の前に cfg_share_mode / cfg_parent_ip を揃えてもらう。これが無いと
+      // 「DBと役割ファイルは親機／localStorageは子機」のような食い違いが残り、
+      // 3005で配信しつつ子機として振る舞う状態になる。
+      return { success: true, shareMode: restoredShareMode, parentIp: restoredParentIp };
     }
-    return { success: true };
   } catch (err) {
     console.error('[DB Restore Error]', err);
     return { success: false, message: err.message };
@@ -5917,6 +6134,28 @@ function ensureApiToken() {
   return token;
 }
 
+// 親機を識別するID。APIトークンは全機共通のため、別マシンが親機になっても
+// 子機は何の警告もなくそちらへ接続してしまう。子機がこの値の変化を見て
+// 「接続先の親機が入れ替わった」ことに気づけるようにする。
+// 注: これは切り替わりの検知であって、同一LAN上に親機が同時に2台存在する
+// 状態そのものの検知ではない（それにはmDNS等の探索が必要）。
+function ensureParentInstanceId() {
+  const db = readDB();
+  const setting = getSettingRecord(db, 'parent_instance_id');
+  if (setting && setting.value) return setting.value;
+
+  const instanceId = crypto.randomBytes(16).toString('hex');
+  if (setting) {
+    setting.value = instanceId;
+  } else {
+    db.system_settings = db.system_settings || [];
+    db.system_settings.push({ id: 'parent_instance_id', value: instanceId });
+  }
+  writeDB(db);
+  console.log('[Server] 親機インスタンスIDを生成しました');
+  return instanceId;
+}
+
 function isValidApiToken(apiToken) {
   // system_settingsの1レコードを読むだけで一切ミューテーションしないため、
   // DB全体をディープコピーするreadDB()ではなく非クローン版で十分。
@@ -5968,13 +6207,17 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
       // DBへ書き込む前に監視先を検証し、設定だけ保存されて監視が壊れる状態を防ぐ。
       let watchValidation = null;
       if (hasImportDirectory) {
-        watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''));
+        watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''), { isExternal: true });
         if (!watchValidation.success) return watchValidation;
       }
       const db = readDB();
       db.system_settings = db.system_settings || [];
       for (const [id, value] of Object.entries(settings)) {
         if (!allowed.has(id)) continue;
+        // 子機は機密設定をマスク値で受け取る(GETのisBlockedSecret参照)。設定画面を
+        // 開いて保存しただけでそのマスク値が送り返され、実際のパスワードを文字列
+        // '********' で上書きしてしまうため、マスク値は「変更なし」として無視する。
+        if (String(value ?? '') === MASKED_SECRET_VALUE) continue;
         const rec = db.system_settings.find(s => s.id === id);
         if (rec) rec.value = String(value ?? '');
         else db.system_settings.push({ id, value: String(value ?? '') });
@@ -5999,7 +6242,7 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
     case 'manual-import':
       return appendParentActionAudit(action, await triggerManualImportOnParent(), requestMeta);
     case 'update-watch-directory':
-      return appendParentActionAudit(action, updateWatchDirectoryOnParent(payload.path || payload.newPath || ''), requestMeta);
+      return appendParentActionAudit(action, updateWatchDirectoryOnParent(payload.path || payload.newPath || '', { isExternal: true }), requestMeta);
     case 'odbc-dsns':
       return appendParentActionAudit(action, { success: true, ...getOdbcDsnsOnParent() }, requestMeta);
     case 'odbc-tables':
@@ -6014,15 +6257,41 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
       return appendParentActionAudit(action, await triggerScheduleFeedImportOnParent(payload.feedId), requestMeta);
     case 'schedule-feed-headers': {
       const requestedFolder = String(payload.folderPath || '').trim();
-      const configuredFolders = (readDB().schedule_feeds || [])
-        .map(feed => String(feed.watch_dir || '').trim())
-        .filter(Boolean)
-        .map(folder => path.resolve(folder).toLowerCase());
-      const requestedResolved = requestedFolder ? path.resolve(requestedFolder).toLowerCase() : '';
-      const result = configuredFolders.includes(requestedResolved)
-        ? readScheduleCsvHeaders(requestedFolder, payload.encoding)
+      const headerDb = readDB();
+      const ownerFeed = findFeedForFolder(headerDb, requestedFolder);
+      const result = ownerFeed
+        ? readScheduleCsvHeaders(requestedFolder, payload.encoding, readFeedSmbCredentials(headerDb, ownerFeed))
         : { success: false, ok: false, reason: 'not_configured', message: '子機では監視フォルダを保存してからヘッダを読み込んでください。' };
       return appendParentActionAudit(action, result, requestMeta);
+    }
+    case 'save-schedule-feed-smb-password': {
+      // フィード個別のSMBパスワードはsystem_settingsのフィード専用IDへ入るため、
+      // 子機からは通常の書き込み経路(isWriteBlocked)で拒否される。ここを唯一の
+      // 入口にして、実在するフィードのIDに対してのみ書き込む。
+      const feedId = String(payload.feedId || '').trim();
+      const passwordDb = readDB();
+      if (!feedId || !(passwordDb.schedule_feeds || []).some(f => String(f.id) === feedId)) {
+        return appendParentActionAudit(action, { success: false, message: 'フィードが見つかりません' }, requestMeta);
+      }
+      const settingId = feedSmbPasswordSettingId(feedId);
+      const rawPassword = String(payload.password ?? '');
+      passwordDb.system_settings = passwordDb.system_settings || [];
+      if (rawPassword === MASKED_SECRET_VALUE) {
+        // マスク値は「変更なし」。既存の値をそのまま残す
+        return appendParentActionAudit(action, { success: true, unchanged: true }, requestMeta);
+      }
+      const existing = passwordDb.system_settings.find(s => s.id === settingId);
+      if (rawPassword === '') {
+        if (existing) passwordDb.system_settings = passwordDb.system_settings.filter(s => s.id !== settingId);
+      } else if (existing) {
+        existing.value = rawPassword;
+      } else {
+        passwordDb.system_settings.push({ id: settingId, value: rawPassword });
+      }
+      if (!writeDB(passwordDb)) {
+        return appendParentActionAudit(action, { success: false, message: 'データベースの保存に失敗しました' }, requestMeta);
+      }
+      return appendParentActionAudit(action, { success: true }, requestMeta);
     }
     case 'reload-schedule-feed-triggers':
       return appendParentActionAudit(action, reloadScheduleFeedTriggersOnParent(), requestMeta);
@@ -6033,9 +6302,22 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
 
 // 親機としてのHTTP共有サーバー起動
 let parentHttpServer = null;
+
+// 共有サーバーを停止する。親機→子機へ切り替えたとき、再起動を促すだけでは
+// 断られた場合に3005で配信を続けたまま子機として振る舞う（＝実質2台目の親機）
+// ため、役割変更時にその場で閉じられる手段を用意する。
+function stopParentServer() {
+  if (!parentHttpServer) return { success: true, stopped: false };
+  try { parentHttpServer.close(); } catch {}
+  parentHttpServer = null;
+  console.log('[Server] 共有サーバー（ポート3005）を停止しました');
+  return { success: true, stopped: true };
+}
+
 function startParentServer() {
   if (parentHttpServer) return;
   ensureApiToken();
+  ensureParentInstanceId();
   
   parentHttpServer = http.createServer((req, res) => {
     // CORSヘッダーを追加し、他のPC（子機）からの接続を許可
@@ -6227,10 +6509,11 @@ function startParentServer() {
           } else if (action === 'list' && req.method === 'GET') {
             result = { success: true, devices: getActiveDevices() };
           } else if (action === 'disconnect' && req.method === 'POST') {
-            let info;
-            try { info = JSON.parse(body || '{}'); } catch { info = {}; }
-            delete connectedDevices[info.deviceId];
-            result = { success: true };
+            // 認証は全端末共通のAPIトークン1個のみで、プロトコル上「どの子機か」を
+            // 識別できない。そのためHTTP経由で許すと、任意の子機が他端末のdeviceIdを
+            // 指定して一覧から消せてしまう（しかも消えた端末は約10秒後の
+            // ハートビートで再登録されるだけで実効性も無い）。親機のUIからのみ行う。
+            result = { success: false, message: '接続端末の切断は親機で行ってください' };
           } else {
             result = { success: false, message: 'Unknown device action' };
           }
@@ -6294,10 +6577,7 @@ if (!gotTheLock) {
       clearTimeout(scheduleFeedRetryTimer);
       scheduleFeedRetryTimer = null;
     }
-    if (parentHttpServer) {
-      try { parentHttpServer.close(); } catch {}
-      parentHttpServer = null;
-    }
+    stopParentServer();
     if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
       powerSaveBlocker.stop(powerSaveBlockerId);
       powerSaveBlockerId = null;

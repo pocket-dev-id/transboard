@@ -212,7 +212,7 @@ const ExamRoom = {
       UI.playScanSound(true);
       this._pendingFlashEventId = matchEvent.id;
 
-      await App.refreshData();
+      await App.refreshData({ force: true });
       await this._renderQueue();
     } catch (err) {
       console.error(err);
@@ -525,7 +525,7 @@ const ExamRoom = {
             await API.patch('transfer_events', eventId, { estimated_pickup_at: newEstimated });
             UI.toast('迎え目安を変更しました', 'success');
             
-            await App.refreshData();
+            await App.refreshData({ force: true });
             await this._renderQueue();
           } catch (err) {
             console.error(err);
@@ -887,7 +887,7 @@ const ExamRoom = {
       UI.playScanSound(true);
       this._pendingFlashEventId = eventId;
 
-      await App.refreshData();
+      await App.refreshData({ force: true });
       await this._renderQueue();
     } catch (e) {
       console.error(e);

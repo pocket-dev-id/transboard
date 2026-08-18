@@ -1112,7 +1112,7 @@ const App = {
 
         // マスタデータ（beds）を再読み込みし、画面を再描画する
         await App.loadMasters();
-        await App.refreshData();
+        await App.refreshData({ force: true });
         
         const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
         if (currentPage === 'ward-dashboard') {
@@ -1298,9 +1298,29 @@ const App = {
   async _repairLocalShareMode() {
     if (!window.electronAPI?.dbRequest) return;
     try {
-      const localMode = localStorage.getItem('cfg_share_mode') || 'parent';
+      const storedMode = localStorage.getItem('cfg_share_mode');
       const rec = await window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'GET' } });
       const dbMode = rec?.value;
+
+      // localStorageが空（Windowsプロファイル再作成・キャッシュ消去など）のとき、
+      // 既定の'parent'で修復するとDBと端末役割ファイルまで親機へ書き換わり、
+      // 子機が黙って2台目の親機に昇格してしまう。APIトークンは全機共通のため
+      // この second parent は誰からも検知できない。localStorage未設定のときは
+      // 修復せず、逆にDB側の値を書き戻して以後の齟齬を防ぐ。
+      if (!storedMode) {
+        if (dbMode) {
+          localStorage.setItem('cfg_share_mode', dbMode);
+          console.warn(`[App] 端末設定が未設定のため、DBの share_mode (${dbMode}) を採用しました`);
+        }
+        return;
+      }
+      const localMode = storedMode;
+
+      // parent_ip の齟齬も直す。ここが食い違うと子機リレーの許可ホスト一覧が
+      // 空になり、全リクエストがLANに出る前に ENDPOINT_NOT_ALLOWED で落ちて
+      // 「接続が切断されました」と表示され続ける（再起動しても直らない）。
+      await this._repairLocalParentIp();
+
       if (!dbMode || dbMode === localMode) return;
 
       await window.electronAPI.dbRequest({
@@ -1324,6 +1344,51 @@ const App = {
       }
     } catch (e) {
       console.warn('[App] share_mode 整合性チェックに失敗:', e);
+    }
+  },
+
+  // 接続先の親機が別マシンに入れ替わっていないか確認する。
+  // APIトークンは全機共通のため、バックアップ復元などで別マシンが親機になっても
+  // 子機は何の警告もなくそちらへ接続してしまい、2系統のDBに分裂しても双方
+  // 正常に見えてしまう。親機が持つ parent_instance_id の変化で気づけるようにする。
+  // 注: これは「切り替わり」の検知であって、親機が同時に2台存在する状態そのものは
+  // 検知できない（それにはmDNS等の探索が必要）。
+  _checkParentIdentity(systemSettings) {
+    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    if (shareMode !== 'client' && shareMode !== 'child') return;
+    const current = (systemSettings || []).find(s => s.id === 'parent_instance_id')?.value || '';
+    if (!current) return;
+    const known = localStorage.getItem('cfg_parent_instance_id') || '';
+    if (!known) {
+      localStorage.setItem('cfg_parent_instance_id', current);
+      return;
+    }
+    if (known === current) return;
+    localStorage.setItem('cfg_parent_instance_id', current);
+    UI.toast(
+      '接続先の親機が入れ替わりました。意図した切り替えでない場合は、別のPCが親機として起動していないか確認してください。',
+      'warning',
+      15000
+    );
+    console.warn('[App] 親機インスタンスIDが変化しました', { known, current });
+  },
+
+  // 端末に保存された親機IPとローカルDBの parent_ip を揃える。
+  // 子機リレーの許可ホスト一覧はDB側の値から作られるため、ここが空だと
+  // 全リクエストが送信前に拒否される。
+  async _repairLocalParentIp() {
+    const localIp = localStorage.getItem('cfg_parent_ip') || '';
+    if (!localIp) return;
+    try {
+      const rec = await window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'GET' } });
+      if (rec?.value === localIp) return;
+      await window.electronAPI.dbRequest({
+        url: 'tables/system_settings/parent_ip',
+        options: { method: 'PATCH', body: JSON.stringify({ value: localIp }) }
+      });
+      console.warn(`[App] ローカルDBの parent_ip を端末設定 (${localIp}) に合わせて修復しました`);
+    } catch (e) {
+      console.warn('[App] parent_ip 整合性チェックに失敗:', e);
     }
   },
 
@@ -1522,8 +1587,8 @@ const App = {
           appVersion: AppState.appVersion || '',
           page: document.querySelector('.tab-btn.active')?.dataset.page || ''
         });
-        const ok = res !== null;
-        this._setConnectionStatus(ok);
+        const ok = res !== null && res?.unauthorized !== true;
+        this._setConnectionStatus(ok, res?.unauthorized ? 'unauthorized' : undefined);
         return ok;
       } catch (e) {
         console.warn('[Heartbeat] failed:', e);
@@ -1782,6 +1847,7 @@ const App = {
       }
       AppState.systemSettings = systemSettings;
       AppState.stickyNotes = [];
+      this._checkParentIdentity(systemSettings);
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
 
       // 申し送りメモを読み込む（現在病棟）
@@ -2450,15 +2516,22 @@ const OfflineManager = {
 /* ---------- 古いイベントのクリーンアップ ---------- */
 // 要件定義: event_retention_days 設定に基づき完了済みイベントを自動削除
 const EventRetentionManager = {
+  // 戻り値をそのまま返す。呼び出し元(保守画面の手動実行ボタン)が失敗を
+  // 判別できないと、親機でのみ実行できる操作を子機で押したときに
+  // 「削除しました」と嘘の成功を表示してしまうため。
   async run() {
     try {
-      if (!window.electronAPI?.cleanupEventRetention) return;
+      if (!window.electronAPI?.cleanupEventRetention) {
+        return { success: false, message: 'この端末では実行できません' };
+      }
       const result = await window.electronAPI.cleanupEventRetention();
       if (result?.success && result.removed > 0) {
         console.log(`[EventRetention] ${result.removed}件の古いイベントを一括削除しました`);
       }
+      return result;
     } catch (e) {
       console.warn('[EventRetention] クリーンアップに失敗しました:', e);
+      return { success: false, message: e.message };
     }
   },
 };

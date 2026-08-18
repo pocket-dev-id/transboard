@@ -124,7 +124,7 @@ const TimelineContextMenu = {
         TimelinePopup.hide();
         try {
           await API.updateEventStatus(event.id, newStatus, {}, CONFIG.STATUS_SCOPE.WARD, event.current_status);
-          await App.refreshData();
+          await App.refreshData({ force: true });
           Timeline.render();
           UI.toast(`${bedName}: ${CONFIG.STATUS_LABEL?.[newStatus] || newStatus} に更新しました`, 'success');
         } catch (err) {
@@ -291,7 +291,7 @@ const Timeline = {
       try {
         await API.patch('transfer_events', event.id, { estimated_pickup_at: base.getTime() });
         await API.addStatusLog(event.id, event.current_status, event.current_status, `目安時間変更 (${UI.formatTime(base.getTime())})`);
-        await App.refreshData();
+        await App.refreshData({ force: true });
         Timeline.render();
         TimelinePopup.hide();
         UI.toast('迎え目安時間を変更しました', 'success');

@@ -774,7 +774,7 @@ const BedModal = {
           );
           UI.toast('迎え目安を変更しました', 'success');
           
-          await App.refreshData();
+          await App.refreshData({ force: true });
           
           // 画面の再描画
           const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
@@ -822,7 +822,7 @@ const BedModal = {
           );
           UI.toast(`${roleLabel}を変更しました`, 'success');
           
-          await App.refreshData();
+          await App.refreshData({ force: true });
           
           const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
           if (currentPage === 'ward-dashboard') {
@@ -865,7 +865,7 @@ const BedModal = {
           );
           UI.toast('備考を更新しました', 'success');
           
-          await App.refreshData();
+          await App.refreshData({ force: true });
           
           const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
           if (currentPage === 'ward-dashboard') {
@@ -918,7 +918,7 @@ const BedModal = {
           UI.playScanSound(true);
           this._pendingFlash = true;
           
-          await App.refreshData();
+          await App.refreshData({ force: true });
           
           // 画面の再描画
           const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
@@ -979,7 +979,7 @@ const BedModal = {
             UI.playScanSound(true);
             this._pendingFlash = true;
             
-            await App.refreshData();
+            await App.refreshData({ force: true });
             
             // 画面の再描画
             const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
@@ -1052,7 +1052,7 @@ const BedModal = {
       UI.toast(`${bed.bed_number}号床の移送を開始しました`, 'success');
       this._pendingTransferEventId = null;
       this.close();
-      await App.refreshData();
+      await App.refreshData({ force: true });
       
       // 即座に画面を再描画する
       const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
@@ -1113,7 +1113,7 @@ const BedModal = {
       const label = CONFIG.STATUS_LABEL[newStatus];
       UI.toast(`${bed ? bed.bed_number + '号床' : ''} → ${label}`, 'success');
       this.close();
-      await App.refreshData();
+      await App.refreshData({ force: true });
       
       // 即座に画面を再描画する
       const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
