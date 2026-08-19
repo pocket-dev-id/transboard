@@ -150,11 +150,13 @@ const BedModal = {
       const newFormIsBarcodeMode = newFormIcSetting?.value === 'true' &&
         AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
       setTimeout(() => {
-        if (newFormIsBarcodeMode) {
+        const icTagInput = document.getElementById('f-ic-tag-id');
+        // 「患者IDをセット」チェックでスキャン欄自体が非表示の場合は対象外
+        if (newFormIsBarcodeMode && icTagInput && icTagInput.offsetParent !== null) {
           // バーコードモードはキーボード入力型スキャナーのため、フォーカスが
           // 当たっていないと読み取れない（PC/SC経由のICカードと異なりフォーカス
           // 非依存で流し込む手段が無いため）
-          document.getElementById('f-ic-tag-id')?.focus();
+          icTagInput.focus();
         } else {
           // 新規登録フォームは検査種別にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
           document.getElementById('f-exam-type')?.focus();
@@ -331,18 +333,18 @@ const BedModal = {
         <input type="number" id="f-duration" min="5" max="300" placeholder="検査種別から自動設定" ${disabledAttr}>
       </div>
       ${isIcEnabled ? `
-      <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
-        <label><i class="fas fa-id-card"></i> 患者${scanLabel}（スキャン）登録</label>
-        <input type="text" id="f-ic-tag-id" placeholder="${scanPlaceholder}" ${disabledAttr}>
-      </div>
       ${isAutoSetPatientIdEnabled ? `
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
           <input type="checkbox" id="f-auto-set-patient-id" ${isAutoSetPatientIdDefaultChecked ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-          患者IDをセット（読み取った値をこの病床の患者IDとして保存します）
+          患者IDをセット（この病床の患者ID「${UI.escapeHTML(bed.patient_id || '未設定')}」を検査室での判定に使用します。ここでの${scanLabel}読み取りは不要です）
         </label>
       </div>
       ` : ''}
+      <div class="form-row" id="f-ic-tag-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}${isAutoSetPatientIdEnabled && isAutoSetPatientIdDefaultChecked ? ' display:none;' : ''}">
+        <label><i class="fas fa-id-card"></i> 患者${scanLabel}（スキャン）登録</label>
+        <input type="text" id="f-ic-tag-id" placeholder="${scanPlaceholder}" ${disabledAttr}>
+      </div>
       ` : ''}
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>備考（車椅子・ストレッチャー等）</label>
@@ -769,6 +771,16 @@ const BedModal = {
       }
       this._bindOptionCardSelectors();
 
+      // 「患者IDをセット」チェック時は、この病床の既知の患者IDをそのまま
+      // 検査室照合用の値として使うため、ここでの読み取りは不要になる
+      const autoSetCheckbox = document.getElementById('f-auto-set-patient-id');
+      const icTagRow = document.getElementById('f-ic-tag-row');
+      if (autoSetCheckbox && icTagRow) {
+        autoSetCheckbox.addEventListener('change', () => {
+          icTagRow.style.display = autoSetCheckbox.checked ? 'none' : '';
+        });
+      }
+
       submitBtn.onclick = () => this._startTransfer();
     }
 
@@ -1054,23 +1066,23 @@ const BedModal = {
     const duration = parseInt(document.getElementById('f-duration').value);
     const note = document.getElementById('f-note').value;
     const icTagInput = document.getElementById('f-ic-tag-id');
-    const icTagId = icTagInput ? icTagInput.value.trim() : null;
     const autoSetPatientIdChecked = document.getElementById('f-auto-set-patient-id')?.checked === true;
+    // 「患者IDをセット」チェック時は、この病床の既知の患者IDをそのまま検査室
+    // 照合用の値として使う（ここでのスキャンは行わない）。未チェック時は
+    // 従来通り、この場でスキャンした値をpatient_ic_tag_idとして使う
+    const icTagId = autoSetPatientIdChecked
+      ? (bed.patient_id || null)
+      : (icTagInput ? icTagInput.value.trim() : null);
 
     if (!examTypeId || !examRoomId) {
       UI.toast('検査種別と検査室は必須です', 'warning');
       return;
     }
 
-    // 「患者IDをセット」がチェックされているのに読み取り値が空のまま登録すると、
-    // patient_ic_tag_idがnullのまま移送が始まり、検査室側でカード/バーコードを
-    // 読ませても該当イベントが見つからない（誤って登録されていないように見える）
-    // 事故になる。読み取り欄にフォーカスが無いまま検査種別/検査室を選んだ場合に
-    // 起きやすいため、送信前に明示的に検知して止める
+    // 「患者IDをセット」がチェックされているのに、この病床に患者IDが
+    // 設定されていない場合は検査室での照合ができないため送信前に止める
     if (autoSetPatientIdChecked && !icTagId) {
-      const scanLabelForWarning = AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode' ? 'バーコード' : 'ICカード';
-      UI.toast(`「患者IDをセット」を使うには、先に${scanLabelForWarning}を読み取ってください`, 'warning');
-      icTagInput?.focus();
+      UI.toast('この病床には患者IDが設定されていないため、「患者IDをセット」は使用できません', 'warning');
       return;
     }
 
@@ -1084,15 +1096,6 @@ const BedModal = {
         this._pendingTransferEventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
       }
 
-      // 「患者IDをセット」がチェックされていれば、読み取った値を病床の患者IDへも反映する。
-      // サーバー側(transfer/start)はpatient_idを常に病床レコードから再取得するため、
-      // 移送開始より前に病床側を更新しておく必要がある
-      let effectivePatientId = bed.patient_id || null;
-      if (autoSetPatientIdChecked && icTagId) {
-        await API.patch('beds', this.currentBedId, { patient_id: icTagId });
-        effectivePatientId = icTagId;
-      }
-
       await API.startTransfer({
         eventId: this._pendingTransferEventId,
         bedId: this.currentBedId,
@@ -1103,7 +1106,7 @@ const BedModal = {
         expectedDurationMin: durationMin,
         note: note || '',
         patientName: bed.patient_name || null,
-        patientId: effectivePatientId,
+        patientId: bed.patient_id || null,
         patientIcTagId: icTagId || null,
       });
 
@@ -1209,8 +1212,9 @@ const BedModal = {
         // ウェッジ型のスキャナー（バーコード等）はカードクリック後の読み取りを
         // 拾えなくなる。まだ読み取っていない（空の）場合はスキャン欄へ
         // フォーカスを戻し、選択後にそのまま読み取れるようにする
+        // （「患者IDをセット」チェック時はスキャン欄自体が非表示のため対象外）
         const icTagInput = document.getElementById('f-ic-tag-id');
-        if (icTagInput && !icTagInput.disabled && !icTagInput.value) {
+        if (icTagInput && !icTagInput.disabled && !icTagInput.value && icTagInput.offsetParent !== null) {
           icTagInput.focus();
         }
       });
