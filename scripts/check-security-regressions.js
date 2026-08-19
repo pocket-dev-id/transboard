@@ -1592,4 +1592,46 @@ assert(
   'ExamRoom._handleScan must check #bed-modal-overlay visibility before routing to #m-ic-tag-id/#f-ic-tag-id (their DOM nodes persist after modal close)'
 );
 
+// バーコードモード: NFCカードリーダーの常時監視プロセス(PowerShell)は
+// patient_id_scan_modeが'barcode'のときは起動してはならない
+// (バーコードスキャナーはキーボード入力型のためカード監視自体が不要)。
+assert(
+  main.includes("function isNfcWatcherEnabled(db)") &&
+  (() => {
+    const idx = main.indexOf('function isNfcWatcherEnabled(db) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes("'patient_id_scan_mode'") && body.includes("scanMode !== 'barcode'");
+  })(),
+  'isNfcWatcherEnabled must gate the NFC watcher on patient_id_scan_mode !== "barcode"'
+);
+assert(
+  main.includes('isNfcWatcherEnabled(db)') &&
+  (main.match(/isNfcWatcherEnabled\(/g) || []).length >= 3,
+  'startup and restart-scheduling NFC watcher checks must both use isNfcWatcherEnabled (not a raw enable_patient_ic_association check)'
+);
+
+// バーコードモード・出棟登録時の患者ID自動セットは設定画面(共有・ネットワーク設定)で
+// system_settingsとして保存されなければならない
+assert(
+  networkSettings.includes("API.patch('system_settings', 'patient_id_scan_mode'") &&
+  networkSettings.includes("API.patch('system_settings', 'enable_auto_set_patient_id'"),
+  'Network settings save handler must persist patient_id_scan_mode and enable_auto_set_patient_id to system_settings'
+);
+
+// 出棟登録の「患者IDをセット」チェックボックスがオンの場合、サーバー側(transfer/start)が
+// 常にbeds.patient_idから再取得するため、移送開始のAPI呼び出しより前に
+// beds.patient_idを更新しておかなければ効果が無い
+assert(
+  (() => {
+    const idx = modal.indexOf('async _startTransfer() {');
+    const patchIdx = modal.indexOf("API.patch('beds'", idx);
+    const startIdx = modal.indexOf('API.startTransfer(', idx);
+    if (idx < 0 || patchIdx < 0 || startIdx < 0) return false;
+    return patchIdx < startIdx;
+  })(),
+  '_startTransfer must patch beds.patient_id (when auto-set is checked) before calling API.startTransfer, since the server always re-derives patient_id from the bed record'
+);
+
 console.log('Security regression checks passed.');

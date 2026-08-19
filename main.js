@@ -95,6 +95,14 @@ function isIgnoredWatchPath(p) {
   return String(p).split(/[\\/]/).some(seg => seg.startsWith('.') || seg === 'archive');
 }
 
+// バーコードモードはキーボード入力型スキャナーを前提とし、NFCカードリーダーの
+// 常時監視プロセス(PowerShell)は不要なため起動しない
+function isNfcWatcherEnabled(db) {
+  const icEnabled = getSettingRecord(db, 'enable_patient_ic_association')?.value === 'true';
+  const scanMode = getSettingRecord(db, 'patient_id_scan_mode')?.value || 'ic_card';
+  return icEnabled && scanMode !== 'barcode';
+}
+
 function startNfcWatcher() {
   if (nfcProcess) return;
   nfcStopping = false;
@@ -127,7 +135,7 @@ function startNfcWatcher() {
 
   const scheduleNfcRestart = () => {
     if (nfcStopping || isQuitting || nfcRestartTimer) return;
-    const enabled = getSettingRecord(readDB(), 'enable_patient_ic_association')?.value === 'true';
+    const enabled = isNfcWatcherEnabled(readDB());
     if (!enabled) {
       nfcConsecutiveQuickExits = 0;
       return;
@@ -417,6 +425,8 @@ const SEEDS = {
     { id: "api_token", value: "" },
     { id: "enable_webrtc_call", value: "true" },
     { id: "enable_patient_ic_association", value: "false" },
+    { id: "patient_id_scan_mode", value: "ic_card" },
+    { id: "enable_auto_set_patient_id", value: "false" },
     { id: "default_zoom", value: "1.0" },
     { id: "font_style", value: "ud" },
     { id: "bed_card_size", value: "medium" },
@@ -6619,8 +6629,7 @@ app.whenReady().then(() => {
     startParentServer();
   }
 
-  const icSetting = db.system_settings?.find(s => s.id === 'enable_patient_ic_association');
-  if (icSetting && icSetting.value === 'true') {
+  if (isNfcWatcherEnabled(db)) {
     startNfcWatcher();
   }
 
