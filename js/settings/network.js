@@ -26,6 +26,12 @@ Object.assign(Settings, {
     const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association') || { value: 'false' };
     const isIcEnabled = icSetting.value === 'true';
 
+    // 読み取り方式（ICカード/バーコード）・出棟登録時の患者ID自動セット設定を取得
+    const scanModeSetting = AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode') || { value: 'ic_card' };
+    const isBarcodeMode = scanModeSetting.value === 'barcode';
+    const autoSetPatientIdSetting = AppState.systemSettings?.find(s => s.id === 'enable_auto_set_patient_id') || { value: 'false' };
+    const isAutoSetPatientIdEnabled = autoSetPatientIdSetting.value === 'true';
+
     // ローカルIPアドレス一覧を取得する（親機の場合の親切設計）
     let ipListHtml = '<li>IPアドレスの取得中...</li>';
     if (window.electronAPI && window.electronAPI.getLocalIPs) {
@@ -211,24 +217,54 @@ Object.assign(Settings, {
             </div>
           </div>
 
-          <!-- 患者ICカード紐づけ機能の有効/無効設定 -->
+          <!-- 患者ICカード/バーコード紐づけ機能の有効/無効設定 -->
           <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
             <h4 style="margin:0 0 10px 0; font-size:14px; color:#2d3748; display:flex; align-items:center; gap:8px;">
-              <i class="fas fa-id-card"></i> 患者ICカード登録機能（オプション）
+              <i class="fas fa-id-card"></i> 患者IC/バーコード登録機能（オプション）
               <span class="settings-badge settings-badge--shared">全体同期・共通設定</span>
             </h4>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
               <input type="checkbox" id="cfg-enable-patient-ic" ${isIcEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-              患者ICカード登録機能を使用する（出棟時・移動中の紐づけ、帰棟・キャンセル時の自動解除）
+              患者IC/バーコード登録機能を使用する（出棟時・移動中の紐づけ、帰棟・キャンセル時の自動解除）
             </label>
             <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
-              チェックを入れると、病床詳細モーダルで移送を開始する際や移動中の患者に対してICカード（スキャナーによる文字入力）を登録できるようになります。帰棟完了時やキャンセル時には自動的に紐づけが削除されます。
+              チェックを入れると、病床詳細モーダルで移送を開始する際や移動中の患者に対してICカード/バーコード（スキャナーによる文字入力）を登録できるようになります。帰棟完了時やキャンセル時には自動的に紐づけが削除されます。
+            </div>
+
+            <div id="ic-scan-mode-section" style="margin-top:12px; padding-left:24px; ${isIcEnabled ? '' : 'display:none;'}">
+              <div style="font-size:12px; font-weight:700; color:#2d3748; margin-bottom:6px;">読み取り方式</div>
+              <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
+                  <input type="radio" name="patient-id-scan-mode" value="ic_card" ${isBarcodeMode ? '' : 'checked'}>
+                  ICカード（NFCカードリーダーを常時監視）
+                </label>
+                <label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;">
+                  <input type="radio" name="patient-id-scan-mode" value="barcode" ${isBarcodeMode ? 'checked' : ''}>
+                  バーコード（キーボード入力型スキャナー・カード監視は行いません）
+                </label>
+              </div>
+              <div style="font-size:11px; color:#718096; margin-top:4px;">
+                バーコードを選択すると、NFCカードリーダーの常時監視プロセスを起動しません。バーコードスキャナー（USBキーボード入力型）で読み取った値を各スキャン欄に入力しEnterで確定してください。
+              </div>
+
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:600; color:#2d3748; margin-top:12px;">
+                <input type="checkbox" id="cfg-auto-set-patient-id" ${isAutoSetPatientIdEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+                出棟登録時に読み取った値を患者IDへ自動セットする機能を使用する
+              </label>
+              <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
+                有効にすると、移送開始フォームに「患者IDをセット」チェックボックスが表示されます。チェックした状態で出棟登録すると、読み取ったIC/バーコードの値がそのまま病床の患者IDとして保存されます。
+              </div>
             </div>
           </div>
 
         </div>
       </div>
     `;
+
+    const icScanModeSection = body.querySelector('#ic-scan-mode-section');
+    body.querySelector('#cfg-enable-patient-ic')?.addEventListener('change', (e) => {
+      if (icScanModeSection) icScanModeSection.style.display = e.target.checked ? 'block' : 'none';
+    });
 
     if (currentMode === 'parent' && !isStandaloneMode) this._renderDeviceList(body);
 
@@ -425,6 +461,8 @@ Object.assign(Settings, {
       const apiToken = body.querySelector('#cfg-api-token')?.value.trim() || '';
       const enableWebRtcCall = body.querySelector('#cfg-enable-webrtc-call')?.checked ? 'true' : 'false';
       const enablePatientIc = body.querySelector('#cfg-enable-patient-ic')?.checked ? 'true' : 'false';
+      const patientIdScanMode = body.querySelector('input[name="patient-id-scan-mode"]:checked')?.value === 'barcode' ? 'barcode' : 'ic_card';
+      const enableAutoSetPatientId = body.querySelector('#cfg-auto-set-patient-id')?.checked ? 'true' : 'false';
       const isClientSave = mode === 'client' || mode === 'child';
 
       if (mode === 'client' && !parentIp) {
@@ -458,6 +496,8 @@ Object.assign(Settings, {
         const sharedUpdates = [
           API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
           API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
+          API.patch('system_settings', 'patient_id_scan_mode', { value: patientIdScanMode }),
+          API.patch('system_settings', 'enable_auto_set_patient_id', { value: enableAutoSetPatientId }),
         ];
         const sharedResults = isClientSave
           ? await Promise.allSettled(sharedUpdates)
@@ -468,6 +508,8 @@ Object.assign(Settings, {
         if (!sharedFailed) {
           this._writeLocalSetting('enable_webrtc_call', enableWebRtcCall);
           this._writeLocalSetting('enable_patient_ic_association', enablePatientIc);
+          this._writeLocalSetting('patient_id_scan_mode', patientIdScanMode);
+          this._writeLocalSetting('enable_auto_set_patient_id', enableAutoSetPatientId);
         }
 
         // 子機へ切り替えた場合は、その場で共有サーバー(3005)と取り込み監視を止める。

@@ -146,9 +146,19 @@ const BedModal = {
 
     // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
     if (!event) {
+      const newFormIcSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
+      const newFormIsBarcodeMode = newFormIcSetting?.value === 'true' &&
+        AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
       setTimeout(() => {
-        // 新規登録フォームは検査種別にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
-        document.getElementById('f-exam-type')?.focus();
+        if (newFormIsBarcodeMode) {
+          // バーコードモードはキーボード入力型スキャナーのため、フォーカスが
+          // 当たっていないと読み取れない（PC/SC経由のICカードと異なりフォーカス
+          // 非依存で流し込む手段が無いため）
+          document.getElementById('f-ic-tag-id')?.focus();
+        } else {
+          // 新規登録フォームは検査種別にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
+          document.getElementById('f-exam-type')?.focus();
+        }
       }, 50);
     } else {
       const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
@@ -264,9 +274,13 @@ const BedModal = {
         `<option value="${UI.escapeHTML(s.id)}">${UI.escapeHTML(s.name)}${busyStaffIds.has(s.id) ? `（⚠${UI.escortRoleLabel(true)}）` : ''}</option>`
       ).join('');
 
-    // 患者IC登録設定が有効かどうか
+    // 患者IC/バーコード登録設定が有効かどうか
     const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
     const isIcEnabled = icSetting && icSetting.value === 'true';
+    const isBarcodeMode = AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
+    const scanLabel = isBarcodeMode ? 'バーコード' : 'ICカード';
+    const scanPlaceholder = isBarcodeMode ? 'スキャン口（バーコードを読み取ってください）' : 'スキャン口（カードをかざしてください）';
+    const isAutoSetPatientIdEnabled = AppState.systemSettings?.find(s => s.id === 'enable_auto_set_patient_id')?.value === 'true';
 
     // 患者バナーの追加
     let patientBanner = '';
@@ -317,9 +331,17 @@ const BedModal = {
       </div>
       ${isIcEnabled ? `
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
-        <label><i class="fas fa-id-card"></i> 患者ICカード（スキャン）登録</label>
-        <input type="text" id="f-ic-tag-id" placeholder="スキャン口（カードをかざしてください）" ${disabledAttr}>
+        <label><i class="fas fa-id-card"></i> 患者${scanLabel}（スキャン）登録</label>
+        <input type="text" id="f-ic-tag-id" placeholder="${scanPlaceholder}" ${disabledAttr}>
       </div>
+      ${isAutoSetPatientIdEnabled ? `
+      <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+          <input type="checkbox" id="f-auto-set-patient-id" style="width:16px; height:16px; cursor:pointer;">
+          患者IDをセット（読み取った値をこの病床の患者IDとして保存します）
+        </label>
+      </div>
+      ` : ''}
       ` : ''}
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>備考（車椅子・ストレッチャー等）</label>
@@ -530,25 +552,31 @@ const BedModal = {
       `;
     }
 
-    // 患者IC登録設定が有効かどうか
+    // 患者IC/バーコード登録設定が有効かどうか
     const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
     const isIcEnabled = icSetting && icSetting.value === 'true';
+    const isEventBarcodeMode = AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
     let icRegistrationHtml = '';
-    
+
     if (isIcEnabled && event.current_status !== 'RETURNED' && event.current_status !== 'CANCELLED') {
       const currentIcTag = event.patient_ic_tag_id || '';
       const currentIcTagHtml = UI.escapeHTML(currentIcTag);
+      const eventScanLabel = isEventBarcodeMode ? 'バーコード' : 'ICカード';
+      const eventScanPlaceholder = isEventBarcodeMode ? 'スキャン口（バーコードを読み取ってください）' : 'スキャン口（カードをかざしてください）';
+      const eventScanHint = isEventBarcodeMode
+        ? 'このダイアログを開いた状態でバーコードを読み取り、Enterまたは「登録」で反映されます。'
+        : 'このダイアログを開いた状態でICカードをかざすと自動で登録されます。';
       icRegistrationHtml = `
         <div class="divider"></div>
-        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:#718096;"><i class="fas fa-id-card"></i> 患者ICカード（スキャン）登録</div>
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:#718096;"><i class="fas fa-id-card"></i> 患者${eventScanLabel}（スキャン）登録</div>
         <div style="background:#f7fafc; border:1px solid #cbd5e0; border-radius:6px; padding:10px; display:flex; flex-direction:column; gap:8px;">
           <div style="display:flex; gap:8px; align-items:center;">
-            <input type="text" id="m-ic-tag-id" value="${currentIcTagHtml}" placeholder="スキャン口（カードをかざしてください）" style="flex:1; padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px;">
+            <input type="text" id="m-ic-tag-id" value="${currentIcTagHtml}" placeholder="${eventScanPlaceholder}" style="flex:1; padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px;">
             <button class="btn btn-primary" id="btn-update-ic-tag" style="padding: 6px 12px; font-size: 13px; font-weight: bold; width: auto; height: auto;">登録</button>
             ${currentIcTag ? `<button class="btn btn-danger" id="btn-clear-ic-tag" style="padding: 6px 12px; font-size: 13px; font-weight: bold; width: auto; height: auto; background:#ef4444; border-color:#ef4444; color:#fff;">解除</button>` : ''}
           </div>
           <div style="font-size:11px; color:#718096; margin-top:2px;">
-            <i class="fas fa-info-circle"></i> このダイアログを開いた状態でICカードをかざすと自動で登録されます。
+            <i class="fas fa-info-circle"></i> ${eventScanHint}
           </div>
         </div>
       `;
@@ -1026,6 +1054,7 @@ const BedModal = {
     const note = document.getElementById('f-note').value;
     const icTagInput = document.getElementById('f-ic-tag-id');
     const icTagId = icTagInput ? icTagInput.value.trim() : null;
+    const autoSetPatientIdChecked = document.getElementById('f-auto-set-patient-id')?.checked === true;
 
     if (!examTypeId || !examRoomId) {
       UI.toast('検査種別と検査室は必須です', 'warning');
@@ -1042,6 +1071,15 @@ const BedModal = {
         this._pendingTransferEventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
       }
 
+      // 「患者IDをセット」がチェックされていれば、読み取った値を病床の患者IDへも反映する。
+      // サーバー側(transfer/start)はpatient_idを常に病床レコードから再取得するため、
+      // 移送開始より前に病床側を更新しておく必要がある
+      let effectivePatientId = bed.patient_id || null;
+      if (autoSetPatientIdChecked && icTagId) {
+        await API.patch('beds', this.currentBedId, { patient_id: icTagId });
+        effectivePatientId = icTagId;
+      }
+
       await API.startTransfer({
         eventId: this._pendingTransferEventId,
         bedId: this.currentBedId,
@@ -1052,7 +1090,7 @@ const BedModal = {
         expectedDurationMin: durationMin,
         note: note || '',
         patientName: bed.patient_name || null,
-        patientId: bed.patient_id || null,
+        patientId: effectivePatientId,
         patientIcTagId: icTagId || null,
       });
 

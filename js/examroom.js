@@ -93,13 +93,16 @@ const ExamRoom = {
     const roomId = document.getElementById('exam-room-select')?.value;
     const icInput = document.getElementById('exam-ic-input');
     if (icInput) {
+      const isBarcodeMode = AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
+      const scanIcon = document.querySelector('#exam-ic-scan-area i');
+      if (scanIcon) scanIcon.className = isBarcodeMode ? 'fas fa-barcode' : 'fas fa-id-card';
       if (!roomId) {
         icInput.disabled = true;
         icInput.placeholder = '検査室を選択してください';
         icInput.value = '';
       } else {
         icInput.disabled = false;
-        icInput.placeholder = '患者ICスキャン口 (スキャンで自動遷移)';
+        icInput.placeholder = isBarcodeMode ? '患者バーコードスキャン口 (スキャンで自動遷移)' : '患者ICスキャン口 (スキャンで自動遷移)';
         setTimeout(() => icInput.focus(), 50);
       }
     }
