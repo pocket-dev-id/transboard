@@ -1651,4 +1651,34 @@ assert(
   'The #f-auto-set-patient-id checkbox markup must reflect isAutoSetPatientIdDefaultChecked'
 );
 
+// 「患者IDをセット」がチェックされたまま読み取り値が空で送信されると、
+// patient_ic_tag_idがnullのまま移送が始まり、検査室でカード/バーコードを
+// 読ませても該当イベントが見つからない(誤って登録されていないように見える)
+// 事故になる。_startTransferはAPI呼び出しより前にこれを検知して止めなければならない
+assert(
+  (() => {
+    const idx = modal.indexOf('async _startTransfer() {');
+    const guardIdx = modal.indexOf('autoSetPatientIdChecked && !icTagId', idx);
+    const startIdx = modal.indexOf('API.startTransfer(', idx);
+    if (idx < 0 || guardIdx < 0 || startIdx < 0) return false;
+    return guardIdx < startIdx;
+  })(),
+  '_startTransfer must reject submission when autoSetPatientIdChecked is true but icTagId is empty, before calling API.startTransfer'
+);
+
+// 検査種別・検査室のカード選択でキーボードウェッジ型スキャナーのフォーカスが
+// 外れると、その後の読み取りが#f-ic-tag-idへ入らないまま登録できてしまう。
+// _bindOptionCardSelectorsはカード選択後、未読み取りならスキャン欄へ
+// フォーカスを戻さなければならない
+assert(
+  (() => {
+    const idx = modal.indexOf('_bindOptionCardSelectors() {');
+    const end = modal.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = modal.slice(idx, end);
+    return body.includes("getElementById('f-ic-tag-id')") && body.includes('.focus()');
+  })(),
+  '_bindOptionCardSelectors must refocus #f-ic-tag-id after card selection when it is still empty'
+);
+
 console.log('Security regression checks passed.');
