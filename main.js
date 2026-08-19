@@ -427,6 +427,7 @@ const SEEDS = {
     { id: "enable_patient_ic_association", value: "false" },
     { id: "patient_id_scan_mode", value: "ic_card" },
     { id: "enable_auto_set_patient_id", value: "false" },
+    { id: "auto_set_patient_id_default_checked", value: "false" },
     { id: "default_zoom", value: "1.0" },
     { id: "font_style", value: "ud" },
     { id: "bed_card_size", value: "medium" },

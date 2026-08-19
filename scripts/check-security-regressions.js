@@ -1634,4 +1634,21 @@ assert(
   '_startTransfer must patch beds.patient_id (when auto-set is checked) before calling API.startTransfer, since the server always re-derives patient_id from the bed record'
 );
 
+// 「患者IDをセット」チェックボックスの既定チェック状態(auto_set_patient_id_default_checked)は
+// 設定画面から保存され、出棟登録フォームの描画時にcheckedとして反映されなければならない
+assert(
+  networkSettings.includes("API.patch('system_settings', 'auto_set_patient_id_default_checked'"),
+  'Network settings save handler must persist auto_set_patient_id_default_checked to system_settings'
+);
+assert(
+  (() => {
+    const idx = modal.indexOf("id=\"f-auto-set-patient-id\"");
+    if (idx < 0) return false;
+    const lineStart = modal.lastIndexOf('\n', idx);
+    const lineEnd = modal.indexOf('\n', idx);
+    return modal.slice(lineStart, lineEnd).includes('isAutoSetPatientIdDefaultChecked');
+  })(),
+  'The #f-auto-set-patient-id checkbox markup must reflect isAutoSetPatientIdDefaultChecked'
+);
+
 console.log('Security regression checks passed.');

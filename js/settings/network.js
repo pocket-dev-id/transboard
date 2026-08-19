@@ -31,6 +31,8 @@ Object.assign(Settings, {
     const isBarcodeMode = scanModeSetting.value === 'barcode';
     const autoSetPatientIdSetting = AppState.systemSettings?.find(s => s.id === 'enable_auto_set_patient_id') || { value: 'false' };
     const isAutoSetPatientIdEnabled = autoSetPatientIdSetting.value === 'true';
+    const autoSetPatientIdDefaultSetting = AppState.systemSettings?.find(s => s.id === 'auto_set_patient_id_default_checked') || { value: 'false' };
+    const isAutoSetPatientIdDefaultChecked = autoSetPatientIdDefaultSetting.value === 'true';
 
     // ローカルIPアドレス一覧を取得する（親機の場合の親切設計）
     let ipListHtml = '<li>IPアドレスの取得中...</li>';
@@ -254,6 +256,16 @@ Object.assign(Settings, {
               <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
                 有効にすると、移送開始フォームに「患者IDをセット」チェックボックスが表示されます。チェックした状態で出棟登録すると、読み取ったIC/バーコードの値がそのまま病床の患者IDとして保存されます。
               </div>
+
+              <div id="auto-set-patient-id-default-section" style="margin-top:10px; padding-left:24px; ${isAutoSetPatientIdEnabled ? '' : 'display:none;'}">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:600; color:#2d3748;">
+                  <input type="checkbox" id="cfg-auto-set-patient-id-default" ${isAutoSetPatientIdDefaultChecked ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+                  「患者IDをセット」を既定でチェック済みにする
+                </label>
+                <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
+                  有効にすると、移送開始フォームを開いた時点で「患者IDをセット」チェックボックスが最初からチェックされた状態になります（都度チェックする手間を省けます）。
+                </div>
+              </div>
             </div>
           </div>
 
@@ -264,6 +276,11 @@ Object.assign(Settings, {
     const icScanModeSection = body.querySelector('#ic-scan-mode-section');
     body.querySelector('#cfg-enable-patient-ic')?.addEventListener('change', (e) => {
       if (icScanModeSection) icScanModeSection.style.display = e.target.checked ? 'block' : 'none';
+    });
+
+    const autoSetPatientIdDefaultSection = body.querySelector('#auto-set-patient-id-default-section');
+    body.querySelector('#cfg-auto-set-patient-id')?.addEventListener('change', (e) => {
+      if (autoSetPatientIdDefaultSection) autoSetPatientIdDefaultSection.style.display = e.target.checked ? 'block' : 'none';
     });
 
     if (currentMode === 'parent' && !isStandaloneMode) this._renderDeviceList(body);
@@ -463,6 +480,7 @@ Object.assign(Settings, {
       const enablePatientIc = body.querySelector('#cfg-enable-patient-ic')?.checked ? 'true' : 'false';
       const patientIdScanMode = body.querySelector('input[name="patient-id-scan-mode"]:checked')?.value === 'barcode' ? 'barcode' : 'ic_card';
       const enableAutoSetPatientId = body.querySelector('#cfg-auto-set-patient-id')?.checked ? 'true' : 'false';
+      const autoSetPatientIdDefaultChecked = body.querySelector('#cfg-auto-set-patient-id-default')?.checked ? 'true' : 'false';
       const isClientSave = mode === 'client' || mode === 'child';
 
       if (mode === 'client' && !parentIp) {
@@ -498,6 +516,7 @@ Object.assign(Settings, {
           API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
           API.patch('system_settings', 'patient_id_scan_mode', { value: patientIdScanMode }),
           API.patch('system_settings', 'enable_auto_set_patient_id', { value: enableAutoSetPatientId }),
+          API.patch('system_settings', 'auto_set_patient_id_default_checked', { value: autoSetPatientIdDefaultChecked }),
         ];
         const sharedResults = isClientSave
           ? await Promise.allSettled(sharedUpdates)
@@ -510,6 +529,7 @@ Object.assign(Settings, {
           this._writeLocalSetting('enable_patient_ic_association', enablePatientIc);
           this._writeLocalSetting('patient_id_scan_mode', patientIdScanMode);
           this._writeLocalSetting('enable_auto_set_patient_id', enableAutoSetPatientId);
+          this._writeLocalSetting('auto_set_patient_id_default_checked', autoSetPatientIdDefaultChecked);
         }
 
         // 子機へ切り替えた場合は、その場で共有サーバー(3005)と取り込み監視を止める。
