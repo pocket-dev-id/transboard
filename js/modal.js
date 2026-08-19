@@ -281,6 +281,7 @@ const BedModal = {
     const scanLabel = isBarcodeMode ? 'バーコード' : 'ICカード';
     const scanPlaceholder = isBarcodeMode ? 'スキャン口（バーコードを読み取ってください）' : 'スキャン口（カードをかざしてください）';
     const isAutoSetPatientIdEnabled = AppState.systemSettings?.find(s => s.id === 'enable_auto_set_patient_id')?.value === 'true';
+    const isAutoSetPatientIdDefaultChecked = AppState.systemSettings?.find(s => s.id === 'auto_set_patient_id_default_checked')?.value === 'true';
 
     // 患者バナーの追加
     let patientBanner = '';
@@ -337,7 +338,7 @@ const BedModal = {
       ${isAutoSetPatientIdEnabled ? `
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
-          <input type="checkbox" id="f-auto-set-patient-id" style="width:16px; height:16px; cursor:pointer;">
+          <input type="checkbox" id="f-auto-set-patient-id" ${isAutoSetPatientIdDefaultChecked ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
           患者IDをセット（読み取った値をこの病床の患者IDとして保存します）
         </label>
       </div>
