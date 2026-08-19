@@ -1062,6 +1062,18 @@ const BedModal = {
       return;
     }
 
+    // 「患者IDをセット」がチェックされているのに読み取り値が空のまま登録すると、
+    // patient_ic_tag_idがnullのまま移送が始まり、検査室側でカード/バーコードを
+    // 読ませても該当イベントが見つからない（誤って登録されていないように見える）
+    // 事故になる。読み取り欄にフォーカスが無いまま検査種別/検査室を選んだ場合に
+    // 起きやすいため、送信前に明示的に検知して止める
+    if (autoSetPatientIdChecked && !icTagId) {
+      const scanLabelForWarning = AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode' ? 'バーコード' : 'ICカード';
+      UI.toast(`「患者IDをセット」を使うには、先に${scanLabelForWarning}を読み取ってください`, 'warning');
+      icTagInput?.focus();
+      return;
+    }
+
     const btn = document.getElementById('btn-transfer-start');
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 開始中...';
@@ -1193,6 +1205,14 @@ const BedModal = {
           peer.classList.toggle('selected', selected);
           peer.setAttribute('aria-selected', selected ? 'true' : 'false');
         });
+        // 検査種別・検査室のカード選択でフォーカスがボタンへ移ると、キーボード
+        // ウェッジ型のスキャナー（バーコード等）はカードクリック後の読み取りを
+        // 拾えなくなる。まだ読み取っていない（空の）場合はスキャン欄へ
+        // フォーカスを戻し、選択後にそのまま読み取れるようにする
+        const icTagInput = document.getElementById('f-ic-tag-id');
+        if (icTagInput && !icTagInput.disabled && !icTagInput.value) {
+          icTagInput.focus();
+        }
       });
     });
   },
