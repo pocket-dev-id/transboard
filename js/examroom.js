@@ -127,20 +127,28 @@ const ExamRoom = {
   async _handleScan(icValue) {
     if (!icValue) return;
 
-    // 編集モーダルのIC登録入力欄が開いている場合はそちらに流す（自動登録）
-    const editIcInput = document.getElementById('m-ic-tag-id');
-    if (editIcInput) {
-      editIcInput.value = icValue;
-      document.getElementById('btn-update-ic-tag')?.click();
-      return;
-    }
+    // 病床詳細モーダルは閉じた後もbody.innerHTMLが残るため、#m-ic-tag-id等の
+    // 存在だけで判定すると、以前どこかで一度でも開かれたモーダルの残骸に
+    // 誤って流れてしまい、検査室側のステータス更新が一切実行されなくなる。
+    // オーバーレイが実際に表示中かどうかを併せて確認する
+    // (js/app.jsのグローバルカード読取ハンドラと同じ判定)。
+    const bedModalOpen = !document.getElementById('bed-modal-overlay')?.classList.contains('hidden');
+    if (bedModalOpen) {
+      // 編集モーダルのIC登録入力欄が開いている場合はそちらに流す（自動登録）
+      const editIcInput = document.getElementById('m-ic-tag-id');
+      if (editIcInput) {
+        editIcInput.value = icValue;
+        document.getElementById('btn-update-ic-tag')?.click();
+        return;
+      }
 
-    // 新規移送開始フォームのIC入力欄が開いている場合はそちらに流す（フィールド入力のみ）
-    const newIcInput = document.getElementById('f-ic-tag-id');
-    if (newIcInput && !newIcInput.disabled) {
-      newIcInput.value = icValue;
-      UI.toast('ICカードを読み取りました', 'info');
-      return;
+      // 新規移送開始フォームのIC入力欄が開いている場合はそちらに流す（フィールド入力のみ）
+      const newIcInput = document.getElementById('f-ic-tag-id');
+      if (newIcInput && !newIcInput.disabled) {
+        newIcInput.value = icValue;
+        UI.toast('ICカードを読み取りました', 'info');
+        return;
+      }
     }
 
     // 重複スキャン（チャタリング）防止: 3秒以内の同一IDのスキャンは無視

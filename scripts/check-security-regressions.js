@@ -1575,4 +1575,21 @@ assert(
   '#webrtc-video-container:fullscreen #webrtc-remote-video must use !important on width/height to override the video element\'s inline style'
 );
 
+// ExamRoom._handleScanは、病床詳細モーダルのbody.innerHTMLがclose()後も
+// DOMに残り続けるため、#m-ic-tag-id/#f-ic-tag-idの「存在」だけで
+// モーダルが開いているとみなすと、過去にモーダルを一度でも開いた端末では
+// 検査室でのICスキャンが常にその残骸へ誤って流れ、ステータス更新が
+// 一切実行されなくなる(検査室でカードを読ませても到着/検査開始にならない
+// 不具合の原因)。オーバーレイの表示状態を必ず併せて確認すること。
+assert(
+  (() => {
+    const idx = examroom.indexOf('async _handleScan(icValue) {');
+    const editIdx = examroom.indexOf("getElementById('m-ic-tag-id')", idx);
+    const overlayIdx = examroom.indexOf("getElementById('bed-modal-overlay')", idx);
+    if (idx < 0 || editIdx < 0 || overlayIdx < 0) return false;
+    return overlayIdx < editIdx;
+  })(),
+  'ExamRoom._handleScan must check #bed-modal-overlay visibility before routing to #m-ic-tag-id/#f-ic-tag-id (their DOM nodes persist after modal close)'
+);
+
 console.log('Security regression checks passed.');
