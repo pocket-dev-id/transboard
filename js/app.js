@@ -561,6 +561,22 @@ const App = {
         if (fsBtn) fsBtn.click();
       }
     });
+
+    // Electron/Windowsでは、入力欄をクリックしても実際にはフォーカスが
+    // 移らずキーボード入力を受け付けない状態になることがある(既知の
+    // フォーカス取りこぼし)。クリック直後にフォーカス先を検証し、
+    // ずれていれば明示的にfocus()し直すことで、モーダル等での
+    // 「ときどきキー入力を受け付けない」症状を防ぐ。
+    const FOCUSABLE_SELECTOR = 'input, textarea, select, [contenteditable="true"]';
+    document.addEventListener('mousedown', (e) => {
+      const target = e.target.closest && e.target.closest(FOCUSABLE_SELECTOR);
+      if (!target || target.disabled) return;
+      setTimeout(() => {
+        if (document.activeElement !== target && document.body.contains(target)) {
+          target.focus();
+        }
+      }, 0);
+    }, true);
  
     // フルスクリーン状態変更検知
     if (window.electronAPI && window.electronAPI.onFullscreenChanged) {

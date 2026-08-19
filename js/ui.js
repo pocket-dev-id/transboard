@@ -242,6 +242,25 @@ const UI = {
     return el;
   },
 
+  /* ---------- モーダルの放置時自動クローズ ---------- */
+  // targetに操作(クリック・キー入力・タッチ)が一定時間無ければonTimeoutを呼ぶ。
+  // 呼び出し元はモーダルを閉じる際、戻り値の解除関数を必ず呼ぶこと
+  // (呼ばないとタイマーが残り、既に閉じた後に誤って再発火しうる)
+  armIdleAutoClose(target, onTimeout, { timeoutMs = CONFIG.MODAL_IDLE_AUTO_CLOSE_MS } = {}) {
+    const ACTIVITY_EVENTS = ['mousedown', 'keydown', 'touchstart', 'input'];
+    let timer = null;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(onTimeout, timeoutMs);
+    };
+    ACTIVITY_EVENTS.forEach(type => target.addEventListener(type, reset));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      ACTIVITY_EVENTS.forEach(type => target.removeEventListener(type, reset));
+    };
+  },
+
   /* ---------- 確認ダイアログ（デザイン#5: ネイティブconfirm()の代替） ---------- */
   // メッセージ本文はtextContentで挿入するためXSSの心配がない
   // opts.type: 'danger'|'warning' でアイコン・ボタン色を指定可能（未指定時は opts.danger を後方互換のショートハンドとして使用）
@@ -313,10 +332,12 @@ const UI = {
 
       let settled = false;
       let countdownTimer = null;
+      let idleCancel = null;
       const cleanup = (result) => {
         if (settled) return;
         settled = true;
         if (countdownTimer) clearInterval(countdownTimer);
+        if (idleCancel) idleCancel();
         document.removeEventListener('keydown', onKeydown);
         overlay.remove();
         resolve(result);
@@ -330,6 +351,11 @@ const UI = {
       okBtn.addEventListener('click', () => cleanup(true));
       document.addEventListener('keydown', onKeydown);
       okBtn.focus();
+
+      // autoConfirmMsは別の自動確定タイマーを既に持つため、放置クローズは二重にしない
+      if (!autoConfirmMs) {
+        idleCancel = UI.armIdleAutoClose(overlay, () => cleanup(false));
+      }
 
       if (autoConfirmMs > 0) {
         let remainingSec = Math.ceil(autoConfirmMs / 1000);

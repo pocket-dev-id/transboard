@@ -8,6 +8,7 @@
 const CarryoverModal = {
 
   _overlay: null,
+  _idleCancelAutoClose: null,
 
   open(list) {
     if (!Array.isArray(list) || list.length === 0) return;
@@ -37,6 +38,11 @@ const CarryoverModal = {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) this.close(); });
     overlay.querySelector('#carryover-close').addEventListener('click', () => this.close());
     overlay.querySelector('#carryover-done').addEventListener('click', () => this.close());
+
+    this._idleCancelAutoClose = UI.armIdleAutoClose(overlay, () => {
+      this.close();
+      UI.toast('操作が無いため画面を自動的に閉じました', 'info');
+    });
 
     this._renderList(list.slice());
   },
@@ -127,6 +133,7 @@ const CarryoverModal = {
   },
 
   close() {
+    if (this._idleCancelAutoClose) { this._idleCancelAutoClose(); this._idleCancelAutoClose = null; }
     if (this._overlay) {
       this._overlay.remove();
       this._overlay = null;

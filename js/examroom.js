@@ -288,6 +288,7 @@ const ExamRoom = {
 
       const cleanup = (result) => {
         document.removeEventListener('keydown', onKeydown);
+        idleCancel();
         overlay.remove();
         resolve(result);
       };
@@ -297,6 +298,7 @@ const ExamRoom = {
       overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
       cancelBtn.addEventListener('click', () => cleanup(null));
       document.addEventListener('keydown', onKeydown);
+      const idleCancel = UI.armIdleAutoClose(overlay, () => cleanup(null));
       const first = options.querySelector('button');
       if (first) first.focus();
     });
