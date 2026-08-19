@@ -218,7 +218,7 @@ key-valueペアで管理。重要なキー一覧:
 | `mapping` | object | CSV列の対応（`col_date` / `col_time` / `col_title` / `col_id` / `col_duration_min`） |
 | `retention_policy` | object | `{ action }` 取り込み済みデータの扱い |
 | `show_on_bed_map` | boolean | 病床マップへ表示するか |
-| `bed_map_icon` / `bed_map_abbreviation` / `bed_map_bold` | string / string / boolean | 病床マップのバッジ表示 |
+| `bed_map_icon` / `bed_map_abbreviation` | string / string | 病床マップのバッジ表示 |
 | `is_active` | boolean | 取り込みの有効/無効（無効時は取り込みも表示も止まる） |
 | `ward_ids` | string[] | 対象病棟。空配列 = 全病棟 |
 | `smb_auth_mode` | string | `inherit`（既定・フィールド自体が無い場合も同じ） / `current` / `custom` |
