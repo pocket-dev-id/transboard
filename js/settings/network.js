@@ -251,10 +251,10 @@ Object.assign(Settings, {
 
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:600; color:#2d3748; margin-top:12px;">
                 <input type="checkbox" id="cfg-auto-set-patient-id" ${isAutoSetPatientIdEnabled ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
-                出棟登録時に読み取った値を患者IDへ自動セットする機能を使用する
+                出棟登録時、患者IDを検査室照合に使う機能を使用する
               </label>
               <div style="font-size:11px; color:#718096; margin-top:4px; padding-left:24px;">
-                有効にすると、移送開始フォームに「患者IDをセット」チェックボックスが表示されます。チェックした状態で出棟登録すると、読み取ったIC/バーコードの値がそのまま病床の患者IDとして保存されます。
+                有効にすると、移送開始フォームに「患者IDをセット」チェックボックスが表示されます。チェックした状態で出棟登録すると、この病床に既に設定されている患者ID（新たな読み取りは不要）が検査室での照合に使われます。検査室では、患者IDが埋め込まれたバーコード（診察券・リストバンド等）をスキャンすることで該当患者を自動判定できます。
               </div>
 
               <div id="auto-set-patient-id-default-section" style="margin-top:10px; padding-left:24px; ${isAutoSetPatientIdEnabled ? '' : 'display:none;'}">

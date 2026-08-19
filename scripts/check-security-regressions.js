@@ -1620,18 +1620,32 @@ assert(
   'Network settings save handler must persist patient_id_scan_mode and enable_auto_set_patient_id to system_settings'
 );
 
-// 出棟登録の「患者IDをセット」チェックボックスがオンの場合、サーバー側(transfer/start)が
-// 常にbeds.patient_idから再取得するため、移送開始のAPI呼び出しより前に
-// beds.patient_idを更新しておかなければ効果が無い
+// 「患者IDをセット」は、この病床に既に設定されている患者IDをそのまま検査室照合用
+// (patient_ic_tag_id)として使う機能であり、読み取り欄でbeds.patient_id自体を
+// 上書きしてはならない(患者IDはCSV/ODBC同期や在室登録で既に正しい値のはず)
 assert(
   (() => {
     const idx = modal.indexOf('async _startTransfer() {');
-    const patchIdx = modal.indexOf("API.patch('beds'", idx);
-    const startIdx = modal.indexOf('API.startTransfer(', idx);
-    if (idx < 0 || patchIdx < 0 || startIdx < 0) return false;
-    return patchIdx < startIdx;
+    const end = modal.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = modal.slice(idx, end);
+    return !body.includes("API.patch('beds'");
   })(),
-  '_startTransfer must patch beds.patient_id (when auto-set is checked) before calling API.startTransfer, since the server always re-derives patient_id from the bed record'
+  '_startTransfer must not overwrite beds.patient_id; "患者IDをセット" must use the bed\'s existing patient_id as-is for exam-room matching, not a scanned value'
+);
+assert(
+  (() => {
+    const idx = modal.indexOf('async _startTransfer() {');
+    const end = modal.indexOf('const btn = document.getElementById', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = modal.slice(idx, end);
+    return body.includes('autoSetPatientIdChecked') && body.includes('bed.patient_id || null');
+  })(),
+  '_startTransfer must derive the exam-room matching id (patientIcTagId) from bed.patient_id when auto-set is checked, not from the scan input value'
+);
+assert(
+  modal.includes("icTagRow.style.display = autoSetCheckbox.checked ? 'none' : ''"),
+  'The "患者IDをセット" checkbox must hide the #f-ic-tag-row scan field when checked, since no scanning is needed at departure registration in that mode'
 );
 
 // 「患者IDをセット」チェックボックスの既定チェック状態(auto_set_patient_id_default_checked)は
@@ -1651,10 +1665,11 @@ assert(
   'The #f-auto-set-patient-id checkbox markup must reflect isAutoSetPatientIdDefaultChecked'
 );
 
-// 「患者IDをセット」がチェックされたまま読み取り値が空で送信されると、
-// patient_ic_tag_idがnullのまま移送が始まり、検査室でカード/バーコードを
-// 読ませても該当イベントが見つからない(誤って登録されていないように見える)
-// 事故になる。_startTransferはAPI呼び出しより前にこれを検知して止めなければならない
+// 「患者IDをセット」がチェックされているのに、この病床に患者IDが設定されて
+// いない場合に送信を許すと、patient_ic_tag_idがnullのまま移送が始まり、
+// 検査室でバーコードを読ませても該当イベントが見つからない(誤って登録
+// されていないように見える)事故になる。_startTransferはAPI呼び出しより
+// 前にこれを検知して止めなければならない
 assert(
   (() => {
     const idx = modal.indexOf('async _startTransfer() {');
@@ -1663,7 +1678,7 @@ assert(
     if (idx < 0 || guardIdx < 0 || startIdx < 0) return false;
     return guardIdx < startIdx;
   })(),
-  '_startTransfer must reject submission when autoSetPatientIdChecked is true but icTagId is empty, before calling API.startTransfer'
+  '_startTransfer must reject submission when autoSetPatientIdChecked is true but the bed has no patient_id, before calling API.startTransfer'
 );
 
 // 検査種別・検査室のカード選択でキーボードウェッジ型スキャナーのフォーカスが
