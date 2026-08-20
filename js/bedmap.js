@@ -194,11 +194,10 @@ const BedMap = {
       const colorValue = String(feed?.color || item?.color || '#7c3aed');
       const color = /^#[0-9a-f]{6}$/i.test(colorValue) ? colorValue : '#7c3aed';
       const abbreviation = String(feed?.bed_map_abbreviation || '').trim().slice(0, 10);
-      const bold = feed?.bed_map_bold === true;
       const feedName = String(feed?.name || item?.feed_name || '本日スケジュール');
       const title = abbreviation ? `${feedName}（${abbreviation}）` : feedName;
       const abbreviationHtml = abbreviation ? `<span>${UI.escapeHTML(abbreviation)}</span>` : '';
-      return `<div class="bed-schedule-badge" data-sched-id="${UI.escapeHTML(String(item?.id || ''))}" style="background:#fff;color:${color};padding:2px 5px;border-radius:4px;font-size:9px;font-weight:${bold ? '800' : '600'};display:inline-flex;align-items:center;gap:2px;border:1px solid ${color};margin-bottom:2px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="${UI.escapeHTML(title)}"><i class="fas fa-${icon}"></i>${abbreviationHtml}</div>`;
+      return `<div class="bed-schedule-badge" data-sched-id="${UI.escapeHTML(String(item?.id || ''))}" style="background:#fff;color:${color};padding:2px 5px;border-radius:4px;font-size:9px;font-weight:600;display:inline-flex;align-items:center;gap:2px;border:1px solid ${color};margin-bottom:2px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;" title="${UI.escapeHTML(title)}"><i class="fas fa-${icon}"></i>${abbreviationHtml}</div>`;
     }).join('');
   },
 

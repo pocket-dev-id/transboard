@@ -1821,7 +1821,7 @@ Object.assign(Settings, {
           const bedMapAbbreviation = UI.escapeHTML(String(f.bed_map_abbreviation || '').trim().slice(0, 10));
           const bedMapPreview = f.show_on_bed_map === false
             ? ''
-            : `<span style="color:${feedColor};font-weight:${f.bed_map_bold === true ? '800' : '600'};"><i class="fas fa-${bedMapIcon}"></i>${bedMapAbbreviation ? ` ${bedMapAbbreviation}` : ''}</span>`;
+            : `<span style="color:${feedColor};font-weight:600;"><i class="fas fa-${bedMapIcon}"></i>${bedMapAbbreviation ? ` ${bedMapAbbreviation}` : ''}</span>`;
           const wardNames = (f.ward_ids?.length > 0)
             ? f.ward_ids.map(id => UI.escapeHTML(String(AppState.wards?.find(w => w.id === id)?.name || id))).join(', ')
             : '全病棟';
@@ -2077,9 +2077,6 @@ Object.assign(Settings, {
                   <input type="text" id="sched-form-bed-map-abbreviation" class="form-input" maxlength="10" placeholder="例: 手術">
                 </div>
               </div>
-              <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;margin:0 0 8px 24px;">
-                <input type="checkbox" id="sched-form-bed-map-bold" style="width:15px;height:15px;"> 略称を太字で表示
-              </label>
               <div id="sched-form-bed-map-preview" style="margin:0 0 14px 24px;font-size:11px;color:#64748b;"></div>
 
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
@@ -2102,7 +2099,6 @@ Object.assign(Settings, {
     const colorInput = body.querySelector('#sched-form-color');
     const bedMapIconInput = body.querySelector('#sched-form-bed-map-icon');
     const bedMapAbbreviationInput = body.querySelector('#sched-form-bed-map-abbreviation');
-    const bedMapBoldInput = body.querySelector('#sched-form-bed-map-bold');
     const bedMapEnabledInput = body.querySelector('#sched-form-bed-map');
     const bedMapPreview = body.querySelector('#sched-form-bed-map-preview');
     const smbModeInput = body.querySelector('#sched-form-smb-auth-mode');
@@ -2134,12 +2130,11 @@ Object.assign(Settings, {
         bedMapPreview.textContent = '病床マップには表示されません';
         return;
       }
-      bedMapPreview.innerHTML = `表示例: <span style="display:inline-flex;align-items:center;gap:2px;padding:2px 5px;border:1px solid ${colorInput.value};border-radius:4px;color:${colorInput.value};font-weight:${bedMapBoldInput.checked ? '800' : '600'};"><i class="fas fa-${selectedIcon}"></i>${UI.escapeHTML(abbreviation)}</span>`;
+      bedMapPreview.innerHTML = `表示例: <span style="display:inline-flex;align-items:center;gap:2px;padding:2px 5px;border:1px solid ${colorInput.value};border-radius:4px;color:${colorInput.value};font-weight:600;"><i class="fas fa-${selectedIcon}"></i>${UI.escapeHTML(abbreviation)}</span>`;
     };
-    [bedMapIconInput, bedMapAbbreviationInput, bedMapBoldInput, bedMapEnabledInput, colorInput]
+    [bedMapIconInput, bedMapAbbreviationInput, bedMapEnabledInput, colorInput]
       .forEach(input => input.addEventListener('input', updateBedMapPreview));
     bedMapIconInput.addEventListener('change', updateBedMapPreview);
-    bedMapBoldInput.addEventListener('change', updateBedMapPreview);
     bedMapEnabledInput.addEventListener('change', updateBedMapPreview);
 
     // カラーチップ選択
@@ -2229,7 +2224,6 @@ Object.assign(Settings, {
         ? feed.bed_map_icon
         : 'calendar-check';
       body.querySelector('#sched-form-bed-map-abbreviation').value = String(feed?.bed_map_abbreviation || '').trim().slice(0, 10);
-      body.querySelector('#sched-form-bed-map-bold').checked = feed?.bed_map_bold === true;
       body.querySelector('#sched-form-active').checked = feed ? (feed.is_active !== false) : true;
 
       // パスワードは意図的にprefillしない。子機はそもそも値を読めず（親機側で
@@ -2343,7 +2337,6 @@ Object.assign(Settings, {
         show_on_bed_map: body.querySelector('#sched-form-bed-map').checked,
         bed_map_icon: bedMapIcon,
         bed_map_abbreviation: bedMapAbbreviationInput.value.trim().slice(0, 10),
-        bed_map_bold: bedMapBoldInput.checked,
         is_active: body.querySelector('#sched-form-active').checked,
         ward_ids: wardIds, // 空配列 = 全病棟
         // パスワードはここには入れない（system_settingsのフィード専用IDへ別途保存）
