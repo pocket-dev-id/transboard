@@ -1696,4 +1696,42 @@ assert(
   '_bindOptionCardSelectors must refocus #f-ic-tag-id after card selection when it is still empty'
 );
 
+// 検査室の「全検査室の患者一覧」: exam-room-statusはexam_room_id未指定時、
+// 検査室が割り当てられている全イベントを対象にしなければならない
+// (この分岐が無いと空のexam_room_idが常に一致無しになり、全患者一覧が
+// 常に空表示になる)
+assert(
+  (() => {
+    const idx = main.indexOf("id === 'exam-room-status'");
+    const end = main.indexOf('\n    }', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('examRoomId') && body.includes('!!event.exam_room_id');
+  })(),
+  'exam-room-status handler must fall back to all rooms with an assigned exam_room_id when examRoomId is empty'
+);
+
+// _renderQueueはshowingAllRoomsを算出し、検査室未選択かつ全患者一覧モードの
+// ときはグリッドではなく患者一覧側の分岐へ進まなければならない
+assert(
+  (() => {
+    const idx = examroom.indexOf('async _renderQueue() {');
+    const end = examroom.indexOf('_renderQueueCard(event', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = examroom.slice(idx, end);
+    return body.includes('showingAllRooms') &&
+      body.includes('!roomId && !showingAllRooms') &&
+      body.includes('{ showRoom: showingAllRooms }');
+  })(),
+  '_renderQueue must branch on showingAllRooms and pass { showRoom: showingAllRooms } to the queue renderers'
+);
+
+// カード/一覧の描画は検査室バッジ表示のためshowRoomオプションを受け取らな
+// ければならない
+assert(
+  examroom.includes('_renderQueueCard(event, { showRoom = false } = {})') &&
+  examroom.includes('_renderQueueList(events, { showRoom = false } = {})'),
+  '_renderQueueCard/_renderQueueList must accept a showRoom option to render exam-room badges in the all-rooms view'
+);
+
 console.log('Security regression checks passed.');

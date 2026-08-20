@@ -8,6 +8,7 @@ const ExamRoom = {
   _wardAcknowledgementState: new Map(),
   _notificationHistoryLogs: [],
   _roomGridStatusCache: [],
+  _viewAllRoomsPatients: false,
 
   async render() {
     // 検査室セレクト初期化
@@ -23,10 +24,25 @@ const ExamRoom = {
       });
       select.onchange = () => {
         AppState.currentExamRoomId = select.value;
+        this._viewAllRoomsPatients = false;
         this._renderQueue();
         this._updateScanInputState();
       };
       if (prevValue) select.value = prevValue;
+    }
+
+    // 全検査室の患者一覧ボタン
+    const allRoomsBtn = document.getElementById('btn-exam-all-rooms');
+    if (allRoomsBtn && !allRoomsBtn.dataset.listenerBound) {
+      allRoomsBtn.dataset.listenerBound = 'true';
+      allRoomsBtn.addEventListener('click', () => {
+        this._viewAllRoomsPatients = true;
+        AppState.currentExamRoomId = null;
+        const roomSelect = document.getElementById('exam-room-select');
+        if (roomSelect) roomSelect.value = '';
+        this._renderQueue();
+        this._updateScanInputState();
+      });
     }
 
     // 患者名表示トグルイベントのバインド
@@ -323,24 +339,26 @@ const ExamRoom = {
     if (!container) return;
 
     const roomId = document.getElementById('exam-room-select')?.value;
+    const showingAllRooms = !roomId && this._viewAllRoomsPatients;
 
     // 「← 全検査室」戻るボタンの表示制御
-    this._updateBackButton(!!roomId);
+    this._updateBackButton(!!roomId || showingAllRooms);
 
-    if (!roomId) {
+    if (!roomId && !showingAllRooms) {
       if (historyArea) historyArea.hidden = true;
       if (historyList) historyList.innerHTML = '';
       container.classList.remove('exam-queue-list-mode');
       if (summaryContainer) summaryContainer.innerHTML = '';
       const gridHtml = await this._renderRoomGrid();
-      // 取得待ちの間に個別検査室が選択されていたら、一覧描画で上書きしない
-      if (document.getElementById('exam-room-select')?.value) return;
+      // 取得待ちの間に個別検査室・全患者一覧が選択されていたら、一覧描画で上書きしない
+      if (document.getElementById('exam-room-select')?.value || this._viewAllRoomsPatients) return;
       container.innerHTML = gridHtml;
       // グリッドカードのクリックイベント
       container.querySelectorAll('[data-select-room]').forEach(card => {
         card.addEventListener('click', () => {
           const rid = card.dataset.selectRoom;
           AppState.currentExamRoomId = rid;
+          this._viewAllRoomsPatients = false;
           const select = document.getElementById('exam-room-select');
           if (select) select.value = rid;
           this._renderQueue();
@@ -500,8 +518,8 @@ const ExamRoom = {
       const viewMode = this._getViewMode();
       container.classList.toggle('exam-queue-list-mode', viewMode === 'list');
       container.innerHTML = viewMode === 'list'
-        ? this._renderQueueList(relevant)
-        : relevant.map(e => this._renderQueueCard(e)).join('');
+        ? this._renderQueueList(relevant, { showRoom: showingAllRooms })
+        : relevant.map(e => this._renderQueueCard(e, { showRoom: showingAllRooms })).join('');
 
       this._bindQueueEvents(container);
 
@@ -574,7 +592,7 @@ const ExamRoom = {
     }
   },
 
-  _renderQueueCard(event) {
+  _renderQueueCard(event, { showRoom = false } = {}) {
     const bed = AppState.getBedById(event.bed_id);
     const examType = AppState.getExamTypeById(event.exam_type_id);
     const staff = AppState.getStaffById(event.escort_staff_id);
@@ -620,13 +638,18 @@ const ExamRoom = {
     if (event.patient_ic_tag_id) {
       icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; vertical-align:middle; margin-left:6px;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
+    let roomBadgeHtml = '';
+    if (showRoom) {
+      const roomName = AppState.getExamRoomById(event.exam_room_id)?.name || '検査室不明';
+      roomBadgeHtml = `<span style="background:#ede9fe; color:#6d28d9; padding:1px 5px; border-radius:3px; font-size:9px; font-weight:700; vertical-align:middle; margin-left:6px;">${UI.escapeHTML(roomName)}</span>`;
+    }
     const wardAckHtml = this._renderWardAcknowledgement(event);
 
     return `
       <div class="exam-queue-card status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
         <div class="exam-card-header" style="display:flex; justify-content:space-between; align-items:center;">
           <div style="display:flex; flex-direction:column; gap:2px;">
-            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatExamBedLocationPlain(bed)) : '?'} ${icHtml}</span>
+            <span class="exam-card-bed">${bed ? UI.escapeHTML(UI.formatExamBedLocationPlain(bed)) : '?'} ${roomBadgeHtml}${icHtml}</span>
             ${patientNameText ? `
               <div class="exam-patient-name" style="font-weight:700; font-size:12px; color:#1e293b; display:block; position:relative; min-height:16px;">${patientNameText}</div>
               <div class="exam-patient-name" style="font-size:10px; color:#64748b; display:block; position:relative; min-height:12px; margin-top:2px;">${patientIdText}</div>
@@ -815,7 +838,7 @@ const ExamRoom = {
     });
   },
 
-  _renderQueueList(events) {
+  _renderQueueList(events, { showRoom = false } = {}) {
     const rows = events.map(event => {
       const bed = AppState.getBedById(event.bed_id);
       const examType = AppState.getExamTypeById(event.exam_type_id);
@@ -834,9 +857,12 @@ const ExamRoom = {
             <button class="btn btn-primary btn-sm btn-update-exam-pickup" data-event-id="${UI.escapeHTML(event.id)}" style="padding:2px 6px;">変更</button>
           </span>`
         : '--';
+      const roomLabel = showRoom
+        ? `${UI.escapeHTML(AppState.getExamRoomById(event.exam_room_id)?.name || '検査室不明')} / `
+        : '';
       return `
         <div class="exam-queue-row status-${UI.escapeHTML(event.current_status)}" data-event-id="${UI.escapeHTML(event.id)}">
-          <div class="eqr-cell eqr-bed">${bed ? UI.escapeHTML(UI.formatExamBedLocationPlain(bed)) : '?'}</div>
+          <div class="eqr-cell eqr-bed">${roomLabel}${bed ? UI.escapeHTML(UI.formatExamBedLocationPlain(bed)) : '?'}</div>
           <div class="eqr-cell" title="${UI.escapeHTML(patientName)}">${patientText}${event.patient_ic_tag_id ? ' <i class="fas fa-id-card" title="ICカード登録済"></i>' : ''}</div>
           <div class="eqr-cell eqr-status-cell">${UI.statusBadge(event.current_status)}${this._renderWardAcknowledgement(event, { compact: true })}</div>
           <div class="eqr-cell">${examType ? `${UI.examImage(examType, 'type', 'history-exam-image')}${UI.escapeHTML(examType.name)}` : '--'}</div>
@@ -1018,6 +1044,7 @@ const ExamRoom = {
         backBtn.innerHTML = '<i class="fas fa-th-large"></i> 全検査室一覧';
         backBtn.addEventListener('click', () => {
           AppState.currentExamRoomId = null;
+          this._viewAllRoomsPatients = false;
           const select = document.getElementById('exam-room-select');
           if (select) select.value = '';
           this._renderQueue();
