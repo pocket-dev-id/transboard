@@ -1696,4 +1696,24 @@ assert(
   '_bindOptionCardSelectors must refocus #f-ic-tag-id after card selection when it is still empty'
 );
 
+// save-import-settingsは、書き込み成功後に無条件でsetupImportTrigger/
+// setupScheduleFeedTriggersを呼ばなければならない。import_directoryの
+// 有無で条件分岐させると、それ以外のキー(import_schedule等)だけを送る
+// 将来の呼び出し元で監視が古いまま取り残される静かな不整合を生む
+assert(
+  (() => {
+    const idx = main.indexOf("case 'save-import-settings': {");
+    const end = main.indexOf("case 'manual-import':", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    const writeIdx = body.indexOf('writeDB(db)');
+    const setupIdx = body.indexOf('setupImportTrigger();', writeIdx);
+    if (writeIdx < 0 || setupIdx < 0) return false;
+    // setupImportTrigger呼び出し直前(数行以内)に条件分岐が復活していないことを確認
+    const between = body.slice(writeIdx, setupIdx);
+    return !between.includes('hasImportDirectory &&') && !between.includes('if (hasImportDirectory');
+  })(),
+  'save-import-settings must call setupImportTrigger/setupScheduleFeedTriggers unconditionally after a successful write, not only when import_directory was part of the payload'
+);
+
 console.log('Security regression checks passed.');
