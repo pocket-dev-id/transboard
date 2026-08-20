@@ -6286,10 +6286,13 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
       if (!writeDB(db)) {
         return { success: false, message: '連携設定を保存できませんでした。' };
       }
-      if (hasImportDirectory && watchValidation) {
-        setupImportTrigger();
-        setupScheduleFeedTriggers();
-      }
+      // 監視に影響しうる項目(import_directory以外にもimport_schedule・
+      // import_connection_type・ODBC/SMB関連等)が部分的に送られてきた場合でも
+      // 監視が古いままにならないよう、書き込み成功後は無条件で再読み込みする。
+      // setupImportTrigger/setupScheduleFeedTriggersは冒頭で既存の監視を必ず
+      // 停止してから張り直すため、変更が無かった場合でも安全な冪等操作である。
+      setupImportTrigger();
+      setupScheduleFeedTriggers();
       return { success: true };
     }
     case 'manual-import':
