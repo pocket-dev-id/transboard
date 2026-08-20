@@ -3998,7 +3998,12 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     if (table === 'transfer_events' && id === 'exam-room-status') {
       const examRoomId = String(searchParams.get('exam_room_id') || '');
       const todayMs = Number(searchParams.get('today_ms') || 0);
-      const scopedEvents = list.filter(event => String(event.exam_room_id || '') === examRoomId);
+      // exam_room_id未指定時は「全検査室の患者一覧」表示向けに、検査室が
+      // 割り当てられている全イベントを対象にする(以降のロジックはscopedEvents
+      // を汎用的に処理しているため変更不要)
+      const scopedEvents = examRoomId
+        ? list.filter(event => String(event.exam_room_id || '') === examRoomId)
+        : list.filter(event => !!event.exam_room_id);
       const activeEvents = scopedEvents.filter(event => ACTIVE_TRANSFER_STATUSES.has(event.current_status));
       const scopedEventById = new Map(scopedEvents.map(event => [String(event.id), event]));
       const eventById = new Map(activeEvents.map(event => [String(event.id), event]));
