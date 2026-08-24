@@ -143,6 +143,13 @@ const ExamRoom = {
     });
   },
 
+  // 数字のみのIDは、先頭0埋めの有無が異なっていても同一患者として照合できるよう
+  // 先頭の0を除去して比較する（英数字混在のIDは意図しない値の欠落を避けるためそのまま扱う）
+  _normalizeIdForMatch(value) {
+    const trimmed = String(value || '').trim();
+    return /^\d+$/.test(trimmed) ? trimmed.replace(/^0+(?=\d)/, '') : trimmed;
+  },
+
   async _handleScan(icValue) {
     if (!icValue) return;
 
@@ -193,8 +200,8 @@ const ExamRoom = {
         ev.current_status !== 'PICKUP_REQUIRED'
       );
 
-      const scannedId = String(icValue || '').trim();
-      const matchEvent = relevant.find(ev => String(ev.patient_ic_tag_id || '').trim() === scannedId);
+      const scannedId = this._normalizeIdForMatch(icValue);
+      const matchEvent = relevant.find(ev => this._normalizeIdForMatch(ev.patient_ic_tag_id) === scannedId);
       if (!matchEvent) {
         UI.toast('該当する患者の移送イベントが見つかりません', 'warning');
         UI.playScanSound(false);
