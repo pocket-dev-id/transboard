@@ -1592,6 +1592,24 @@ assert(
   'ExamRoom._handleScan must check #bed-modal-overlay visibility before routing to #m-ic-tag-id/#f-ic-tag-id (their DOM nodes persist after modal close)'
 );
 
+// ICスキャン/バーコード照合は数字のみのIDについて先頭0埋めの有無を無視して
+// 一致判定しなければならない。「患者IDをセット」で使われるbeds.patient_idと
+// 検査室で読み取るバーコードの桁数(0埋め)ルールが一致しない運用があり、
+// 単純な文字列完全一致のままだと該当患者が見つからず自動更新できない。
+assert(
+  examroom.includes('_normalizeIdForMatch(value)') &&
+  (() => {
+    const idx = examroom.indexOf('async _handleScan(icValue) {');
+    if (idx < 0) return false;
+    const matchIdx = examroom.indexOf('relevant.find(', idx);
+    if (matchIdx < 0) return false;
+    const lineEnd = examroom.indexOf('\n', matchIdx);
+    const line = examroom.slice(matchIdx, lineEnd);
+    return line.includes('this._normalizeIdForMatch(');
+  })(),
+  'ExamRoom._handleScan must compare scanned IDs via _normalizeIdForMatch (strip leading zeros for numeric IDs) instead of raw string equality, or IC-tag matches fail when zero-padding differs'
+);
+
 // バーコードモード: NFCカードリーダーの常時監視プロセス(PowerShell)は
 // patient_id_scan_modeが'barcode'のときは起動してはならない
 // (バーコードスキャナーはキーボード入力型のためカード監視自体が不要)。
