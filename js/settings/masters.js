@@ -1930,4 +1930,142 @@ Object.assign(Settings, {
     };
   },
 
+  _renderPickupAssistanceTypes(body) {
+    body.innerHTML = `
+      <div class="settings-panel">
+        <div class="settings-panel-header">
+          <h3><i class="fas fa-wheelchair"></i> お迎え介助マスタ</h3>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--clr-text-muted); cursor:pointer; user-select:none;">
+              <input type="checkbox" id="chk-show-inactive-pickup-assistance-types" style="cursor:pointer;">
+              無効を表示
+            </label>
+            <button class="btn btn-primary btn-sm" id="btn-add-pickup-assistance-type">
+              <i class="fas fa-plus"></i> 選択肢を追加
+            </button>
+          </div>
+        </div>
+        <p class="text-muted" style="font-size:12px; margin:0 0 10px;">
+          終了登録（迎え要）の際に検査室側が選べる「お迎えに必要なもの」の選択肢です。
+          この一覧に加えて「その他（自由記入）」は常に選択可能です。
+        </p>
+        <table class="settings-table">
+          <thead>
+            <tr><th>名称</th><th>有効</th><th>操作</th></tr>
+          </thead>
+          <tbody id="pickup-assistance-types-tbody"></tbody>
+        </table>
+      </div>
+    `;
+
+    const _renderPickupAssistanceTypesTable = (showInactive) => {
+      const all = AppState.allPickupAssistanceTypes || AppState.pickupAssistanceTypes;
+      const rows = showInactive ? all : all.filter(t => t.is_active !== false);
+      const inactiveCount = all.filter(t => t.is_active === false).length;
+      const tbody = document.getElementById('pickup-assistance-types-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = rows.map(t => `
+        <tr class="${t.is_active === false ? 'row--inactive' : ''}">
+          <td class="font-bold">${UI.escapeHTML(t.name)}</td>
+          <td>${t.is_active !== false ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
+          <td>
+            <button class="btn btn-outline btn-sm btn-edit-pickup-assistance-type" data-type-id="${UI.escapeHTML(t.id)}">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn btn-outline btn-sm btn-toggle-pickup-assistance-type" data-type-id="${UI.escapeHTML(t.id)}" style="margin-left:4px;">
+              ${t.is_active === false ? '有効化' : '無効化'}
+            </button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="3" class="text-muted" style="text-align:center;">選択肢が登録されていません</td></tr>';
+
+      const chk = document.getElementById('chk-show-inactive-pickup-assistance-types');
+      if (chk) chk.title = inactiveCount > 0 ? `無効の選択肢が ${inactiveCount} 件あります` : '無効の選択肢はありません';
+
+      tbody.querySelectorAll('.btn-edit-pickup-assistance-type').forEach(btn => {
+        btn.onclick = () => {
+          const type = (AppState.allPickupAssistanceTypes || AppState.pickupAssistanceTypes).find(t => t.id === btn.dataset.typeId);
+          this._openPickupAssistanceTypeForm(type);
+        };
+      });
+      tbody.querySelectorAll('.btn-toggle-pickup-assistance-type').forEach(btn => {
+        btn.onclick = () => this._togglePickupAssistanceType(btn.dataset.typeId);
+      });
+    };
+
+    _renderPickupAssistanceTypesTable(false);
+
+    document.getElementById('chk-show-inactive-pickup-assistance-types').onchange = (e) => _renderPickupAssistanceTypesTable(e.target.checked);
+    document.getElementById('btn-add-pickup-assistance-type').onclick = () => this._openPickupAssistanceTypeForm(null);
+  },
+
+  async _togglePickupAssistanceType(typeId) {
+    const type = (AppState.allPickupAssistanceTypes || AppState.pickupAssistanceTypes || []).find(t => t.id === typeId);
+    if (!type) return;
+    try {
+      await API.patch('pickup_assistance_types', type.id, { is_active: type.is_active === false });
+      await App.loadMasters();
+      this._renderPickupAssistanceTypes(document.getElementById('settings-tab-body'));
+    } catch (e) {
+      UI.toast('状態の変更に失敗しました: ' + e.message, 'danger');
+    }
+  },
+
+  _openPickupAssistanceTypeForm(type) {
+    const isNew = !type;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:400px;">
+        <div class="modal-header">
+          <h2>${isNew ? '選択肢を追加' : '選択肢を編集'}</h2>
+          <button class="modal-close-btn" id="pat-close"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label>名称 <span style="color:#dc2626">*</span></label>
+            <input type="text" id="pat-name" value="${UI.escapeHTML(type?.name || '')}" placeholder="例: ストレッチャー">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" id="pat-save">
+            <i class="fas fa-save"></i> ${isNew ? '追加' : '保存'}
+          </button>
+          <button class="btn btn-outline" id="pat-cancel">キャンセル</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    document.getElementById('pat-close').onclick = close;
+    document.getElementById('pat-cancel').onclick = close;
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    this._addEscapeClose(overlay, close);
+
+    setTimeout(() => {
+      document.getElementById('pat-name')?.focus();
+    }, 50);
+
+    document.getElementById('pat-save').onclick = async () => {
+      const name = document.getElementById('pat-name').value.trim();
+      if (!name) { UI.toast('名称を入力してください', 'warning'); return; }
+
+      try {
+        if (isNew) {
+          const newId = `pat-${Date.now()}`;
+          await API.create('pickup_assistance_types', { id: newId, name, is_active: true });
+          UI.toast(`${name}を追加しました`, 'success');
+        } else {
+          await API.patch('pickup_assistance_types', type.id, { name });
+          UI.toast(`${name}を更新しました`, 'success');
+        }
+        close();
+        await App.loadMasters();
+        this._renderPickupAssistanceTypes(document.getElementById('settings-tab-body'));
+      } catch (e) {
+        UI.toast('保存に失敗しました: ' + e.message, 'danger');
+      }
+    };
+  },
+
 });

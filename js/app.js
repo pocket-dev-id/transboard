@@ -1838,11 +1838,12 @@ const App = {
 
   async loadMasters({ silent = false, loadHandover = true } = {}) {
     try {
-      const [wards, beds, examRooms, examTypes, allStaffs, systemSettings] = await Promise.all([
+      const [wards, beds, examRooms, examTypes, pickupAssistanceTypes, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
         API.getAllBeds(),
         API.getExamRooms(),
         API.getExamTypes(),
+        API.getPickupAssistanceTypes(),
         // 単発の一時的な失敗でマスタ読み込み全体(wards/beds等)まで失敗させない
         // よう、staffsだけは前回ロード分へのフォールバックを許容する
         API.getAllStaffs().catch(() => null),
@@ -1857,6 +1858,8 @@ const App = {
       AppState.examRooms = examRooms.filter(r => r.is_active !== false);
       AppState.allExamTypes = examTypes;
       AppState.examTypes = examTypes.filter(t => t.is_active !== false);
+      AppState.allPickupAssistanceTypes = pickupAssistanceTypes;
+      AppState.pickupAssistanceTypes = pickupAssistanceTypes.filter(t => t.is_active !== false);
       if (Array.isArray(allStaffs)) {
         AppState.allStaffs = allStaffs;
         AppState.staffs = allStaffs.filter(s => s.is_active);
@@ -2267,7 +2270,8 @@ const App = {
         const bed = AppState.getBedById(e.bed_id);
         const cfg = soundSettings['PICKUP_REQUIRED'];
         if (cfg?.toast !== false) {
-          this._showStatusNotificationToast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！`, 'danger', 6000, e);
+          const assistLabel = UI.pickupAssistanceLabel(e);
+          this._showStatusNotificationToast(`🔔 ${bed ? bed.bed_number + '号床' : ''} 迎えが必要です！${assistLabel ? `（${assistLabel}）` : ''}`, 'danger', 6000, e);
         }
         this._prevNotified.add(`pickup-${e.id}`);
       }

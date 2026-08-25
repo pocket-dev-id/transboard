@@ -380,6 +380,7 @@ const API = {
   async getAllBeds()     { return requireDataArray(await this.getAll('beds'), '病床マスター'); },
   async getExamRooms()  { return requireDataArray(await this.getAll('exam_rooms'), '検査室マスター'); },
   async getExamTypes()  { return requireDataArray(await this.getAll('exam_types'), '検査種別'); },
+  async getPickupAssistanceTypes() { return requireDataArray(await this.getAll('pickup_assistance_types'), 'お迎え介助マスター'); },
   async getAllStaffs() { return requireDataArray(await this.getAll('staffs'), 'スタッフマスター'); },
 
   /* ---------- 出棟イベント ---------- */

@@ -11,6 +11,7 @@ const SETTINGS_TAB_DEFS = {
   map: ['fa-map', 'マップ配置', 'global', '全体'],
   rooms: ['fa-x-ray', '検査室マスタ', 'global', '全体'],
   exam_types: ['fa-notes-medical', '検査種別', 'global', '全体'],
+  pickup_assistance_types: ['fa-wheelchair', 'お迎え介助マスター', 'global', '全体'],
   staffs: ['fa-user-nurse', 'スタッフ', 'global', '全体'],
   speech_templates: ['fa-bullhorn', 'アナウンス定型文', 'global', '全体'],
   status_customize: ['fa-sliders-h', 'ステータスカスタマイズ', 'global', '全体'],
@@ -26,12 +27,12 @@ const SETTINGS_TAB_DEFS = {
 const SETTINGS_TAB_GROUPS = {
   child: [
     ['端末・接続', ['network', 'terminal_behavior', 'notifications', 'access_protection']],
-    ['全体共通', ['wards', 'beds', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+    ['全体共通', ['wards', 'beds', 'map', 'rooms', 'exam_types', 'pickup_assistance_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
     ['保守', ['maintenance']],
   ],
   parent: [
-    ['全体共通', ['wards', 'beds', 'map', 'rooms', 'exam_types', 'staffs', 'speech_templates', 'status_customize']],
+    ['全体共通', ['wards', 'beds', 'map', 'rooms', 'exam_types', 'pickup_assistance_types', 'staffs', 'speech_templates', 'status_customize']],
     ['親機機能', ['import', 'schedule_feeds']],
     ['端末・接続', ['network', 'terminal_behavior', 'notifications', 'access_protection']],
     ['保守', ['maintenance']],
@@ -41,6 +42,7 @@ const SETTINGS_TAB_GROUPS = {
 const SETTINGS_TAB_CATEGORIES = {
   wards: 'global', beds: 'global',
   map: 'global', rooms: 'global', exam_types: 'global',
+  pickup_assistance_types: 'global',
   staffs: 'global', speech_templates: 'global',
   status_customize: 'global',
   import: 'parent-only', schedule_feeds: 'parent-only',
@@ -247,6 +249,7 @@ const Settings = {
       map: '_renderMapEditor',
       rooms: '_renderRooms',
       exam_types: '_renderExamTypes',
+      pickup_assistance_types: '_renderPickupAssistanceTypes',
       staffs: '_renderStaffs',
       wards: '_renderWards',
       import: '_renderImportSettings',

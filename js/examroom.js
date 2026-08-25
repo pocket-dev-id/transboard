@@ -227,7 +227,17 @@ const ExamRoom = {
       }
 
       const nextLabel = this._getExamActionLabel(matchEvent, action);
-      if (actions.length === 1) {
+      let extraFields = {};
+      if (action.toStatus === 'PICKUP_REQUIRED') {
+        // 迎え要への遷移は、お迎えに必要なものを選ばせる画面を確認代わりに挟む
+        // （他の遷移先のような数秒自動確定は行わない）
+        const chosen = await this._selectPickupAssistance(bedName);
+        if (!chosen) {
+          UI.playScanSound(false);
+          return;
+        }
+        extraFields = chosen;
+      } else if (actions.length === 1) {
         // 遷移先が1つに決まる典型ケース（到着・検査開始等）は、誰も画面の前にいなくても
         // 数秒で自動的に確定させる。誤ったカードの場合はこの間にキャンセルできる
         const ok = await UI.confirmModal(
@@ -240,7 +250,7 @@ const ExamRoom = {
         }
       }
 
-      await API.updateEventStatus(matchEvent.id, action.toStatus, {}, CONFIG.STATUS_SCOPE.EXAM, matchEvent.current_status, 'ic_scan');
+      await API.updateEventStatus(matchEvent.id, action.toStatus, extraFields, CONFIG.STATUS_SCOPE.EXAM, matchEvent.current_status, 'ic_scan');
       const label = nextLabel;
       UI.toast(`[ICスキャン] ${bedName} → ${label}`, 'success');
       UI.playScanSound(true);
@@ -330,6 +340,114 @@ const ExamRoom = {
         if (e.key === 'Escape') cleanup(null);
       };
       overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+      cancelBtn.addEventListener('click', () => cleanup(null));
+      document.addEventListener('keydown', onKeydown);
+      const idleCancel = UI.armIdleAutoClose(overlay, () => cleanup(null));
+      const first = options.querySelector('button');
+      if (first) first.focus();
+    });
+  },
+
+  // 終了登録（迎え要）の際に「お迎えに必要なもの」を選ばせる。任意項目のため
+  // 「選択せずに登録」で即座に進めるが、閉じる/背景クリック/Escは遷移自体の
+  // キャンセルとして扱う（_selectScanActionと同じnull=キャンセルの約束）
+  _selectPickupAssistance(bedLabel) {
+    return new Promise(resolve => {
+      const types = AppState.pickupAssistanceTypes || [];
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay confirm-modal-overlay';
+
+      const modal = document.createElement('div');
+      modal.className = 'modal exam-scan-action-modal';
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-modal', 'true');
+
+      const body = document.createElement('div');
+      body.className = 'modal-body';
+
+      const title = document.createElement('div');
+      title.className = 'confirm-modal-title';
+      title.textContent = 'お迎えに必要なものを選択';
+
+      const text = document.createElement('div');
+      text.className = 'confirm-modal-text';
+      text.textContent = bedLabel;
+
+      const options = document.createElement('div');
+      options.className = 'exam-scan-action-options';
+
+      const otherRow = document.createElement('div');
+      otherRow.style.cssText = 'display:none; gap:8px; align-items:center; margin-top:10px;';
+      const otherInput = document.createElement('input');
+      otherInput.type = 'text';
+      otherInput.placeholder = '内容を入力（任意）';
+      otherInput.style.cssText = 'flex:1; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px;';
+      const otherConfirmBtn = document.createElement('button');
+      otherConfirmBtn.type = 'button';
+      otherConfirmBtn.className = 'btn btn-primary btn-sm';
+      otherConfirmBtn.textContent = '登録する';
+      otherRow.appendChild(otherInput);
+      otherRow.appendChild(otherConfirmBtn);
+
+      types.forEach(type => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline exam-scan-action-option';
+        btn.textContent = type.name;
+        btn.addEventListener('click', () => cleanup({ pickup_assistance_type_id: type.id }));
+        options.appendChild(btn);
+      });
+      const otherBtn = document.createElement('button');
+      otherBtn.type = 'button';
+      otherBtn.className = 'btn btn-outline exam-scan-action-option';
+      otherBtn.textContent = 'その他（自由記入）';
+      otherBtn.addEventListener('click', () => {
+        otherRow.style.display = 'flex';
+        otherInput.focus();
+      });
+      options.appendChild(otherBtn);
+
+      const confirmOther = () => cleanup({
+        pickup_assistance_type_id: 'other',
+        pickup_assistance_note: otherInput.value.trim() || null,
+      });
+      otherConfirmBtn.addEventListener('click', confirmOther);
+      otherInput.addEventListener('keydown', e => { if (e.key === 'Enter') confirmOther(); });
+
+      body.appendChild(title);
+      body.appendChild(text);
+      body.appendChild(options);
+      body.appendChild(otherRow);
+
+      const footer = document.createElement('div');
+      footer.className = 'modal-footer confirm-modal-footer';
+      const skipBtn = document.createElement('button');
+      skipBtn.type = 'button';
+      skipBtn.className = 'btn btn-outline btn-sm';
+      skipBtn.textContent = '選択せずに登録';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'btn btn-outline btn-sm';
+      cancelBtn.textContent = 'キャンセル';
+      footer.appendChild(skipBtn);
+      footer.appendChild(cancelBtn);
+
+      modal.appendChild(body);
+      modal.appendChild(footer);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      const cleanup = (result) => {
+        document.removeEventListener('keydown', onKeydown);
+        idleCancel();
+        overlay.remove();
+        resolve(result);
+      };
+      const onKeydown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+      skipBtn.addEventListener('click', () => cleanup({}));
       cancelBtn.addEventListener('click', () => cleanup(null));
       document.addEventListener('keydown', onKeydown);
       const idleCancel = UI.armIdleAutoClose(overlay, () => cleanup(null));
@@ -926,8 +1044,20 @@ const ExamRoom = {
       return;
     }
 
+    let extraFields = {};
+    if (newStatus === 'PICKUP_REQUIRED') {
+      const bed = event ? AppState.getBedById(event.bed_id) : null;
+      const bedLabel = bed ? UI.formatExamBedLocationPlain(bed) : '患者';
+      const chosen = await this._selectPickupAssistance(bedLabel);
+      if (!chosen) {
+        if (card) card.querySelectorAll('button').forEach(b => (b.disabled = false));
+        return;
+      }
+      extraFields = chosen;
+    }
+
     try {
-      await API.updateEventStatus(eventId, newStatus, {}, CONFIG.STATUS_SCOPE.EXAM, currentStatus);
+      await API.updateEventStatus(eventId, newStatus, extraFields, CONFIG.STATUS_SCOPE.EXAM, currentStatus);
       const label = CONFIG.STATUS_LABEL[newStatus];
       UI.toast(`${label} に更新しました`, 'success');
       UI.playScanSound(true);
