@@ -625,7 +625,7 @@ const BedModal = {
             </div>
           </div>
           <div class="modal-info-item">
-            <div class="label">迎え目安</div>
+            <div class="label">検査終了目安</div>
             <div class="value" style="display:flex; align-items:center; gap:4px;">
               <input type="time" id="m-pickup-time" value="${event.estimated_pickup_at ? UI.formatTime(event.estimated_pickup_at) : ''}" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 13px; font-weight: bold; width: 85px;">
               <button class="btn btn-primary" id="btn-update-pickup-time" style="padding: 3px 6px; font-size: 11px; width: auto; height: auto; min-width: 0; line-height: 1;">変更</button>
@@ -810,7 +810,7 @@ const BedModal = {
       };
     }
 
-    // 迎え目安時間の変更
+    // 検査終了目安時間の変更
     const updateTimeBtn = document.getElementById('btn-update-pickup-time');
     if (updateTimeBtn && event) {
       updateTimeBtn.onclick = async () => {
@@ -833,7 +833,7 @@ const BedModal = {
             { estimated_pickup_at: newEstimated },
             this._getModalEventExpectedStatus(event)
           );
-          UI.toast('迎え目安を変更しました', 'success');
+          UI.toast('検査終了目安を変更しました', 'success');
           
           await App.refreshData({ force: true });
           

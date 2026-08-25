@@ -2282,14 +2282,14 @@ const App = {
         this._prevNotified.add(`nearly-${e.id}`);
       }
 
-      // 迎え目安5分前通知（時刻経過による特別トリガー）
+      // 検査終了目安5分前通知（時刻経過による特別トリガー）
       if (e.estimated_pickup_at && !this._prevNotified.has(`soon-${e.id}`)) {
         const remaining = e.estimated_pickup_at - now;
         if (remaining > 0 && remaining <= 5 * 60 * 1000) {
           const bed = AppState.getBedById(e.bed_id);
           const cfg = soundSettings['SOON'];
           if (cfg?.toast !== false) {
-            UI.toast(`⚠️ ${bed ? bed.bed_number + '号床' : ''} 迎え目安まであと5分`, 'warning', 5000);
+            UI.toast(`⚠️ ${bed ? bed.bed_number + '号床' : ''} 検査終了目安まであと5分`, 'warning', 5000);
           }
           this._prevNotified.add(`soon-${e.id}`);
           if (cfg?.enabled) UI.playNotificationSound(cfg.sound);

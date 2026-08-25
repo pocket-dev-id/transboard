@@ -100,7 +100,7 @@ const TimelineContextMenu = {
       ${statusItems}
       <div class="tl-ctx-divider"></div>
       <div class="tl-ctx-item tl-ctx-item--detail" data-action="detail">
-        <i class="fas fa-info-circle"></i> 詳細・迎え目安変更
+        <i class="fas fa-info-circle"></i> 詳細・検査終了目安変更
       </div>
     `;
 
@@ -261,10 +261,10 @@ const Timeline = {
         ${event.patient_id ? `<div style="color:#718096;">ID: ${UI.escapeHTML(event.patient_id)}</div>` : ''}
         ${examRoom ? `<div>${UI.examImage(examRoom, 'room', 'timeline-exam-image')}${UI.escapeHTML(examRoom.name)}${examType ? ` / ${UI.examImage(examType, 'type', 'timeline-exam-image')}${UI.escapeHTML(examType.name)}` : ''}</div>` : ''}
         <div>🚶 出棟: ${UI.formatTimeSmart(event.departed_at)}</div>
-        ${event.estimated_pickup_at ? `<div>🔔 迎え目安: ${UI.formatTimeSmart(event.estimated_pickup_at)}</div>` : ''}
+        ${event.estimated_pickup_at ? `<div>🔔 検査終了目安: ${UI.formatTimeSmart(event.estimated_pickup_at)}</div>` : ''}
       </div>
       <div style="margin-top:10px;border-top:1px solid #e2e8f0;padding-top:10px;">
-        <div style="font-size:11px;color:#718096;margin-bottom:4px;">迎え目安を変更:</div>
+        <div style="font-size:11px;color:#718096;margin-bottom:4px;">検査終了目安を変更:</div>
         <div style="display:flex;gap:6px;align-items:center;">
           <input type="time" id="tl-popup-time" value="${UI.escapeHTML(pickupVal)}"
             style="border:1px solid #cbd5e0;border-radius:6px;padding:4px 8px;font-size:13px;flex:1;">
@@ -288,7 +288,7 @@ const Timeline = {
         await App.refreshData({ force: true });
         Timeline.render();
         TimelinePopup.hide();
-        UI.toast('迎え目安時間を変更しました', 'success');
+        UI.toast('検査終了目安時間を変更しました', 'success');
       } catch (err) {
         if (await App.handleDataConflict(err)) return;
         UI.toast('時間の変更に失敗しました', 'danger');
@@ -537,7 +537,7 @@ const Timeline = {
         const segs = this._buildSegments(e, winStart, winEnd, toPercent);
         const editable = !['RETURNED','CANCELLED'].includes(e.current_status);
         const linkedItems = bedScheduleMap[e.bed_id] || [];
-        // 進行中の移送のみ、迎え目安の遅延度合いに応じてマーカーを強調する
+        // 進行中の移送のみ、検査終了目安の遅延度合いに応じてマーカーを強調する
         // (病床マップ/優先度パネル/病床詳細モーダルと同じUI.remainingClassの判定基準)
         const pickupClass = editable && e.estimated_pickup_at ? UI.remainingClass(e.estimated_pickup_at - now) : '';
         html += `<div class="tl-row${linkedItems.length ? ' tl-row--has-sched' : ''}">
@@ -548,7 +548,7 @@ const Timeline = {
             ${segs.map(s => `<div class="tl-seg ${s.cls}" style="left:${s.left}%;width:${s.width}%;background:${s.color};" title="${s.label}">
               ${s.width > 5 ? s.label : ''}</div>`).join('')}
             ${e.estimated_pickup_at && e.estimated_pickup_at >= winStart && e.estimated_pickup_at <= winEnd
-              ? `<div class="timeline-pickup-marker${pickupClass ? ' ' + pickupClass : ''}" style="left:${toPercent(e.estimated_pickup_at)}%;" title="迎え目安 ${UI.formatTime(e.estimated_pickup_at)}"></div>` : ''}
+              ? `<div class="timeline-pickup-marker${pickupClass ? ' ' + pickupClass : ''}" style="left:${toPercent(e.estimated_pickup_at)}%;" title="検査終了目安 ${UI.formatTime(e.estimated_pickup_at)}"></div>` : ''}
           </div>
         </div>`;
         // 連携スケジュールを同行のサブトラックに表示

@@ -3450,6 +3450,8 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     escort_staff_id: escortStaff?.id || null,
     current_status: 'MOVING',
     expected_duration_min: durationMin,
+    // 出棟時点では移動時間を見込めないため、あくまで仮の目安値。
+    // 検査開始(IN_EXAM)時に実際の開始時刻を起点として再計算する
     estimated_pickup_at: now + durationMin * 60 * 1000,
     note,
     patient_name: bed.patient_name || null,
@@ -3595,6 +3597,15 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   );
   if (filledArrivedAtForDirectExamStart) {
     patch.arrived_at = now;
+  }
+
+  // 検査終了の目安(estimated_pickup_at)は出棟時に移動時間を見込めないまま
+  // 仮置きしているため、実際に検査が始まったタイミングで
+  // 検査開始時刻+標準所要時間へ再計算し、精度を上げる
+  if (newStatus === 'IN_EXAM') {
+    const durationCandidate = Number(current.expected_duration_min);
+    const durationMin = Number.isFinite(durationCandidate) && durationCandidate > 0 ? durationCandidate : 30;
+    patch.estimated_pickup_at = now + durationMin * 60 * 1000;
   }
 
   if (newStatus === 'NEARLY_DONE') {
