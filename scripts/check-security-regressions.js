@@ -1960,3 +1960,45 @@ assert(
   !/label: 'あと10分'/.test(statusCustomize),
   'status-customize must derive the NEARLY_DONE default label from nearly_done_minutes instead of hardcoding あと10分, or the settings screen disagrees with the rest of the app'
 );
+
+// 検査室が1つも選択されていない間(「全検査室の患者一覧」表示中を含む)は
+// getMyId()がnullを返し、ポーリング自体が止まって着信・自動アナウンスを
+// 一切受信できなくなる不具合があった。特定の検査室に絞れない以上、
+// 既知の全検査室を受信対象にしなければならない。
+assert(
+  (() => {
+    const idx = call.indexOf('_getExamRoomListenIds() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('AppState.examRooms') && body.includes('.map(') && body.includes('.id');
+  })(),
+  '_getExamRoomListenIds must fall back to all known exam rooms when none is selected, or the terminal goes completely deaf while browsing the all-rooms view'
+);
+
+// 病棟ダッシュボードで別の病棟を一時的に閲覧しても、この端末が最初に
+// 表示していた病棟(_homeWardId)宛の着信・自動アナウンスを取りこぼしては
+// ならない。currentWardIdだけをポーリングすると、他病棟を見ている間
+// 自分の病棟宛のメッセージを完全に受信できなくなる。
+assert(
+  (() => {
+    const idx = call.indexOf('_getWardListenIds() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('_homeWardId') && body.includes('ids.push(this._homeWardId)');
+  })(),
+  '_getWardListenIds must include _homeWardId in addition to the currently viewed ward, or switching wards silently stops receiving the terminal\'s own ward messages'
+);
+
+// 発信中・通話中は、複数ID同時ポーリングに切り替わっても_callSourceIdの
+// 単一IDのみを使い続けなければならない(既存の保護をこの変更で壊さないこと)。
+assert(
+  (() => {
+    const idx = call.indexOf("const myIds = (this.isCalling || this.isConnected)");
+    if (idx < 0) return false;
+    const body = call.slice(idx, idx + 300);
+    return body.includes('this._callSourceId || this.getMyId()') && body.includes('.filter(Boolean)');
+  })(),
+  'startListening must keep polling only _callSourceId while a call is active/in progress, even after switching to multi-id polling for the idle case'
+);
