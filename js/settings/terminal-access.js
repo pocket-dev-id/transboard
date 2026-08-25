@@ -160,12 +160,26 @@ Object.assign(Settings, {
           this._writeLocalSetting('default_zoom', defaultZoomVal);
           this._writeLocalSetting('font_style', fontStyleVal);
           this._writeLocalSetting('bed_card_size', bedCardSizeVal);
-          if (typeof App !== 'undefined' && App.setTerminalRole) {
+        }
+        // 端末役割はlocalStorageベースのこの端末固有の設定で、上の表示設定3件
+        // （親機DBへの共通デフォルト）とは無関係。failedで囲うと、表示設定の
+        // 一時的な失敗だけで役割の切り替えが黙って捨てられ、しかもトーストは
+        // 表示設定のことしか伝えないため気付けない
+        let roleFailed = false;
+        if (typeof App !== 'undefined' && App.setTerminalRole) {
+          try {
             await App.setTerminalRole(terminalRoleVal);
+          } catch (roleErr) {
+            roleFailed = true;
+            console.error('[Settings] 端末役割の保存に失敗:', roleErr);
           }
         }
         applyVisuals();
-        UI.toast(failed ? 'この端末の表示は保存しました。共通デフォルトは親機へ反映できませんでした。' : '端末表示を保存しました', failed ? 'warning' : 'success');
+        if (roleFailed) {
+          UI.toast('端末役割を保存できませんでした。もう一度お試しください。', 'danger');
+        } else {
+          UI.toast(failed ? 'この端末の表示は保存しました。共通デフォルトは親機へ反映できませんでした。' : '端末表示を保存しました', failed ? 'warning' : 'success');
+        }
       } catch (err) {
         console.error(err);
         applyVisuals();

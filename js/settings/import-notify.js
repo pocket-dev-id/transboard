@@ -1751,10 +1751,12 @@ Object.assign(Settings, {
 
       try {
         if (isChildMode) {
+          // インポートトーストは全体設定（子機でも親機DBに保存）。
+          // 保存が成功してからAppStateへ反映する（先に更新すると、失敗時に
+          // 「保存に失敗しました」と出しながら画面だけ新しい値のまま残る）
+          await API.patch('system_settings', 'notification_import_toast', { value: String(importOn) });
           const r = AppState.systemSettings?.find(s => s.id === 'notification_import_toast');
           if (r) r.value = String(importOn); else AppState.systemSettings?.push({ id: 'notification_import_toast', value: String(importOn) });
-          // インポートトーストは全体設定（子機でも親機DBに保存）
-          await API.patch('system_settings', 'notification_import_toast', { value: String(importOn) });
         } else {
           await API.patch('system_settings', 'notification_import_toast', { value: String(importOn) });
           await App.loadMasters();

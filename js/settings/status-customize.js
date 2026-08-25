@@ -30,28 +30,35 @@ Object.assign(Settings, {
     };
 
     const STATUS_ORDER = ['IN_BED','MOVING','ARRIVED','IN_EXAM','NEARLY_DONE','PICKUP_REQUIRED','RETURNED','CANCELLED'];
+    const customLabels   = AppState.getSettingJSON('status_custom_labels', {});
+    const ndMin          = AppState.getSettingInt('nearly_done_minutes', 10);
+    // NEARLY_DONEの既定表示は「あと10分」固定ではなく、しきい値設定
+    // (nearly_done_minutes)から作られる。App._applyThresholds/
+    // _applyActionButtonLabels が実行時に同じ組み立てをしているため、
+    // ここで固定文字列を使うとこの画面だけ「あと10分」のまま取り残される
+    const nearlyDoneDefaultLabel = ndMin > 0
+      ? `あと${ndMin}分`
+      : CONFIG.STATUS_LABEL_DEFAULTS.NEARLY_DONE;
     // デフォルト表示名・デフォルト色は config.js を単一の情報源とする（コード#2）
-    const DEFAULT_LABELS = CONFIG.STATUS_LABEL_DEFAULTS;
+    const DEFAULT_LABELS = { ...CONFIG.STATUS_LABEL_DEFAULTS, NEARLY_DONE: nearlyDoneDefaultLabel };
     const STATUS_COLOR_DEFAULTS = CONFIG.STATUS_DEFAULT_COLORS;
     const ALL_ACTION_BTNS = [
       { key: 'MOVING:ARRIVED',                    label: '検査室到着',      scope: '病棟側' },
       { key: 'MOVING:IN_EXAM',                    label: '検査開始',        scope: '病棟側' },
       { key: 'ARRIVED:IN_EXAM',                   label: '検査開始',        scope: '病棟側' },
-      { key: 'IN_EXAM:NEARLY_DONE',               label: 'あと10分',        scope: '病棟側' },
+      { key: 'IN_EXAM:NEARLY_DONE',               label: nearlyDoneDefaultLabel, scope: '病棟側' },
       { key: 'IN_EXAM:PICKUP_REQUIRED',           label: '迎え要',          scope: '病棟側' },
       { key: 'NEARLY_DONE:PICKUP_REQUIRED',       label: '迎え要',          scope: '病棟側' },
       { key: 'PICKUP_REQUIRED:RETURNED',          label: '帰棟完了',        scope: '病棟側' },
       { key: 'EXAM:MOVING:ARRIVED',               label: '到着',            scope: '検査室側' },
       { key: 'EXAM:MOVING:IN_EXAM',               label: '到着・検査開始',  scope: '検査室側' },
       { key: 'EXAM:ARRIVED:IN_EXAM',              label: '検査開始',        scope: '検査室側' },
-      { key: 'EXAM:IN_EXAM:NEARLY_DONE',          label: 'あと10分',        scope: '検査室側' },
+      { key: 'EXAM:IN_EXAM:NEARLY_DONE',          label: nearlyDoneDefaultLabel, scope: '検査室側' },
       { key: 'EXAM:IN_EXAM:PICKUP_REQUIRED',      label: '終了（迎え要）',  scope: '検査室側' },
       { key: 'EXAM:NEARLY_DONE:PICKUP_REQUIRED',  label: '終了（迎え要）',  scope: '検査室側' },
     ];
     const HIDEABLE_STATUSES = ['ARRIVED','NEARLY_DONE'];
 
-    const customLabels   = AppState.getSettingJSON('status_custom_labels', {});
-    const ndMin          = AppState.getSettingInt('nearly_done_minutes', 10);
     const stMin          = AppState.getSettingInt('soon_threshold_min', 15);
     const statusColors   = AppState.getSettingJSON('status_colors', {});
     const actionLabels   = AppState.getSettingJSON('action_button_labels', {});
