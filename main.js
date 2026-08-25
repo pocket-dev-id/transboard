@@ -1882,24 +1882,36 @@ function setupScheduleFeedTriggers() {
   }
 }
 
-function scanAndImportScheduleFolder(watchDir, feed) {
+// 手動取り込みAPI(triggerScheduleFeedImportOnParent)がフォルダ内のCSV全件の
+// 取り込み完了を待ってから結果を返せるよう、Promiseを返す。同期例外・各CSVの
+// 個別エラーはimportScheduleFeedCSV側で吸収されるためここではthrowしない
+// (setInterval等のfire-and-forgetな呼び出し元でも安全に使える)
+async function scanAndImportScheduleFolder(watchDir, feed) {
   // UNC監視先はセッションが切れていることがあるため都度確認する
   // （同一資格情報で接続済みならレジストリがskipするので実質無コスト）
   if (String(watchDir || '').startsWith('\\\\')) {
     authenticateSMBSync(watchDir, readFeedSmbCredentials(readDB(), feed));
   }
-  if (!fs.existsSync(watchDir)) return;
-  fs.readdir(watchDir, (err, files) => {
-    if (err) return;
-    files.forEach(file => {
-      try {
-        const filePath = path.join(watchDir, file);
-        if (fs.statSync(filePath).isFile() && path.extname(file).toLowerCase() === '.csv') {
-          importScheduleFeedCSV(filePath, feed);
-        }
-      } catch (e) {}
-    });
-  });
+  if (!fs.existsSync(watchDir)) return { success: false, importedCount: 0, message: '監視フォルダが存在しません' };
+  let files;
+  try {
+    files = await fs.promises.readdir(watchDir);
+  } catch (e) {
+    return { success: false, importedCount: 0, message: e.message };
+  }
+  const results = [];
+  for (const file of files) {
+    try {
+      const filePath = path.join(watchDir, file);
+      if (fs.statSync(filePath).isFile() && path.extname(file).toLowerCase() === '.csv') {
+        results.push(await importScheduleFeedCSV(filePath, feed));
+      }
+    } catch (e) {}
+  }
+  const importedCount = results.reduce((sum, r) => sum + (r?.count || 0), 0);
+  const failed = results.find(r => r && r.success === false);
+  if (failed) return { success: false, importedCount, message: failed.message || '取り込みに失敗したCSVファイルがあります' };
+  return { success: true, importedCount, message: null };
 }
 
 // 時刻部分の区切り文字は現場のCSV/機器出力によって : (半角/全角) と . が
@@ -2015,122 +2027,133 @@ function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto', credenti
   }
 }
 
+// この関数は失敗時も例外をthrow/rejectしない(全て内部でcatchしIPC/ログへ報告する)。
+// スケジュール監視のイベントハンドラ(setInterval・chokidarの'add')から呼ばれた際に
+// 未処理のPromise拒否や同期例外でプロセス全体が落ちるのを避けるため。
+// 呼び出し元(手動取り込みAPI等)は返り値の{success, count, message}で結果を判定できる
 function importScheduleFeedCSV(filePath, feed) {
-  try {
-    assertCsvFileSize(filePath);
-    const buffer = fs.readFileSync(filePath);
-    const { text: decodedText, encoding } = decodeScheduleCsvBuffer(buffer, feed.encoding);
+  return new Promise(resolve => {
+    try {
+      assertCsvFileSize(filePath);
+      const buffer = fs.readFileSync(filePath);
+      const { text: decodedText, encoding } = decodeScheduleCsvBuffer(buffer, feed.encoding);
 
-    const mapping = feed.mapping || {};
-    const results = [];
-    const parser = csv();
-    parser.on('data', row => {
-      if (results.length >= MAX_CSV_ROWS) {
-        parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
-        return;
-      }
-      results.push(row);
-    });
-    Readable.from([decodedText])
-      .pipe(parser)
-      .on('end', () => {
-        const db = readDB();
-        if (!db.schedule_items) db.schedule_items = [];
-
-        // 取り込みは「このフィードの既存アイテムを全削除してから再挿入」する方式のため、
-        // 先に新しいアイテムを組み立て、既存を消す前に妥当性を確認する
-        const newItems = [];
-        results.forEach(row => {
-          const dateVal = mapping.col_date ? row[mapping.col_date] : null;
-          const timeVal = mapping.col_time ? row[mapping.col_time] : null;
-          const dtVal = mapping.col_datetime ? row[mapping.col_datetime] : null;
-
-          const startMs = parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal);
-          if (!startMs) return;
-
-          const title = mapping.col_title ? (row[mapping.col_title] || '') : '';
-          const identifier = mapping.col_id ? (row[mapping.col_id] || '') : '';
-          const durationMin = mapping.col_duration_min ? parseInt(row[mapping.col_duration_min]) || null : null;
-
-          newItems.push({
-            id: `sched-${feed.id}-${startMs}-${newItems.length}`,
-            feed_id: feed.id,
-            feed_name: feed.name || '取り込みスケジュール',
-            color: feed.color || '#7c3aed',
-            ward_ids: feed.ward_ids || [], // 空配列 = 全病棟
-            title,
-            identifier,
-            start_ms: startMs,
-            duration_min: durationMin,
-            raw: row,
-            imported_at: Date.now()
-          });
-        });
-
-        // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
-        // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
-        // 既存アイテムには触れずに中止する（患者CSV取り込み側の空振りガードと同じ方針）
-        if (results.length > 0 && newItems.length === 0) {
-          const message = `${results.length}行すべてで日時を解釈できなかったため、取り込みを中止しました。日付・時刻の列マッピングを確認してください。`;
-          console.warn(`[ScheduleFeed] "${feed.name}" ${message}`);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('schedule-imported', {
-              success: false,
-              feedId: feed.id,
-              feedName: feed.name,
-              fileName: path.basename(filePath),
-              count: 0,
-              encoding,
-              message,
-            });
-          }
+      const mapping = feed.mapping || {};
+      const results = [];
+      const parser = csv();
+      parser.on('data', row => {
+        if (results.length >= MAX_CSV_ROWS) {
+          parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
           return;
         }
-
-        db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
-        db.schedule_items.push(...newItems);
-        const count = newItems.length;
-
-        const saved = writeDB(db);
-        if (!saved) {
-          const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
-          console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('schedule-imported', {
-              success: false,
-              feedId: feed.id,
-              feedName: feed.name,
-              fileName: path.basename(filePath),
-              count: 0,
-              encoding,
-              message,
-            });
-          }
-          return;
-        }
-        console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${count}件 (${path.basename(filePath)}, ${encoding})`);
-
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('schedule-imported', {
-            success: true,
-            feedId: feed.id,
-            feedName: feed.name,
-            fileName: path.basename(filePath),
-            count,
-            encoding
-          });
-        }
-
-        // アーカイブ処理（メイン取り込みと同様）
-        const policy = feed.retention_policy || { action: 'archive', retentionDays: '30' };
-        archiveScheduleFeedFile(filePath, feed, policy);
-      })
-      .on('error', err => {
-        console.error(`[ScheduleFeed] "${feed.name}" パースエラー:`, err);
+        results.push(row);
       });
-  } catch (err) {
-    console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー:`, err);
-  }
+      Readable.from([decodedText])
+        .pipe(parser)
+        .on('end', () => {
+          const db = readDB();
+          if (!db.schedule_items) db.schedule_items = [];
+
+          // 取り込みは「このフィードの既存アイテムを全削除してから再挿入」する方式のため、
+          // 先に新しいアイテムを組み立て、既存を消す前に妥当性を確認する
+          const newItems = [];
+          results.forEach(row => {
+            const dateVal = mapping.col_date ? row[mapping.col_date] : null;
+            const timeVal = mapping.col_time ? row[mapping.col_time] : null;
+            const dtVal = mapping.col_datetime ? row[mapping.col_datetime] : null;
+
+            const startMs = parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal);
+            if (!startMs) return;
+
+            const title = mapping.col_title ? (row[mapping.col_title] || '') : '';
+            const identifier = mapping.col_id ? (row[mapping.col_id] || '') : '';
+            const durationMin = mapping.col_duration_min ? parseInt(row[mapping.col_duration_min]) || null : null;
+
+            newItems.push({
+              id: `sched-${feed.id}-${startMs}-${newItems.length}`,
+              feed_id: feed.id,
+              feed_name: feed.name || '取り込みスケジュール',
+              color: feed.color || '#7c3aed',
+              ward_ids: feed.ward_ids || [], // 空配列 = 全病棟
+              title,
+              identifier,
+              start_ms: startMs,
+              duration_min: durationMin,
+              raw: row,
+              imported_at: Date.now()
+            });
+          });
+
+          // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
+          // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
+          // 既存アイテムには触れずに中止する（患者CSV取り込み側の空振りガードと同じ方針）
+          if (results.length > 0 && newItems.length === 0) {
+            const message = `${results.length}行すべてで日時を解釈できなかったため、取り込みを中止しました。日付・時刻の列マッピングを確認してください。`;
+            console.warn(`[ScheduleFeed] "${feed.name}" ${message}`);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('schedule-imported', {
+                success: false,
+                feedId: feed.id,
+                feedName: feed.name,
+                fileName: path.basename(filePath),
+                count: 0,
+                encoding,
+                message,
+              });
+            }
+            resolve({ success: false, count: 0, message });
+            return;
+          }
+
+          db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
+          db.schedule_items.push(...newItems);
+          const count = newItems.length;
+
+          const saved = writeDB(db);
+          if (!saved) {
+            const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
+            console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('schedule-imported', {
+                success: false,
+                feedId: feed.id,
+                feedName: feed.name,
+                fileName: path.basename(filePath),
+                count: 0,
+                encoding,
+                message,
+              });
+            }
+            resolve({ success: false, count: 0, message });
+            return;
+          }
+          console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${count}件 (${path.basename(filePath)}, ${encoding})`);
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('schedule-imported', {
+              success: true,
+              feedId: feed.id,
+              feedName: feed.name,
+              fileName: path.basename(filePath),
+              count,
+              encoding
+            });
+          }
+
+          // アーカイブ処理（メイン取り込みと同様）
+          const policy = feed.retention_policy || { action: 'archive', retentionDays: '30' };
+          archiveScheduleFeedFile(filePath, feed, policy);
+          resolve({ success: true, count, message: null });
+        })
+        .on('error', err => {
+          console.error(`[ScheduleFeed] "${feed.name}" パースエラー:`, err);
+          resolve({ success: false, count: 0, message: err.message });
+        });
+    } catch (err) {
+      console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー:`, err);
+      resolve({ success: false, count: 0, message: err.message });
+    }
+  });
 }
 
 function archiveScheduleFeedFile(filePath, feed, policy) {
@@ -5452,8 +5475,11 @@ async function triggerScheduleFeedImportOnParent(feedId) {
   if (!fs.existsSync(feed.watch_dir)) {
     return { success: false, message: '監視フォルダが存在しません' };
   }
-  scanAndImportScheduleFolder(feed.watch_dir, feed);
-  return { success: true };
+  // 取り込み完了を待たずに{success:true}を返すと、子機（親機アクション経由）
+  // では「取り込みました」と表示された直後にまだ結果が反映されていない
+  // ことがある。実際にCSVを読み終えるまで待ってから結果を返す
+  const result = await scanAndImportScheduleFolder(feed.watch_dir, feed);
+  return { success: result.success, count: result.importedCount, message: result.message || undefined };
 }
 
 function reloadScheduleFeedTriggersOnParent() {

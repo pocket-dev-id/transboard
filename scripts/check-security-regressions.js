@@ -351,9 +351,15 @@ assert(
   'Arrival/exam-start integration must be conditional and the removed maintenance payload must not be sent'
 );
 assert(
-  config.includes("if (!this.isStatusHidden('ARRIVED')) return actions;") &&
-  config.includes('source.ARRIVED || []'),
-  'Renderer action availability must expose the combined arrival/exam-start action when ARRIVED is hidden'
+  (() => {
+    const idx = config.indexOf('getAllowedActions(status, scope = \'ward\') {');
+    const end = config.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = config.slice(idx, end);
+    return body.includes('for (const hiddenStatus of this.HIDEABLE_STATUSES)') &&
+      body.includes("source[hiddenStatus] || []");
+  })(),
+  'Renderer action availability must expand hidden-status actions (ARRIVED and NEARLY_DONE) generically via HIDEABLE_STATUSES, not just ARRIVED, or hiding "あと10分" leaves its button visible'
 );
 
 // 患者取り違え・移送の取りこぼしにつながる3つのガード。いずれも processDbRequest や
@@ -1823,4 +1829,50 @@ assert(
       body.includes('patch.estimated_pickup_at = now +');
   })(),
   'processStatusUpdateRequest must recompute estimated_pickup_at from current.expected_duration_min when transitioning to IN_EXAM, or the "検査終了の目安" stays pinned to the pre-transit departure-time estimate'
+);
+
+// importScheduleFeedCSVはPromiseを返さなければならない。返さないまま
+// chokidarの'add'ハンドラで`.catch()`を呼ぶと、CSV検知のたびに
+// TypeError(undefinedにcatchは無い)を同期的にthrowし、uncaughtException
+// ハンドラの無いこのプロセスではElectronアプリ全体が落ちる
+// (「リアルタイム」モードのスケジュール取り込みが常に失敗する原因)。
+assert(
+  (() => {
+    const idx = main.indexOf('function importScheduleFeedCSV(filePath, feed) {');
+    if (idx < 0) return false;
+    const body = main.slice(idx, idx + 300);
+    return body.includes('return new Promise(resolve => {');
+  })(),
+  'importScheduleFeedCSV must return a Promise, or callers using .catch() on its result (chokidar realtime watcher) throw synchronously on every CSV file'
+);
+
+// 手動でのスケジュール取り込み(schedule-feed-import)は、実際にCSVの取り込みが
+// 完了するまで待ってから結果を返さなければならない。待たずに{success:true}を
+// 返すと、子機（親機アクション経由でこの結果を受け取る）では「取り込みました」
+// と表示された直後にまだ反映されていないことがある
+assert(
+  (() => {
+    const idx = main.indexOf('async function triggerScheduleFeedImportOnParent(feedId) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('await scanAndImportScheduleFolder(') &&
+      body.includes('result.success');
+  })(),
+  'triggerScheduleFeedImportOnParent must await scanAndImportScheduleFolder and report its real result, not return {success:true} before the import has actually run'
+);
+
+// scanAndImportScheduleFolderはtriggerScheduleFeedImportOnParentから
+// awaitされる前提のため、コールバックベースのfs.readdirのままでは
+// 呼び出し元が完了を待てない
+assert(
+  main.includes('async function scanAndImportScheduleFolder(watchDir, feed) {') &&
+  (() => {
+    const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('await fs.promises.readdir(watchDir)');
+  })(),
+  'scanAndImportScheduleFolder must be async and await fs.promises.readdir, or its caller cannot await actual completion'
 );

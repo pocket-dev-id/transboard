@@ -153,17 +153,20 @@ const CONFIG = {
 
   getAllowedActions(status, scope = 'ward') {
     const source = scope === this.STATUS_SCOPE.EXAM ? this.EXAM_ROOM_ACTIONS : this.ACTION_BUTTONS;
-    // ARRIVEDを非表示にした場合だけ、到着操作を検査開始へ統合する。
-    const actions = [...(source[status] || [])];
-    if (!this.isStatusHidden('ARRIVED')) return actions;
-    const expanded = [];
-    for (const action of actions) {
-      if (action.toStatus === 'ARRIVED') expanded.push(...(source.ARRIVED || []));
-      else expanded.push(action);
+    // 非表示にした中間ステータス(ARRIVED/NEARLY_DONE)への遷移ボタンは、
+    // そのステータスからさらに先へ進むための操作に置き換える。ARRIVEDだけを
+    // 特別扱いしていると、NEARLY_DONEを非表示にしても「あと10分」ボタンが
+    // 消えないままになる。既に他のボタンで到達可能な遷移先は追加しない
+    // （残りのボタンの並び順を保つため、置き換え先を末尾に足すだけに留める）
+    let actions = [...(source[status] || [])];
+    for (const hiddenStatus of this.HIDEABLE_STATUSES) {
+      if (!this.isStatusHidden(hiddenStatus)) continue;
+      if (!actions.some(action => action.toStatus === hiddenStatus)) continue;
+      const existingTargets = new Set(actions.map(action => action.toStatus));
+      const successorActions = (source[hiddenStatus] || []).filter(action => !existingTargets.has(action.toStatus));
+      actions = actions.filter(action => action.toStatus !== hiddenStatus).concat(successorActions);
     }
-    return expanded.filter((action, index, list) =>
-      list.findIndex(item => item.toStatus === action.toStatus) === index
-    );
+    return actions;
   },
 
   ROLES: {
