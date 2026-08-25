@@ -158,8 +158,8 @@ const BedModal = {
           // 非依存で流し込む手段が無いため）
           icTagInput.focus();
         } else {
-          // 新規登録フォームは検査種別にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
-          document.getElementById('f-exam-type')?.focus();
+          // 新規登録フォームは先頭の行き先検査室にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
+          document.getElementById('f-exam-room')?.focus();
         }
       }, 50);
     } else {
@@ -315,14 +315,17 @@ const BedModal = {
         <span class="status-badge badge-MOVING">移動中</span>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
-        <label>検査種別 <span style="color:#dc2626">*</span></label>
-        <select id="f-exam-type" class="visually-hidden-select" ${disabledAttr}>${examTypeOptions}</select>
-        <div class="option-card-grid" role="listbox" aria-label="検査種別">${examTypeCards}</div>
-      </div>
-      <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>行き先検査室 <span style="color:#dc2626">*</span></label>
         <select id="f-exam-room" class="visually-hidden-select" ${disabledAttr}>${examRoomOptions}</select>
         <div class="option-card-grid" role="listbox" aria-label="行き先検査室">${examRoomCards}</div>
+      </div>
+      <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
+        <label>検査種別 <span style="color:#dc2626">*</span></label>
+        <select id="f-exam-type" class="visually-hidden-select" ${disabledAttr}>${examTypeOptions}</select>
+        <div class="option-card-grid" role="listbox" aria-label="検査種別">${examTypeCards}</div>
+        <div id="f-exam-type-empty" style="display:none; font-size:12px; color:#c53030; background:#fff5f5; border:1px solid #fed7d7; border-radius:6px; padding:8px 10px;">
+          この検査室に対応する検査種別が設定されていません。設定＞検査室マスタで「対応する検査種別」を確認してください。
+        </div>
       </div>
       <div class="form-row" style="${!bed.patient_name ? 'pointer-events:none; opacity:0.5;' : ''}">
         <label>付き添い看護師</label>
@@ -771,6 +774,16 @@ const BedModal = {
       }
       this._bindOptionCardSelectors();
 
+      // 行き先検査室を選ぶと、その検査室で実施できる検査種別だけに絞り込む
+      // （カード選択は_bindOptionCardSelectorsがselectへchangeをdispatchする）
+      const examRoomSelect = document.getElementById('f-exam-room');
+      if (examRoomSelect) {
+        examRoomSelect.addEventListener('change', () => {
+          this._applyExamTypeFilterForRoom(examRoomSelect.value);
+        });
+        this._applyExamTypeFilterForRoom(examRoomSelect.value);
+      }
+
       // 「患者IDをセット」チェック時は、この病床の既知の患者IDをそのまま
       // 検査室照合用の値として使うため、ここでの読み取りは不要になる
       const autoSetCheckbox = document.getElementById('f-auto-set-patient-id');
@@ -1193,6 +1206,56 @@ const BedModal = {
       }
       UI.toast('更新に失敗しました', 'danger');
     }
+  },
+
+  // 検査室が対応する検査種別IDのSet。未設定・空配列・検査室が見つからない場合は
+  // null（＝制限なし＝すべての検査種別を選べる）を返す。既存データはこの
+  // フィールド自体を持たないため、この既定により従来どおりの挙動になる
+  _allowedExamTypeIdsForRoom(roomId) {
+    const room = AppState.getExamRoomById(roomId);
+    const ids = room?.exam_type_ids;
+    if (!Array.isArray(ids) || ids.length === 0) return null;
+    return new Set(ids.map(id => String(id)));
+  },
+
+  // 選択中の検査室に対応しない検査種別のカード・optionを隠す。
+  // カードのclickハンドラは_bindOptionCardSelectorsがバインド時のノードへ
+  // 貼るため、DOMは作り直さず表示の切り替えだけで絞り込む
+  _applyExamTypeFilterForRoom(roomId) {
+    const select = document.getElementById('f-exam-type');
+    if (!select) return;
+    const allowed = this._allowedExamTypeIdsForRoom(roomId);
+    const isAllowed = (id) => !allowed || allowed.has(String(id));
+
+    const cards = [...document.querySelectorAll('.option-card[data-select-target="f-exam-type"]')];
+    cards.forEach(card => {
+      card.style.display = isAllowed(card.dataset.value) ? '' : 'none';
+    });
+    [...select.options].forEach(opt => {
+      const ok = isAllowed(opt.value);
+      opt.hidden = !ok;
+      opt.disabled = !ok;
+    });
+
+    const available = [...select.options].filter(opt => !opt.disabled);
+    const emptyNote = document.getElementById('f-exam-type-empty');
+    if (emptyNote) emptyNote.style.display = available.length === 0 ? '' : 'none';
+    // 選べる検査種別が無い検査室のまま登録させない（別の検査室を選べば復帰する）。
+    // 空床でフォーム自体が無効な場合の無効状態は、ここで解除してしまわないよう維持する
+    const submitBtn = document.getElementById('btn-transfer-start');
+    if (submitBtn) submitBtn.disabled = available.length === 0 || select.disabled;
+    if (available.length === 0) return;
+
+    // 現在の選択が対象外になったら、先頭の対応種別へ寄せる
+    if (!isAllowed(select.value)) {
+      select.value = available[0].value;
+      select.dispatchEvent(new Event('change'));
+    }
+    cards.forEach(card => {
+      const selected = card.dataset.value === select.value;
+      card.classList.toggle('selected', selected);
+      card.setAttribute('aria-selected', selected ? 'true' : 'false');
+    });
   },
 
   _bindOptionCardSelectors() {

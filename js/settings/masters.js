@@ -976,7 +976,7 @@ Object.assign(Settings, {
         </div>
         <table class="settings-table" id="rooms-table">
           <thead>
-            <tr><th>アイコン</th><th>検査室名</th><th>コード</th><th>階</th><th>内線番号</th><th>備考</th><th>有効</th><th>操作</th></tr>
+            <tr><th>アイコン</th><th>検査室名</th><th>コード</th><th>階</th><th>内線番号</th><th>対応検査種別</th><th>備考</th><th>有効</th><th>操作</th></tr>
           </thead>
           <tbody id="rooms-tbody">
           </tbody>
@@ -1001,6 +1001,7 @@ Object.assign(Settings, {
               ? `<span class="phone-chip"><i class="fas fa-phone"></i> ${UI.escapeHTML(r.phone)}</span>`
               : '<span class="text-muted">未設定</span>'}
           </td>
+          <td class="text-sm">${this._formatRoomExamTypes(r)}</td>
           <td class="text-sm text-muted">${UI.escapeHTML(r.note || '—')}</td>
           <td>${r.is_active !== false ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
           <td>
@@ -1009,7 +1010,7 @@ Object.assign(Settings, {
             </button>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="8" class="text-muted" style="text-align:center;">検査室が登録されていません</td></tr>';
+      `).join('') || '<tr><td colspan="9" class="text-muted" style="text-align:center;">検査室が登録されていません</td></tr>';
 
       // 無効件数ヒント
       const chk = document.getElementById('chk-show-inactive-rooms');
@@ -1034,12 +1035,38 @@ Object.assign(Settings, {
       };
     });
 
-    this._setupCsvHandlers('rooms', 'exam_rooms', ['id', 'name', 'code', 'floor', 'phone', 'note', 'is_active', 'icon'], { optionalHeaders: ['icon'] });
+    this._setupCsvHandlers('rooms', 'exam_rooms', ['id', 'name', 'code', 'floor', 'phone', 'note', 'is_active', 'icon', 'exam_type_ids'], { optionalHeaders: ['icon', 'exam_type_ids'] });
+  },
+
+  // 検査室が対応する検査種別。未設定・空配列は「すべての検査種別に対応」を意味する
+  // （既存データはこのフィールドを持たないため、この既定により挙動が変わらない）
+  _roomExamTypeIdSet(room) {
+    const ids = room?.exam_type_ids;
+    if (!Array.isArray(ids) || ids.length === 0) return null;
+    return new Set(ids.map(id => String(id)));
+  },
+
+  // 一覧の「対応検査種別」列。既に削除された検査種別IDは表示から除く
+  _formatRoomExamTypes(room) {
+    const ids = this._roomExamTypeIdSet(room);
+    if (!ids) return '<span class="text-muted">すべて</span>';
+    const all = AppState.allExamTypes || AppState.examTypes || [];
+    const names = all.filter(t => ids.has(String(t.id))).map(t => t.name);
+    if (names.length === 0) return '<span style="color:#dc2626;">対応なし</span>';
+    return UI.escapeHTML(names.join('、'));
   },
 
   _openRoomForm(room) {
     const isNew = !room;
     const selectedIcon = UI.normalizeExamRoomIcon(room?.icon);
+    const allExamTypes = AppState.allExamTypes || AppState.examTypes || [];
+    const selectedTypeIds = this._roomExamTypeIdSet(room);
+    const examTypeCheckboxes = allExamTypes.map(t => `
+      <label style="display:flex; align-items:center; gap:6px; font-weight:normal; cursor:pointer; padding:2px 0;">
+        <input type="checkbox" class="rf-exam-type" value="${UI.escapeHTML(t.id)}" ${selectedTypeIds?.has(String(t.id)) ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
+        <span>${UI.escapeHTML(t.name)}${t.is_active === false ? '<span style="color:#94a3b8; font-size:11px;">（無効）</span>' : ''}</span>
+      </label>
+    `).join('');
     const iconOptions = UI.EXAM_ROOM_ICON_PRESETS.map(item => `
       <label class="room-icon-option ${item.icon === selectedIcon ? 'selected' : ''}">
         <input type="radio" name="rf-icon" value="${UI.escapeHTML(item.icon)}" ${item.icon === selectedIcon ? 'checked' : ''}>
@@ -1075,6 +1102,15 @@ Object.assign(Settings, {
           <div class="form-row">
             <label><i class="fas fa-phone"></i> 内線番号</label>
             <input type="text" id="rf-phone" value="${UI.escapeHTML(room?.phone || '')}" placeholder="例: 2001">
+          </div>
+          <div class="form-row">
+            <label>対応する検査種別</label>
+            <div style="border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; max-height:180px; overflow-y:auto;">
+              ${examTypeCheckboxes || '<span class="text-muted" style="font-size:12px;">検査種別が登録されていません</span>'}
+            </div>
+            <div style="font-size:11px; color:#718096; margin-top:4px;">
+              出棟登録でこの検査室を選んだとき、ここでチェックした検査種別だけが選べます。未選択の場合はすべての検査種別に対応します。
+            </div>
           </div>
           <div class="form-row">
             <label>備考</label>
@@ -1127,6 +1163,7 @@ Object.assign(Settings, {
         phone: document.getElementById('rf-phone').value.trim(),
         note: document.getElementById('rf-note').value.trim(),
         is_active: document.getElementById('rf-active').value === 'true',
+        exam_type_ids: [...overlay.querySelectorAll('.rf-exam-type:checked')].map(cb => cb.value),
       };
       try {
         if (isNew) {
@@ -1600,6 +1637,8 @@ Object.assign(Settings, {
         else if (tableName === 'exam_rooms') data = (AppState.allExamRooms || AppState.examRooms).map(room => ({
           ...room,
           icon: UI.normalizeExamRoomIcon(room.icon),
+          // 配列のままだとカンマ区切りで列がずれるため、セミコロン区切りの文字列で出す
+          exam_type_ids: Array.isArray(room.exam_type_ids) ? room.exam_type_ids.join(';') : '',
         }));
         else if (tableName === 'exam_types') data = AppState.examTypes;
         else if (tableName === 'staffs') data = (AppState.allStaffs || AppState.staffs).filter(s => s.ward_id === AppState.currentWardId);
@@ -1670,6 +1709,15 @@ Object.assign(Settings, {
 
                 if (tableName === 'exam_rooms') {
                   record.icon = UI.normalizeExamRoomIcon(record.icon);
+                  // 一括保存は既存レコードへのマージ({ ...before, ...data })のため、
+                  // exam_type_ids列を持たない旧フォーマットのCSVでキーごと落として
+                  // おかないと、既存の対応検査種別を空配列で消してしまう
+                  if (csvHeaders.includes('exam_type_ids')) {
+                    record.exam_type_ids = String(record.exam_type_ids || '')
+                      .split(';').map(s => s.trim()).filter(Boolean);
+                  } else {
+                    delete record.exam_type_ids;
+                  }
                 }
                 
                 if (tableName === 'beds' || tableName === 'staffs') {
