@@ -1753,3 +1753,58 @@ assert(
 );
 
 console.log('Security regression checks passed.');
+
+// 行先(検査室)×検査種別の紐付け: exam_rooms.exam_type_ids が未設定・空配列の場合は
+// 「すべての検査種別に対応」でなければならない。ここを「対応なし」と解釈すると、
+// このフィールドを持たない既存の全インストールで検査種別が1件も選べなくなり、
+// 出棟登録そのものができなくなる。
+assert(
+  (() => {
+    const idx = modal.indexOf('_allowedExamTypeIdsForRoom(roomId) {');
+    const end = modal.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = modal.slice(idx, end);
+    return body.includes('!Array.isArray(ids) || ids.length === 0') && body.includes('return null');
+  })(),
+  '_allowedExamTypeIdsForRoom must treat a missing/empty exam_type_ids as "no restriction" (null), or existing rooms without the field would offer no exam types at all'
+);
+
+// 絞り込みは「行き先検査室を選んでから検査種別」の順を前提にしているため、
+// 出棟登録フォームでは行き先検査室が検査種別より先に描画されていなければならない。
+assert(
+  (() => {
+    const idx = modal.indexOf('_renderDepartForm(bed) {');
+    const roomIdx = modal.indexOf("<label>行き先検査室", idx);
+    const typeIdx = modal.indexOf("<label>検査種別", idx);
+    if (idx < 0 || roomIdx < 0 || typeIdx < 0) return false;
+    return roomIdx < typeIdx;
+  })(),
+  '_renderDepartForm must render the 行き先検査室 row before 検査種別 (the exam-type filter depends on picking the destination first)'
+);
+
+// 検査種別の絞り込みで送信ボタンを無効化する際、空床でフォーム自体が無効な
+// ケースの無効状態まで解除してしまってはならない（空床で移送を開始できてしまう）。
+assert(
+  (() => {
+    const idx = modal.indexOf('_applyExamTypeFilterForRoom(roomId) {');
+    const end = modal.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = modal.slice(idx, end);
+    return body.includes('submitBtn.disabled = available.length === 0 || select.disabled');
+  })(),
+  '_applyExamTypeFilterForRoom must keep the submit button disabled when the form itself is disabled (empty bed), not just when no exam type is available'
+);
+
+// exam_type_ids列を持たない旧フォーマットのCSVを取り込んだとき、キーを落として
+// おかないと bulkUpsert のマージ({ ...before, ...data })で空配列が書き込まれ、
+// 設定済みの対応検査種別が消える。
+assert(
+  (() => {
+    const idx = masters.indexOf("if (tableName === 'exam_rooms') {");
+    if (idx < 0) return false;
+    const body = masters.slice(idx, idx + 900);
+    return body.includes("csvHeaders.includes('exam_type_ids')") &&
+      body.includes('delete record.exam_type_ids');
+  })(),
+  'exam_rooms CSV import must delete record.exam_type_ids when the CSV has no such column, or importing a legacy CSV wipes the configured exam-type mapping'
+);
