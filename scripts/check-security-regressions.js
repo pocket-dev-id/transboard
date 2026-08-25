@@ -51,6 +51,7 @@ const wizard = read('js/wizard.js');
 const networkSettings = read('js/settings/network.js');
 const importNotify = read('js/settings/import-notify.js');
 const terminalAccess = read('js/settings/terminal-access.js');
+const statusCustomize = read('js/settings/status-customize.js');
 const styles = read('css/style.css');
 const modal = read('js/modal.js');
 const carryover = read('js/carryover.js');
@@ -1887,4 +1888,55 @@ assert(
 assert(
   masters.includes('colspan="6" class="text-muted" style="text-align:center;">検査種別が登録されていません'),
   'Exam-type master empty-state row must use colspan=6 to match the 6-column header (including the icon column)'
+);
+
+// 端末役割(cfg_terminal_role)は表示設定3件(default_zoom/font_style/bed_card_size)の
+// 親機DBへの書き込み結果とは無関係のため、その失敗フラグ(failed)の中で
+// setTerminalRoleを呼んではならない。囲うと、表示設定の一時的な失敗だけで
+// 役割の切り替えが黙って捨てられ、トーストは表示設定のことしか伝えないため
+// 利用者が気付けない。
+assert(
+  (() => {
+    const idx = terminalAccess.indexOf('#btn-save-terminal-behavior');
+    if (idx < 0) return false;
+    const body = terminalAccess.slice(idx);
+    const failedBlockIdx = body.indexOf('if (!failed) {');
+    const failedBlockEnd = body.indexOf('\n        }', failedBlockIdx);
+    const roleIdx = body.indexOf('App.setTerminalRole(terminalRoleVal)');
+    if (failedBlockIdx < 0 || failedBlockEnd < 0 || roleIdx < 0) return false;
+    // setTerminalRole が if (!failed) ブロックより後（＝外）にあること
+    return roleIdx > failedBlockEnd;
+  })(),
+  'setTerminalRole must be called outside the if (!failed) block, or a transient failure saving the shared display defaults silently discards the terminal role change'
+);
+
+// 保存系ハンドラはAPI.patchが成功してからAppStateへ反映しなければならない。
+// 先にAppStateを書き換えると、保存に失敗したときに「保存に失敗しました」と
+// 表示しながら画面上は新しい値のまま残り、次のマスタ同期まで実態とずれる。
+assert(
+  (() => {
+    const idx = importNotify.indexOf("document.getElementById('btn-save-misc-notif').onclick");
+    if (idx < 0) return false;
+    const body = importNotify.slice(idx, idx + 1200);
+    const childIdx = body.indexOf('if (isChildMode) {');
+    const elseIdx = body.indexOf('} else {', childIdx);
+    if (childIdx < 0 || elseIdx < 0) return false;
+    const childBranch = body.slice(childIdx, elseIdx);
+    const patchIdx = childBranch.indexOf('await API.patch(');
+    const stateIdx = childBranch.indexOf('AppState.systemSettings?.find(');
+    if (patchIdx < 0 || stateIdx < 0) return false;
+    return patchIdx < stateIdx;
+  })(),
+  'btn-save-misc-notif child branch must await API.patch before mutating AppState, or a failed save leaves the UI showing an unsaved value'
+);
+
+// ステータスカスタマイズ画面のNEARLY_DONE既定表示は、しきい値設定
+// (nearly_done_minutes)から組み立てなければならない。'あと10分'を固定で
+// 使うと、実行時(App._applyThresholds/_applyActionButtonLabels)が
+// 'あと15分'等に書き換えるのに対し、この設定画面だけが取り残されて食い違う。
+assert(
+  statusCustomize.includes('const nearlyDoneDefaultLabel = ndMin > 0') &&
+  statusCustomize.includes('NEARLY_DONE: nearlyDoneDefaultLabel') &&
+  !/label: 'あと10分'/.test(statusCustomize),
+  'status-customize must derive the NEARLY_DONE default label from nearly_done_minutes instead of hardcoding あと10分, or the settings screen disagrees with the rest of the app'
 );
