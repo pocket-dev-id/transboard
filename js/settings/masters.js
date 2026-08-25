@@ -1792,7 +1792,7 @@ Object.assign(Settings, {
         </div>
         <table class="settings-table">
           <thead>
-            <tr><th>検査種別名</th><th>コード</th><th>標準所要時間(分)</th><th>有効</th><th>操作</th></tr>
+            <tr><th>アイコン</th><th>検査種別名</th><th>コード</th><th>標準所要時間(分)</th><th>有効</th><th>操作</th></tr>
           </thead>
           <tbody id="exam-types-tbody"></tbody>
         </table>
@@ -1821,7 +1821,7 @@ Object.assign(Settings, {
             </button>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="5" class="text-muted" style="text-align:center;">検査種別が登録されていません</td></tr>';
+      `).join('') || '<tr><td colspan="6" class="text-muted" style="text-align:center;">検査種別が登録されていません</td></tr>';
 
       const chk = document.getElementById('chk-show-inactive-exam-types');
       if (chk) chk.title = inactiveCount > 0 ? `無効の検査種別が ${inactiveCount} 件あります` : '無効の検査種別はありません';

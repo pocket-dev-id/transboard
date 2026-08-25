@@ -1876,3 +1876,15 @@ assert(
   })(),
   'scanAndImportScheduleFolder must be async and await fs.promises.readdir, or its caller cannot await actual completion'
 );
+
+// 検査種別マスタの一覧テーブルは、行側でアイコン列(<td>)を出しているのに
+// ヘッダー側に対応する<th>が無く、以降の列(検査種別名・コード・標準所要時間等)が
+// 1列ずつヘッダーとずれて表示される不具合があった(「検査マスターの列がずれている」)。
+assert(
+  masters.includes('<tr><th>アイコン</th><th>検査種別名</th><th>コード</th><th>標準所要時間(分)</th><th>有効</th><th>操作</th></tr>'),
+  'Exam-type master table header must include an アイコン column matching the icon <td> each row renders, or every later column is misaligned by one'
+);
+assert(
+  masters.includes('colspan="6" class="text-muted" style="text-align:center;">検査種別が登録されていません'),
+  'Exam-type master empty-state row must use colspan=6 to match the 6-column header (including the icon column)'
+);
