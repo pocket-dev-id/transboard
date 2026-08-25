@@ -260,6 +260,39 @@ const CallPanel = {
     return this._callSourceId || this.getMyId();
   },
 
+  // この端末が最初に表示していた病棟。以後どの病棟のダッシュボードを
+  // 閲覧していても、着信・自動アナウンスの受信対象に含め続けるための
+  // 恒久的な受信先(getWardListenIds参照)
+  _homeWardId: null,
+
+  // ward-select変更のたびに変わる「今どの病棟を見ているか」と、この端末が
+  // 実際に受信すべきIDを分離する。current_wardIdだけを使うと、他病棟の
+  // ダッシュボードを一時的に見ている間、自分の病棟宛の着信・アナウンスを
+  // 一切受信できなくなる
+  _getWardListenIds() {
+    const wardId = AppState.currentWardId || 'ward-1';
+    if (!this._homeWardId && wardId) this._homeWardId = wardId;
+    const ids = [wardId];
+    if (this._homeWardId && this._homeWardId !== wardId) ids.push(this._homeWardId);
+    return ids;
+  },
+
+  // 検査室が1つも選択されていない間（未選択・「全検査室の患者一覧」表示中）は
+  // getMyId()がnullを返し、以前はポーリング自体が止まっていた
+  // （＝いずれの検査室宛の着信・自動アナウンスも一切受信できない不具合）。
+  // 特定の検査室に絞れない以上、既知の全検査室を受信対象にする
+  _getExamRoomListenIds() {
+    const selected = document.getElementById('exam-room-select')?.value || '';
+    if (selected) return [selected];
+    return (AppState.examRooms || []).map(r => r.id).filter(Boolean);
+  },
+
+  // 通常時（発信中・通話中でない）にこの端末が受信すべきID一覧
+  _getListenIds() {
+    const tab = document.querySelector('.tab-btn.active')?.dataset.page;
+    return tab === 'exam-room' ? this._getExamRoomListenIds() : this._getWardListenIds();
+  },
+
   startListening() {
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = setInterval(async () => {
@@ -277,10 +310,10 @@ const CallPanel = {
       // getMyId()はアクティブなタブ/選択中の検査室から都度その場で判定するため、
       // 呼び出し中に他のタブへ切り替えると相手からの応答・拒否シグナルの宛先(myId)が
       // ずれて届かなくなり、応答/拒否に気づけないままになってしまう
-      const myId = (this.isCalling || this.isConnected)
-        ? (this._callSourceId || this.getMyId())
-        : this.getMyId();
-      if (!myId) {
+      const myIds = (this.isCalling || this.isConnected)
+        ? [this._callSourceId || this.getMyId()].filter(Boolean)
+        : this._getListenIds();
+      if (myIds.length === 0) {
         this._nextPollAt = Date.now() + 1500;
         return;
       }
@@ -291,19 +324,24 @@ const CallPanel = {
       }
       this._pollInFlight = true;
       try {
-        const res = await API.webrtcPoll(myId, this.getClientId());
-        if (res && res.success && res.messages) {
-          for (const msg of res.messages) {
-            if (msg.msgId) {
-              if (this._seenMsgIds.has(msg.msgId)) continue;
-              this._seenMsgIds.add(msg.msgId);
-              // メモリ肥大防止：上限500件を超えたら古いものを削除
-              if (this._seenMsgIds.size > 500) {
-                const first = this._seenMsgIds.values().next().value;
-                this._seenMsgIds.delete(first);
+        const clientId = this.getClientId();
+        const results = await Promise.allSettled(myIds.map(id => API.webrtcPoll(id, clientId)));
+        for (const result of results) {
+          if (result.status !== 'fulfilled') { pollOk = false; continue; }
+          const res = result.value;
+          if (res && res.success && res.messages) {
+            for (const msg of res.messages) {
+              if (msg.msgId) {
+                if (this._seenMsgIds.has(msg.msgId)) continue;
+                this._seenMsgIds.add(msg.msgId);
+                // メモリ肥大防止：上限500件を超えたら古いものを削除
+                if (this._seenMsgIds.size > 500) {
+                  const first = this._seenMsgIds.values().next().value;
+                  this._seenMsgIds.delete(first);
+                }
               }
+              await this.handleSignalingMessage(msg);
             }
-            await this.handleSignalingMessage(msg);
           }
         }
       } catch (e) {
