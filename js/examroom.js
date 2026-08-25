@@ -554,14 +554,14 @@ const ExamRoom = {
             const oldTime = activeEvent?.estimated_pickup_at ? UI.formatTime(activeEvent.estimated_pickup_at) : '--:--';
             if (oldTime !== timeStr) {
               const ok = await UI.confirmModal(
-                `迎え目安を ${oldTime} から ${timeStr} に変更しますか？`,
-                { title: '迎え目安を変更', confirmLabel: '変更する' }
+                `検査終了目安を ${oldTime} から ${timeStr} に変更しますか？`,
+                { title: '検査終了目安を変更', confirmLabel: '変更する' }
               );
               if (!ok) return;
             }
 
             await API.patch('transfer_events', eventId, { estimated_pickup_at: newEstimated });
-            UI.toast('迎え目安を変更しました', 'success');
+            UI.toast('検査終了目安を変更しました', 'success');
             
             await App.refreshData({ force: true });
             await this._renderQueue();
@@ -681,7 +681,7 @@ const ExamRoom = {
           ${elapsedHtml}
           ${event.estimated_pickup_at ? `
           <div class="exam-card-info-row exam-pickup-control" style="align-items: center;">
-            <span class="label">迎え目安</span>
+            <span class="label">検査終了目安</span>
             <span style="display:inline-flex; align-items:center; gap:4px;">
               <input type="time" class="exam-pickup-time-input" data-event-id="${UI.escapeHTML(event.id)}" value="${UI.formatTime(event.estimated_pickup_at)}" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-family: inherit; font-size: 12px; font-weight: bold; width: 80px; height: 24px; box-sizing: border-box;">
               <button class="btn btn-primary btn-sm btn-update-exam-pickup" data-event-id="${UI.escapeHTML(event.id)}" style="padding: 2px 6px; font-size: 11px; width: auto; height: 24px; min-width: 0; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;">変更</button>
@@ -887,7 +887,7 @@ const ExamRoom = {
     return `
       <div class="exam-queue-list">
         <div class="exam-queue-row exam-queue-row--head">
-          <div>病床</div><div>患者名</div><div>状態</div><div>検査</div><div>出棟</div><div>開始</div><div>経過</div><div>付き添い</div><div>迎え目安</div><div>操作</div>
+          <div>病床</div><div>患者名</div><div>状態</div><div>検査</div><div>出棟</div><div>開始</div><div>経過</div><div>付き添い</div><div>検査終了目安</div><div>操作</div>
         </div>
         ${rows}
       </div>`;

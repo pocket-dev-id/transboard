@@ -989,7 +989,7 @@ assert(
   'Timeline _buildSegments must fall back to "now" when the next milestone has not happened yet, otherwise in-progress stages beyond MOVING vanish from the timeline'
 );
 
-// タイムラインの「迎え目安」時刻変更は、病床詳細モーダル(js/modal.js)の
+// タイムラインの「検査終了目安」時刻変更は、病床詳細モーダル(js/modal.js)の
 // 同じフィールドの変更と同様にexpectedStatusを伴うpatchEventFieldsを
 // 使わなければならない。生のAPI.patchだとサーバー側の楽観的排他チェックが
 // 発動せず、他端末が既にその移送を完了/キャンセルしていても検知できない
@@ -1049,7 +1049,7 @@ assert(
   'Ward-select change handler must call Timeline.render() when the timeline tab is active, otherwise switching wards leaves stale timeline data on screen'
 );
 
-// タイムラインの迎え目安マーカーは、病床マップ/優先度パネル/病床詳細
+// タイムラインの検査終了目安マーカーは、病床マップ/優先度パネル/病床詳細
 // モーダルと同じくUI.remainingClassで遅延度合いを強調しなければならない
 assert(
   (() => {
@@ -1807,4 +1807,20 @@ assert(
       body.includes('delete record.exam_type_ids');
   })(),
   'exam_rooms CSV import must delete record.exam_type_ids when the CSV has no such column, or importing a legacy CSV wipes the configured exam-type mapping'
+);
+
+// 検査終了の目安(estimated_pickup_at)は出棟時点では移動時間を見込めない仮値
+// のため、検査開始(IN_EXAM)への遷移時に実際の開始時刻+標準所要時間へ
+// 再計算しなければならない。これが無いと出棟時刻基準のまま値が固定され、
+// 移動に時間がかかった移送ほど「検査終了の目安」が実際より早い側にずれ続ける。
+assert(
+  (() => {
+    const idx = main.indexOf("if (newStatus === 'IN_EXAM') {");
+    const nearlyIdx = main.indexOf("if (newStatus === 'NEARLY_DONE') {");
+    if (idx < 0 || nearlyIdx < 0 || nearlyIdx <= idx) return false;
+    const body = main.slice(idx, nearlyIdx);
+    return body.includes('current.expected_duration_min') &&
+      body.includes('patch.estimated_pickup_at = now +');
+  })(),
+  'processStatusUpdateRequest must recompute estimated_pickup_at from current.expected_duration_min when transitioning to IN_EXAM, or the "検査終了の目安" stays pinned to the pre-transit departure-time estimate'
 );

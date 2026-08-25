@@ -89,7 +89,7 @@ CSVでは `;` 区切りの文字列として入出力する。`exam_type_ids` �
 | `exam_type_id` | string | 検査種別ID |
 | `current_status` | string | 現在ステータス（下記参照） |
 | `escort_staff_id` | string \| null | 付き添いスタッフID |
-| `estimated_pickup_at` | number \| null | 迎え目安時刻（Unixms） |
+| `estimated_pickup_at` | number \| null | 検査終了目安時刻（Unixms）。出棟時は「出棟時刻＋標準所要時間」の仮値、検査開始(IN_EXAM)時に「検査開始時刻＋標準所要時間」へ再計算、もうすぐ終了(NEARLY_DONE)時にさらに短い最終補正が入る |
 | `registered_at` | number | 互換用の登録日時（新規データでは移送開始日時と同値） |
 | `departed_at` | number \| null | 出棟日時 |
 | `arrived_at` | number \| null | 到着日時 |

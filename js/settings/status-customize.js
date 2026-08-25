@@ -173,7 +173,7 @@ Object.assign(Settings, {
               <select id="cfg-nearly-done-min" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:14px;">
                 ${ndOptions}
               </select>
-              <p style="font-size:11px; color:#64748b; margin-top:2px;">この分数後に迎え目安を自動設定します</p>
+              <p style="font-size:11px; color:#64748b; margin-top:2px;">この分数後に検査終了目安を自動設定します</p>
             </div>
             <div>
               <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">「まもなく迎え」閾値（SOON）</label>
