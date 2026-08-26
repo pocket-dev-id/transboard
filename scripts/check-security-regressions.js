@@ -58,6 +58,8 @@ const carryover = read('js/carryover.js');
 const maintenance = read('js/settings/maintenance.js');
 const examroom = read('js/examroom.js');
 const ui = read('js/ui.js');
+const webrtcSignaling = read('main-modules/webrtc-signaling.js');
+const devicePresence = read('js/device-presence.js');
 
 assert(!main.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
 assert(!/\bexecSync\s*\(/.test(main), 'Shell command strings must not use execSync');
@@ -2096,4 +2098,141 @@ assert(
     return body.includes('UI.pickupAssistanceLabel(e)') && body.includes('${assistLabel');
   })(),
   'app.js PICKUP_REQUIRED toast block must call UI.pickupAssistanceLabel and interpolate it into the toast message, or the pop-up notification never conveys what is needed for pickup'
+);
+
+// ── 子機同士の通話競合: 同じID(病棟/検査室)を2台以上の端末が表示している場合の対策 ──
+
+// webrtc-signalingのユニキャストは「to」で先着1クライアントに渡した時点で
+// キューから消していたため、同じ論理IDを2台の端末が同時に見ている場合、
+// 実際に通話中でない側がICE候補やhangupを横取りしてしまっていた。
+// 全メッセージ種別をブロードキャストと同じクライアント単位ack管理に統一し、
+// 「to」ごとの単一キューに一本化しなければならない
+assert(
+  !webrtcSignaling.includes('BROADCAST_TYPES') && !webrtcSignaling.includes("`bc:${"),
+  'webrtc-signaling.js must not special-case a subset of message types as "broadcast" (bc: prefix) — every message must use the same per-client ack-tracked delivery, or messages addressed to a shared ward/room id are stolen by whichever sibling terminal polls first'
+);
+assert(
+  (() => {
+    const idx = webrtcSignaling.indexOf("if (action === 'poll')");
+    const end = webrtcSignaling.indexOf("return { success: false, message: 'Not Found' };", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = webrtcSignaling.slice(idx, end);
+    return body.includes('item.ackedBy[client]') && !body.includes('delete queue[id];\n      const ucMessages');
+  })(),
+  'webrtc-signaling.js poll handler must deliver every message via per-client ack tracking, not a destructive queue[id] drain'
+);
+
+// busyハンドラは、既に別の兄弟端末が応答して通話が確立済みなら無視しなければ
+// ならない。無いと「片方が応答した直後にもう片方が拒否/無応答タイムアウト」
+// という良くあるタイミングで、確立済みの通話が強制切断される
+assert(
+  (() => {
+    const idx = call.indexOf("else if (msg.type === 'busy')");
+    const end = call.indexOf("else if (msg.type === 'answered')", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('if (this.isConnected) return;');
+  })(),
+  'the busy handler must ignore a stray busy once this terminal is already connected, or a sibling terminal declining/timing out after another sibling answered tears down the live call'
+);
+
+// answeredで待避する端末は、targetIdを残したままだと後続のice/hangupを
+// この通話のものとして誤って処理し続けてしまう。_isRingingも見ることで、
+// 着信中でない(=無関係な別のダイアログを表示中の)端末が誤ってそのダイアログを
+// 閉じないようにする
+assert(
+  (() => {
+    const idx = call.indexOf("else if (msg.type === 'answered')");
+    const end = call.indexOf("else if (msg.type === 'speech')", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('!this.isConnected && !this.isCalling && this._isRinging') &&
+      body.includes('this.targetId = null;') &&
+      body.includes('this._pendingIceCandidates = [];');
+  })(),
+  'the answered handler must gate on _isRinging and clear targetId/_pendingIceCandidates, or a standing-down sibling keeps reacting to the call it did not answer'
+);
+
+// ── 子機同士の機能: 端末プレゼンス(在席表示) ──
+
+// 親機自身のローカルUIから「接続機器を切断」した場合、以前はHTTP経由のURLしか
+// 用意されておらず親機モードでは何もせずundefinedを返し、呼び出し元は
+// success===falseでないことしか見ていないため誤って成功トーストを出していた
+assert(
+  api.includes("window.electronAPI.dbRequest({ url: 'device/disconnect'"),
+  'API.disconnectDevice must fall back to the local electronAPI.dbRequest path in parent mode, or the parent-side disconnect button always no-ops while reporting fake success'
+);
+
+// ハートビートは、親機のローカルIPC経路でも送れなければならない(親機自身の
+// 画面が実務端末として使われている場合に他の子機から見えるようにするため)
+assert(
+  api.includes("window.electronAPI.dbRequest({ url: 'device/heartbeat'") &&
+  main.includes("if (url === 'device/heartbeat') {"),
+  'both API.deviceHeartbeat (client) and the local db-request handler (main.js) must support a device/heartbeat path for the parent terminal itself, or the parent can never appear in another terminal\'s presence list'
+);
+
+// 不正なハートビート(deviceId欠落等)は常にsuccess:trueを返してはならない。
+// 送信側は「接続中」と表示し続けるのに、実際はレジストリへ書き込まれておらず
+// 他端末からは永久に見えなくなるという、気付けない障害だった
+assert(
+  main.includes('function applyHeartbeat(info, ip) {') &&
+  main.includes("if (!sanitizedInfo) return { success: false, message: 'Invalid device heartbeat payload' };"),
+  'applyHeartbeat must return success:false for an invalid payload instead of unconditionally acking, or a corrupted device id becomes a silent, undetectable presence outage'
+);
+assert(
+  app.includes("res !== null && res?.unauthorized !== true && res?.success !== false"),
+  'the heartbeat client must treat res.success === false as a failure, or it keeps showing "connected" even when the server rejected the payload'
+);
+
+// deviceIdの長さ上限はMAX_DEVICE_ID_LENGTH(64)文字ちょうどまで許可しなければ
+// ならない(以前は>=で63文字が実質上限というオフバイワンだった)
+assert(
+  main.includes('if (!deviceId || deviceId.length > MAX_DEVICE_ID_LENGTH) return null;'),
+  'sanitizeHeartbeatInfo must reject only ids longer than MAX_DEVICE_ID_LENGTH (using >), not >=, or the documented 64-char max is actually enforced as 63'
+);
+
+// 「他に誰がいるか」を見るための一覧に自分自身が含まれてはならない
+assert(
+  app.includes("const myDeviceId = localStorage.getItem('_device_id') || '';") &&
+  app.includes('rawDevices.filter(d => d.deviceId !== myDeviceId)'),
+  '_refreshDevicePresence must exclude this terminal\'s own deviceId from the list it renders, or every presence count/popover is inflated by exactly one self-entry'
+);
+
+// 親機も、単独運用モードでない限りハートビートを送らなければならない
+// (以前は子機モードのみで、親機の画面が実務端末でも他端末から永久に見えなかった)
+assert(
+  (() => {
+    const idx = app.indexOf('await this._repairLocalShareMode();');
+    const end = app.indexOf('_applyStandaloneMode', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('if (!this.isStandalone()) {') && body.includes('this._startHeartbeat();');
+  })(),
+  'initialize() must start the heartbeat for parent terminals too (gated only on isStandalone), not only for child mode'
+);
+
+// lastSeenの経過秒数はサーバー(親機)の時計で計算した値を優先しなければ
+// ならない。各端末が自分の時計で計算し直すと、端末間の時計のずれがそのまま
+// 誤った「応答なし」表示(またはその見逃し)につながる
+assert(
+  main.includes('.map(d => ({ ...d, secondsAgo: Math.max(0, Math.floor((now - d.lastSeen) / 1000)) }));'),
+  'getActiveDevices must attach a server-computed secondsAgo to each device, or every viewer recomputes elapsed time from its own (possibly skewed) clock'
+);
+assert(
+  devicePresence.includes('if (device && typeof device.secondsAgo === \'number\') return device.secondsAgo;'),
+  'DevicePresence.secondsSince must prefer the server-provided secondsAgo over client-side math from a raw lastSeen timestamp'
+);
+assert(
+  networkSettings.includes('DevicePresence.secondsSince(d, now)'),
+  'the parent\'s own connected-devices table (network.js) must also use DevicePresence.secondsSince instead of duplicating its own clock-skew-prone calculation'
+);
+
+// pageラベルはdevice.mode(端末の役割)にフォールバックしてはならない。
+// 空文字のときmodeが漏れて出ると、起動直後は「client」等の意味不明な
+// 文字列がそのまま画面名として表示されてしまう
+assert(
+  !devicePresence.includes('device.page || device.mode') &&
+  !app.includes('device.page || device.mode') &&
+  !networkSettings.includes('d.page || d.mode'),
+  'no device-presence display site may fall back from page to mode, or an empty page value renders the terminal\'s role string (e.g. "client") as if it were a screen name'
 );

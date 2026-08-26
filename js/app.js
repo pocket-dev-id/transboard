@@ -1282,9 +1282,10 @@ const App = {
     // 稼働モード設定の整合性チェック（ローカルDBとlocalStorageの不整合を自動修復）
     await this._repairLocalShareMode();
 
-    // 子機モードのみ：ハートビート送信と接続断検知
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
+    // ハートビート送信（子機は必ず、親機も単独運用モードでなければ自身の
+    // 在席を他端末から見えるようにする。以前は子機モードのみ送っており、
+    // 親機の画面を実務端末として使っていても他の子機から永久に見えなかった）
+    if (!this.isStandalone()) {
       this._startHeartbeat();
     }
 
@@ -1606,7 +1607,7 @@ const App = {
           appVersion: AppState.appVersion || '',
           page: document.querySelector('.tab-btn.active')?.dataset.page || ''
         });
-        const ok = res !== null && res?.unauthorized !== true;
+        const ok = res !== null && res?.unauthorized !== true && res?.success !== false;
         this._setConnectionStatus(ok, res?.unauthorized ? 'unauthorized' : undefined);
         return ok;
       } catch (e) {
@@ -1655,7 +1656,10 @@ const App = {
     this._devicePresenceInFlight = true;
     try {
       const result = await API.getConnectedDevices();
-      const devices = Array.isArray(result) ? result : (result?.devices || []);
+      const rawDevices = Array.isArray(result) ? result : (result?.devices || []);
+      // 「他に誰がいるか」を見るための一覧なので、自分自身のハートビート登録は除外する
+      const myDeviceId = localStorage.getItem('_device_id') || '';
+      const devices = myDeviceId ? rawDevices.filter(d => d.deviceId !== myDeviceId) : rawDevices;
       this._connectedDevicesSnapshot = devices;
       this._renderDevicePresence(devices, null);
     } catch (e) {
@@ -1760,7 +1764,7 @@ const App = {
     const safeDevices = Array.isArray(devices) ? devices : [];
     const rows = safeDevices.slice(0, 12).map(device => {
       const name = UI.escapeHTML(device.name || device.hostname || device.deviceId || device.id || '端末');
-      const page = UI.escapeHTML(this._devicePageLabel(device.page || device.mode || ''));
+      const page = UI.escapeHTML(this._devicePageLabel(device.page || ''));
       const ward = UI.escapeHTML(device.wardId || '-');
       const seconds = DevicePresence.secondsSince(device);
       const seen = seconds === null ? '不明' : `${seconds}秒前`;

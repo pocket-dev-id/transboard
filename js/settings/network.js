@@ -609,8 +609,7 @@ Object.assign(Settings, {
                 const esc = value => UI.escapeHTML(String(value ?? ''));
                 const rawId = d.deviceId || d.id ? String(d.deviceId || d.id) : '';
                 const id = esc(rawId);
-                const lastSeen = new Date(d.lastSeen || d.last_seen || 0).getTime();
-                const seconds = lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
+                const seconds = DevicePresence.secondsSince(d, now);
                 const stale = seconds !== null && seconds > 20;
                 const appVersion = d.appVersion ? String(d.appVersion) : '';
                 const parentVersion = AppState.appVersion ? String(AppState.appVersion) : '';
@@ -625,7 +624,7 @@ Object.assign(Settings, {
                 const displayIp = esc(d.ip || '-');
                 const displayHostname = esc(d.hostname || d.hostName || '-');
                 const displayWard = esc(wardName || d.wardId || '-');
-                const displayPage = esc(d.page || d.mode || '-');
+                const displayPage = esc(d.page || '-');
                 return `
                   <tr style="opacity:${stale ? '.62' : '1'};">
                     <td><strong>${displayName}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>

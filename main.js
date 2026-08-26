@@ -4556,6 +4556,11 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
 // IPC通信でフロントからのREST-likeなデータベース操作を仲介する（ローカル処理のため isExternal = false）
 handleTrusted('db-request', async (event, { url, options }) => {
   // デバイス管理エンドポイント（DBを使わず親機メモリで処理）
+  if (url === 'device/heartbeat') {
+    let info;
+    try { info = JSON.parse((options && options.body) || '{}'); } catch { info = {}; }
+    return applyHeartbeat(info, '127.0.0.1');
+  }
   if (url === 'device/list') return { success: true, devices: getActiveDevices() };
   if (url === 'device/disconnect') {
     let info;
@@ -5983,7 +5988,7 @@ function sanitizeHeartbeatText(value) {
 function sanitizeHeartbeatInfo(info) {
   if (!info || typeof info !== 'object') return null;
   const deviceId = typeof info.deviceId === 'string' ? info.deviceId.trim() : '';
-  if (!deviceId || deviceId.length >= MAX_DEVICE_ID_LENGTH) return null;
+  if (!deviceId || deviceId.length > MAX_DEVICE_ID_LENGTH) return null;
   if (!DEVICE_ID_PATTERN.test(deviceId)) return null;
 
   const sanitized = { deviceId };
@@ -6001,7 +6006,27 @@ function sendJson(res, statusCode, payload) {
 
 function getActiveDevices() {
   const now = Date.now();
-  return Object.values(connectedDevices).filter(d => (now - d.lastSeen) < DEVICE_TIMEOUT_MS);
+  // secondsAgoはサーバー自身の時計で計算して返す。各端末が自分の時計で
+  // lastSeen(親機の絶対時刻)との差分を計算し直すと、端末間の時計のずれが
+  // そのまま「応答なし」の誤表示や見逃しにつながるため
+  return Object.values(connectedDevices)
+    .filter(d => (now - d.lastSeen) < DEVICE_TIMEOUT_MS)
+    .map(d => ({ ...d, secondsAgo: Math.max(0, Math.floor((now - d.lastSeen) / 1000)) }));
+}
+
+// ハートビート送信元(親機自身のローカルIPC・子機からのHTTP)で共通の登録処理。
+// 不正なペイロード(deviceId欠落等)はレジストリへ書き込まず、その旨を
+// 呼び出し元へ返す（以前は常にsuccess:trueを返しており、無効なdeviceIdの
+// 端末が「接続中」と表示され続けたまま他端末からは永久に見えなくなっていた）
+function applyHeartbeat(info, ip) {
+  const sanitizedInfo = sanitizeHeartbeatInfo(info);
+  if (!sanitizedInfo) return { success: false, message: 'Invalid device heartbeat payload' };
+  connectedDevices[sanitizedInfo.deviceId] = {
+    ...sanitizedInfo,
+    ip: ip || '',
+    lastSeen: Date.now(),
+  };
+  return { success: true };
 }
 
 // 接続機器レジストリの定期クリーンアップ（切断・再インストール等で使われなくなった
@@ -6559,16 +6584,8 @@ function startParentServer() {
           if (action === 'heartbeat' && req.method === 'POST') {
             let info;
             try { info = JSON.parse(body || '{}'); } catch { info = {}; }
-            const sanitizedInfo = sanitizeHeartbeatInfo(info);
-            if (sanitizedInfo) {
-              const clientIp = req.socket?.remoteAddress || '';
-              connectedDevices[sanitizedInfo.deviceId] = {
-                ...sanitizedInfo,
-                ip: clientIp.replace(/^::ffff:/, ''),
-                lastSeen: Date.now()
-              };
-            }
-            result = { success: true };
+            const clientIp = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+            result = applyHeartbeat(info, clientIp);
           } else if (action === 'list' && req.method === 'GET') {
             result = { success: true, devices: getActiveDevices() };
           } else if (action === 'disconnect' && req.method === 'POST') {
