@@ -6,9 +6,7 @@ const MAX_SIGNALING_MESSAGE_BYTES = 256 * 1024;
 const MAX_SIGNALING_QUEUE_KEYS = 256;
 const MAX_SIGNALING_ACK_CLIENTS = 128;
 const EXPIRATION_MS = 30_000;
-const MAX_BROADCAST_QUEUE = 100;
-const MAX_UNICAST_QUEUE = 50;
-const BROADCAST_TYPES = new Set(['offer', 'speech', 'answered']);
+const MAX_QUEUE_PER_KEY = 100;
 const ALLOWED_TYPES = new Set(['offer', 'answer', 'ice', 'hangup', 'busy', 'speech', 'answered']);
 
 function isSafeSignalingId(value) {
@@ -49,8 +47,13 @@ function createWebrtcSignalingService({ now = () => Date.now() } = {}) {
         return { success: false, message: 'Signaling message too large' };
       }
 
-      const isBroadcast = BROADCAST_TYPES.has(msg.type);
-      const key = isBroadcast ? `bc:${msg.to}` : msg.to;
+      // 「to」は病棟/検査室の表示状態から導かれる論理IDであり、特定の1台の物理端末を
+      // 指すとは限らない（同じ病棟を2台の端末が表示していれば両方が同じIDになる）。
+      // そのため全メッセージ種別を、ポーリングしているクライアント単位でack管理する
+      // 方式に統一する。先着1クライアントに渡した時点でキューから消してしまうと、
+      // その病棟/検査室を見ているだけの別端末が通話中の相手のICE候補やhangupを
+      // 横取りし、実際に通話している端末には届かなくなる不具合があった
+      const key = msg.to;
       if (!queue[key] && Object.keys(queue).length >= MAX_SIGNALING_QUEUE_KEYS) {
         return { success: false, message: 'Signaling queue is busy' };
       }
@@ -60,8 +63,7 @@ function createWebrtcSignalingService({ now = () => Date.now() } = {}) {
         timestamp: now(),
         ackedBy: Object.create(null),
       };
-      const max = isBroadcast ? MAX_BROADCAST_QUEUE : MAX_UNICAST_QUEUE;
-      if (queue[key].length >= max) queue[key].shift();
+      if (queue[key].length >= MAX_QUEUE_PER_KEY) queue[key].shift();
       queue[key].push(entry);
       return { success: true };
     }
@@ -73,24 +75,17 @@ function createWebrtcSignalingService({ now = () => Date.now() } = {}) {
       if (!isSafeSignalingId(id)) return { success: false, message: 'Missing or invalid "id" parameter' };
       if (!isSafeSignalingId(client)) return { success: false, message: 'Missing or invalid "client" parameter' };
       const current = now();
-      const bcKey = `bc:${id}`;
-      const bcQueue = queue[bcKey] || [];
-      const liveBcQueue = bcQueue.filter(item => current - item.timestamp < EXPIRATION_MS);
-      if (liveBcQueue.length > 0) queue[bcKey] = liveBcQueue;
-      else if (queue[bcKey]) delete queue[bcKey];
-      const bcMessages = [];
-      for (const item of liveBcQueue) {
+      const liveQueue = (queue[id] || []).filter(item => current - item.timestamp < EXPIRATION_MS);
+      if (liveQueue.length > 0) queue[id] = liveQueue;
+      else if (queue[id]) delete queue[id];
+      const messages = [];
+      for (const item of liveQueue) {
         if (item.ackedBy[client]) continue;
         if (Object.keys(item.ackedBy).length >= MAX_SIGNALING_ACK_CLIENTS) continue;
         item.ackedBy[client] = current;
-        bcMessages.push(item.msg);
+        messages.push(item.msg);
       }
-      const ucItems = queue[id] || [];
-      delete queue[id];
-      const ucMessages = ucItems
-        .filter(item => current - item.timestamp < EXPIRATION_MS)
-        .map(item => item.msg);
-      return { success: true, messages: [...bcMessages, ...ucMessages] };
+      return { success: true, messages };
     }
 
     return { success: false, message: 'Not Found' };

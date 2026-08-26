@@ -429,16 +429,27 @@ const CallPanel = {
     }
     else if (msg.type === 'busy') {
       if (!this._isFromCurrentPeer(msg)) return;
+      // 同じIDを2台以上の端末が表示している場合、片方が応答した直後にもう片方が
+      // 拒否/無応答タイムアウトしてbusyを送ってくることがある。既に確立済み
+      // (または相手からの応答待ち中に別の応答で確立済み)の通話をそれで切っては
+      // ならない
+      if (this.isConnected) return;
       this.cleanupCall('話し中、または応答がありません');
     }
     else if (msg.type === 'answered') {
       // 同じIDを持つ別端末が応答した → ダイアログを静かに閉じる。
       // 無応答タイムアウトを解除し忘れると、この端末で後からタイマーが発火して
-      // busyを送り、既に確立済みの通話を切ってしまう
-      if (!this.isConnected && !this.isCalling) {
+      // busyを送り、既に確立済みの通話を切ってしまう。
+      // _isRinging も見ることで、着信中でない(=無関係な別のダイアログを表示中の)
+      // 端末が誤ってそのダイアログを閉じないようにする
+      if (!this.isConnected && !this.isCalling && this._isRinging) {
         if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
         this._isRinging = false;
         this.stopRingTone();
+        // targetIdを残したままだと、この端末は「応答しなかった側」なのに
+        // 後続のice/hangupをこの通話のものとして誤って処理し続けてしまう
+        this.targetId = null;
+        this._pendingIceCandidates = [];
         const overlay = document.getElementById('webrtc-call-overlay');
         if (overlay) overlay.remove();
       }

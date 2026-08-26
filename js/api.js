@@ -704,22 +704,28 @@ const API = {
   /* ---------- デバイス管理（子機→親機ハートビート） ---------- */
   async deviceHeartbeat(info) {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
-    const apiToken = await getTerminalApiToken();
-    if (shareMode !== 'client' && shareMode !== 'child') return;
-    return parentFetch(`http://${parentIp}:3005/api/device/heartbeat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiToken ? { 'X-API-Token': apiToken } : {}),
-      },
-      body: JSON.stringify(info)
-      // 401を成功として扱うと、10秒ごとのハートビートが「接続中」を報告し、
-      // 5秒ポーリングが上げたトークン不一致バナーを打ち消してしまう。
-      // 失敗の理由(認証エラーかどうか)は呼び出し元のバナー表示に必要なので保持する。
-    }, API_HEARTBEAT_TIMEOUT_MS)
-      .then(assertParentResponseOk)
-      .catch(e => (e?.unauthorized ? { success: false, unauthorized: true } : null));
+    if (shareMode === 'client' || shareMode === 'child') {
+      const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+      const apiToken = await getTerminalApiToken();
+      return parentFetch(`http://${parentIp}:3005/api/device/heartbeat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiToken ? { 'X-API-Token': apiToken } : {}),
+        },
+        body: JSON.stringify(info)
+        // 401を成功として扱うと、10秒ごとのハートビートが「接続中」を報告し、
+        // 5秒ポーリングが上げたトークン不一致バナーを打ち消してしまう。
+        // 失敗の理由(認証エラーかどうか)は呼び出し元のバナー表示に必要なので保持する。
+      }, API_HEARTBEAT_TIMEOUT_MS)
+        .then(assertParentResponseOk)
+        .catch(e => (e?.unauthorized ? { success: false, unauthorized: true } : null));
+    }
+    // 親機自身も他端末から在席を確認できるよう、ローカルIPC経由で自分を登録する
+    if (window.electronAPI) {
+      return window.electronAPI.dbRequest({ url: 'device/heartbeat', options: { method: 'POST', body: JSON.stringify(info) } }).catch(() => null);
+    }
+    return null;
   },
 
   async getConnectedDevices() {
@@ -739,13 +745,10 @@ const API = {
 
   async disconnectDevice(deviceId) {
     const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
-    const apiToken = await getTerminalApiToken();
-    const url = (shareMode === 'client' || shareMode === 'child')
-      ? `http://${parentIp}:3005/api/device/disconnect`
-      : null;
-    if (url) {
-      return parentFetch(url, {
+    if (shareMode === 'client' || shareMode === 'child') {
+      const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+      const apiToken = await getTerminalApiToken();
+      return parentFetch(`http://${parentIp}:3005/api/device/disconnect`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -754,6 +757,13 @@ const API = {
         body: JSON.stringify({ deviceId }),
       }, API_HEARTBEAT_TIMEOUT_MS).then(r => r.json());
     }
+    // 親機自身の画面から切断する場合、HTTP経由ではなくローカルIPCで直接処理する
+    // (以前はここが未実装で常にundefinedを返し、呼び出し元が誤って
+    // 「削除しました」と成功トーストを出していた)
+    if (window.electronAPI) {
+      return window.electronAPI.dbRequest({ url: 'device/disconnect', options: { method: 'POST', body: JSON.stringify({ deviceId }) } }).catch(() => ({ success: false }));
+    }
+    return { success: false };
   },
 
   async parentAction(action, payload = {}, { method = 'POST', timeoutMs = API_DEFAULT_TIMEOUT_MS } = {}) {

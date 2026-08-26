@@ -1,5 +1,9 @@
 const DevicePresence = {
   secondsSince(device, now = Date.now()) {
+    // secondsAgoはサーバー(親機)自身の時計で計算済みの値。各ビューアーが自分の
+    // 時計とlastSeen(親機の絶対時刻)の差分を取り直すと、端末間の時計のずれが
+    // そのまま誤った経過時間表示になるため、サーバー計算値があれば必ずそちらを使う
+    if (device && typeof device.secondsAgo === 'number') return device.secondsAgo;
     const lastSeen = new Date(device.lastSeen || device.last_seen || 0).getTime();
     return lastSeen ? Math.max(0, Math.floor((now - lastSeen) / 1000)) : null;
   },
@@ -55,7 +59,7 @@ const DevicePresence = {
     if (error) return '接続端末一覧を取得できませんでした';
     return devices.slice(0, 10).map(device => {
       const name = device.name || device.deviceId || device.id || '端末';
-      const page = device.page || device.mode || '-';
+      const page = device.page || '-';
       const ward = device.wardId || '-';
       const seconds = secondsSince(device);
       const seen = seconds === null ? '不明' : `${seconds}秒前`;
