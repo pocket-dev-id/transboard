@@ -401,6 +401,11 @@ const SEEDS = {
     { id: "exam-echo", name: "エコー", code: "ECHO", standard_duration_min: 40 },
     { id: "exam-angio", name: "血管撮影", code: "ANGIO", standard_duration_min: 120 }
   ],
+  pickup_assistance_types: [
+    { id: "pat-stretcher", name: "ストレッチャー", is_active: true },
+    { id: "pat-wheelchair", name: "車いす", is_active: true },
+    { id: "pat-walk", name: "一人でOK", is_active: true }
+  ],
   staffs: [
     { id: "staff-1", name: "看護師A", role: "nurse", ward_id: "ward-1", is_active: true },
     { id: "staff-2", name: "看護師B", role: "nurse", ward_id: "ward-1", is_active: true },
@@ -2951,6 +2956,7 @@ function processWebrtcRequest(method, urlPath, bodyStr) {
 
 const ALLOWED_TABLES = new Set([
   'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs',
+  'pickup_assistance_types',
   'system_settings', 'transfer_events', 'transfer_status_logs',
   'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
   'audit_logs', 'handover_notes', 'bed_occupancy_log',
@@ -2959,6 +2965,7 @@ const ALLOWED_TABLES = new Set([
 // 共有マスターは親機を唯一の書き込み元とし、更新時刻で子機同士の上書きを検知する。
 const MASTER_REVISION_TABLES = new Set([
   'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
+  'pickup_assistance_types',
 ]);
 
 function checkMasterRevision(table, existing, payload) {
@@ -3319,7 +3326,7 @@ function getJsonSetting(db, id, fallback) {
 }
 
 function sanitizeStatusExtraFields(extraFields) {
-  const allowed = new Set(['patient_ic_tag_id', 'note', 'escort_staff_id', 'estimated_pickup_at']);
+  const allowed = new Set(['patient_ic_tag_id', 'note', 'escort_staff_id', 'estimated_pickup_at', 'pickup_assistance_type_id', 'pickup_assistance_note']);
   const clean = {};
   if (!extraFields || typeof extraFields !== 'object' || Array.isArray(extraFields)) return clean;
   Object.entries(extraFields).forEach(([key, value]) => {

@@ -13,6 +13,7 @@ const AppState = {
   beds: [],
   examRooms: [],
   examTypes: [],
+  pickupAssistanceTypes: [],
   staffs: [],
   allStaffs: [],
   wards: [],

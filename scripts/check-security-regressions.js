@@ -57,6 +57,7 @@ const modal = read('js/modal.js');
 const carryover = read('js/carryover.js');
 const maintenance = read('js/settings/maintenance.js');
 const examroom = read('js/examroom.js');
+const ui = read('js/ui.js');
 
 assert(!main.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
 assert(!/\bexecSync\s*\(/.test(main), 'Shell command strings must not use execSync');
@@ -2001,4 +2002,98 @@ assert(
     return body.includes('this._callSourceId || this.getMyId()') && body.includes('.filter(Boolean)');
   })(),
   'startListening must keep polling only _callSourceId while a call is active/in progress, even after switching to multi-id polling for the idle case'
+);
+
+// 終了登録(迎え要)時に選ばれた「お迎えに必要なもの」は、status/updateの
+// extraFieldsを経由してtransfer_eventsに書き込まれる。唯一のゲートである
+// sanitizeStatusExtraFieldsの許可リストに無いと、クライアントが送っても
+// サーバー側で黙って落とされる
+assert(
+  (() => {
+    const idx = main.indexOf('function sanitizeStatusExtraFields');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes("'pickup_assistance_type_id'") && body.includes("'pickup_assistance_note'");
+  })(),
+  'sanitizeStatusExtraFields must allow pickup_assistance_type_id and pickup_assistance_note, or the pickup-assistance selection made at the exam room is silently discarded on save'
+);
+
+// pickup_assistance_typesマスターは、既存のexam_typesと同じ汎用テーブル
+// CRUD(ALLOWED_TABLES)と楽観的排他(MASTER_REVISION_TABLES)の両方に
+// 登録されていないと、設定画面のマスター管理が保存できない/衝突検知が働かない
+assert(
+  (() => {
+    const idx = main.indexOf('const ALLOWED_TABLES = new Set([');
+    const end = main.indexOf(']);', idx);
+    return idx >= 0 && end > idx && main.slice(idx, end).includes("'pickup_assistance_types'");
+  })(),
+  'ALLOWED_TABLES must include pickup_assistance_types, or the master management screen cannot save via the generic table CRUD'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('const MASTER_REVISION_TABLES = new Set([');
+    const end = main.indexOf(']);', idx);
+    return idx >= 0 && end > idx && main.slice(idx, end).includes("'pickup_assistance_types'");
+  })(),
+  'MASTER_REVISION_TABLES must include pickup_assistance_types, or concurrent edits from multiple terminals silently overwrite each other'
+);
+
+// 検査室側の2つの遷移経路(手動ボタン・ICスキャン)は、どちらもPICKUP_REQUIRED
+// への遷移時に選択モーダルを呼んでextraFieldsへ結果を渡さなければならない。
+// {}固定のままだと選択内容が病棟側へ一切伝わらない
+assert(
+  (() => {
+    const idx = examroom.indexOf('async _updateStatus(eventId, newStatus');
+    const end = examroom.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = examroom.slice(idx, end);
+    return body.includes("this._selectPickupAssistance(bedLabel)") &&
+      body.includes('API.updateEventStatus(eventId, newStatus, extraFields');
+  })(),
+  '_updateStatus must call _selectPickupAssistance and forward its result as extraFields for PICKUP_REQUIRED, or the manual button never conveys pickup-assistance info to the ward'
+);
+assert(
+  (() => {
+    const idx = examroom.indexOf('async _handleScan(icValue)');
+    const end = examroom.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = examroom.slice(idx, end);
+    return body.includes("this._selectPickupAssistance(bedName)") &&
+      body.includes('API.updateEventStatus(matchEvent.id, action.toStatus, extraFields');
+  })(),
+  '_handleScan must call _selectPickupAssistance and forward its result as extraFields for PICKUP_REQUIRED, or scanning to register pickup never conveys the choice to the ward'
+);
+
+// 病棟側3箇所(ベッドカード・詳細モーダル・トースト)は、同じUI.pickupAssistanceLabel
+// ヘルパーでラベルを解決しなければならない。各所で個別に組み立てると、
+// マスター名やotherの扱いが表示箇所ごとに食い違う恐れがある
+assert(
+  ui.includes('pickupAssistanceLabel(event)') &&
+  ui.includes("if (event.pickup_assistance_type_id === 'other')"),
+  'UI.pickupAssistanceLabel must exist and handle the other sentinel, or the shared display helper used by bedmap/modal/app is missing or incomplete'
+);
+assert(
+  bedmap.includes('UI.pickupAssistanceLabel(event)') &&
+  bedmap.includes('bed-pickup-assist-badge') &&
+  bedmap.includes('pickupAssistHtml = `<div class="bed-pickup-assist-badge"') &&
+  bedmap.includes('${pickupAssistHtml}'),
+  'bedmap.js must compute a pickup-assistance badge via UI.pickupAssistanceLabel AND actually interpolate it into the rendered card, or the ward bed card never shows what is needed for pickup'
+);
+assert(
+  modal.includes('const pickupAssistLabel = UI.pickupAssistanceLabel(event);') &&
+  modal.includes('お迎えに必要なもの') &&
+  modal.includes('${pickupAssistLabel ? `（${UI.escapeHTML(pickupAssistLabel)}）') &&
+  modal.includes("${pickupAssistLabel && event.current_status === 'PICKUP_REQUIRED' ? `"),
+  'modal.js must surface UI.pickupAssistanceLabel in both the urgent banner and the info grid (gated to PICKUP_REQUIRED) of the bed detail view, or the ward detail modal never shows or wrongly persists what is needed for pickup'
+);
+assert(
+  (() => {
+    const idx = app.indexOf('迎え要通知');
+    const end = app.indexOf('\n      }', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes('UI.pickupAssistanceLabel(e)') && body.includes('${assistLabel');
+  })(),
+  'app.js PICKUP_REQUIRED toast block must call UI.pickupAssistanceLabel and interpolate it into the toast message, or the pop-up notification never conveys what is needed for pickup'
 );

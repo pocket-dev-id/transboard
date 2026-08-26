@@ -588,10 +588,11 @@ const BedModal = {
       `;
     }
 
+    const pickupAssistLabel = UI.pickupAssistanceLabel(event);
     const urgentBanner = event.current_status === 'PICKUP_REQUIRED'
       ? `<div class="modal-urgent-banner">
            <i class="fas fa-bell modal-urgent-bell"></i>
-           <span>迎えが必要です。早急に対応してください。</span>
+           <span>迎えが必要です。早急に対応してください。${pickupAssistLabel ? `（${UI.escapeHTML(pickupAssistLabel)}）` : ''}</span>
          </div>`
       : '';
 
@@ -635,6 +636,11 @@ const BedModal = {
             <div class="label">想定所要時間</div>
             <div class="value">${event.expected_duration_min ? event.expected_duration_min + '分' : '--'}</div>
           </div>
+          ${pickupAssistLabel && event.current_status === 'PICKUP_REQUIRED' ? `
+          <div class="modal-info-item">
+            <div class="label">お迎えに必要なもの</div>
+            <div class="value">${UI.escapeHTML(pickupAssistLabel)}</div>
+          </div>` : ''}
           <div class="modal-info-item" style="grid-column: span 2; border-top: 1px dashed rgba(0,0,0,0.06); padding-top: 8px; margin-top: 4px;">
             <div class="label" style="margin-bottom:4px;">備考（車椅子・ストレッチャー等）</div>
             <div class="value" style="display:flex; align-items:center; gap:8px; width: 100%;">

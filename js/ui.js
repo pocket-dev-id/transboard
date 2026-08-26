@@ -119,6 +119,19 @@ const UI = {
     return `<div class="${classAttr}"${styleAttr}><i class="fas ${icon}"></i> ${this.escapeHTML(name)}${suffix}</div>`;
   },
 
+  // 終了登録(迎え要)時に選ばれた「お迎えに必要なもの」の表示ラベル。
+  // 未選択ならnull。「その他」選択時は自由記入テキスト（未入力なら「その他」）を返す。
+  // 病床マップ・ベッド詳細モーダル・トースト通知の3箇所から共有される
+  pickupAssistanceLabel(event) {
+    if (!event || !event.pickup_assistance_type_id) return null;
+    if (event.pickup_assistance_type_id === 'other') {
+      return event.pickup_assistance_note || 'その他';
+    }
+    const all = AppState.allPickupAssistanceTypes || AppState.pickupAssistanceTypes || [];
+    const t = all.find(x => x.id === event.pickup_assistance_type_id);
+    return t ? t.name : null;
+  },
+
   /* ---------- 時刻フォーマット ---------- */
   formatTime(ms) {
     if (!ms) return '--:--';

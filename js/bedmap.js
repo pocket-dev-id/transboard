@@ -297,6 +297,14 @@ const BedMap = {
       icBadgeHtml = `<div class="bed-ic-badge" style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; margin-bottom:2px;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</div>`;
     }
 
+    let pickupAssistHtml = '';
+    if (status === 'PICKUP_REQUIRED') {
+      const assistLabel = UI.pickupAssistanceLabel(event);
+      if (assistLabel) {
+        pickupAssistHtml = `<div class="bed-pickup-assist-badge" style="background:#fef2f2; color:#b91c1c; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #fecaca; margin-bottom:2px;" title="お迎えに必要なもの: ${UI.escapeHTML(assistLabel)}"><i class="fas fa-wheelchair"></i> ${UI.escapeHTML(assistLabel)}</div>`;
+      }
+    }
+
     // 備考表示モードの読み込み
     const remarksSelect = document.getElementById('sel-remarks-mode');
     const remarksMode = remarksSelect ? remarksSelect.value : 'icon';
@@ -367,6 +375,7 @@ const BedMap = {
         <div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top:2px;">
           ${staffHtml}
           ${icBadgeHtml}
+          ${pickupAssistHtml}
           ${remarksHtml}
           ${scheduleBadgeHtml}
         </div>

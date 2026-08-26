@@ -13,6 +13,7 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 | `beds` | ベッドマスタ（患者在籍情報を含む） |
 | `exam_rooms` | 検査室マスタ |
 | `exam_types` | 検査種別マスタ |
+| `pickup_assistance_types` | お迎え介助マスタ（終了登録時に選べる「お迎えに必要なもの」の選択肢） |
 | `staffs` | スタッフマスタ |
 | `system_settings` | システム設定（key-valueペア） |
 | `transfer_events` | 移送イベント（移送1件ごとのレコード） |
@@ -99,6 +100,8 @@ CSVでは `;` 区切りの文字列として入出力する。`exam_type_ids` �
 | `note` | string | 備考 |
 | `created_at` | number | レコード作成日時 |
 | `patient_ic_tag_id` | string \| null | NFC/ICタグID |
+| `pickup_assistance_type_id` | string \| null | 終了登録（迎え要）時に選んだ「お迎えに必要なもの」。`pickup_assistance_types`のID、または自由記入を表す特別値`"other"`。任意項目のため未選択時はキー自体が存在しない |
+| `pickup_assistance_note` | string \| null | `pickup_assistance_type_id`が`"other"`のときの自由記入テキスト |
 
 **ステータス遷移:**
 ```
