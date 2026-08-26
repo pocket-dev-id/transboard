@@ -1849,9 +1849,12 @@ const App = {
         API.getExamTypes(),
         API.getPickupAssistanceTypes(),
         // 単発の一時的な失敗でマスタ読み込み全体(wards/beds等)まで失敗させない
-        // よう、staffsだけは前回ロード分へのフォールバックを許容する
+        // よう、staffsとsystem_settingsは前回ロード分へのフォールバックを許容する。
+        // system_settingsは失敗時に[]ではなくnullを返し、下で「取得できた場合
+        // だけ上書きする」staffsと同じ扱いにする(失敗の度に現在の設定が空へ
+        // 上書きされ、通知・表示調整・運用設定が既定値に戻って見えてしまうため)
         API.getAllStaffs().catch(() => null),
-        API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : []).catch(() => [])
+        API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : null).catch(() => null)
       ]);
       AppState.wards = wards.slice().sort((a, b) =>
         (Number(a.sort_order) || 999999) - (Number(b.sort_order) || 999999) ||
@@ -1871,10 +1874,14 @@ const App = {
         AppState.allStaffs = AppState.allStaffs || [];
         AppState.staffs = AppState.staffs || [];
       }
-      AppState.systemSettings = systemSettings;
+      if (Array.isArray(systemSettings)) {
+        AppState.systemSettings = systemSettings;
+        this._checkParentIdentity(systemSettings);
+      } else {
+        AppState.systemSettings = AppState.systemSettings || [];
+      }
       AppState.stickyNotes = [];
-      this._checkParentIdentity(systemSettings);
-      console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: systemSettings.length });
+      console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: AppState.systemSettings.length });
 
       // 申し送りメモを読み込む（現在病棟）
       if (loadHandover && !this.isExamTerminal() && typeof Handover !== 'undefined') {
