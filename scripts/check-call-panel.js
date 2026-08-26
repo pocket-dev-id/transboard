@@ -101,8 +101,12 @@ const localStorageMock = {
 };
 
 // ── WebRTC / メディア モック（実際のネゴシエーションは行わない）──
-function makeFakeTrack(kind) {
-  return { kind, enabled: true, stop() { this._stopped = true; } };
+function makeFakeTrack(kind, opts) {
+  const track = { kind, enabled: true, stop() { this._stopped = true; } };
+  if (opts && opts.applyConstraints) {
+    track.applyConstraints = opts.applyConstraints;
+  }
+  return track;
 }
 class FakeMediaStream {
   constructor(tracks = []) { this._tracks = tracks.slice(); }
@@ -608,6 +612,111 @@ async function main() {
   await CallPanel.handleSignalingMessage({ type: 'busy', from: 'east-7f' });
   assert.strictEqual(cleanupCallCount, 0, '通話の文脈が無いときのhangup/busyはcleanupCallを呼ばないこと');
   CallPanel.cleanupCall = originalCleanup;
+
+  // 19) シグナリングpoll用のclient識別子(getClientId)は、他端末が
+  //     GET /api/device/list 経由で閲覧できる_device_idを流用しないこと。
+  //     同一値を再利用してackを横取りされる攻撃を防ぐための識別子なので、
+  //     _device_idとは別の秘匿値として生成され、以後は安定して返ること
+  await resetAll();
+  localStorageStore.delete('_device_id');
+  localStorageStore.delete('_signaling_client_id');
+  localStorageStore.set('_device_id', 'device-abc-123');
+  const clientId = CallPanel.getClientId();
+  assert.ok(clientId, 'getClientId()は値を返すこと');
+  assert.notStrictEqual(clientId, 'device-abc-123', 'BUG FIX: getClientId()は他端末から閲覧可能な_device_idをそのまま流用しないこと');
+  assert.strictEqual(localStorageStore.get('_signaling_client_id'), clientId, '生成したclient idは_device_idとは別のキー(_signaling_client_id)で永続化されること');
+  const clientId2 = CallPanel.getClientId();
+  assert.strictEqual(clientId2, clientId, '2回目以降の呼び出しでも同じclient idが安定して返ること');
+
+  // 20) 画質変更(lowerVideoQuality): 実際の切り替えが成功した場合のみプリセットを
+  //     確定し、失敗時は元の設定のまま・カメラを保持し続けないこと
+  function setupVideoCall(videoTrackOpts) {
+    const audioTrack = makeFakeTrack('audio');
+    const videoTrack = makeFakeTrack('video', videoTrackOpts);
+    CallPanel.localStream = new FakeMediaStream([audioTrack, videoTrack]);
+    CallPanel.peerConnection = new FakeRTCPeerConnection();
+    const sender = CallPanel.peerConnection.addTrack(videoTrack);
+    return { audioTrack, videoTrack, sender };
+  }
+  const originalGetUserMedia = navigatorMock.mediaDevices.getUserMedia;
+
+  // 20a) 既存トラックのapplyConstraints()が成功すれば、getUserMedia()での
+  //      カメラ再取得は行わずプリセットを更新すること
+  await resetAll();
+  CallPanel._videoQualityPreset = 'high';
+  let applyConstraintsCalls = 0;
+  setupVideoCall({ applyConstraints: () => { applyConstraintsCalls++; return Promise.resolve(); } });
+  let getUserMediaCalled = false;
+  navigatorMock.mediaDevices.getUserMedia = (c) => { getUserMediaCalled = true; return originalGetUserMedia(c); };
+  await CallPanel.lowerVideoQuality();
+  assert.strictEqual(applyConstraintsCalls, 1, 'BUG FIX: まず既存トラックのapplyConstraints()が試みられること');
+  assert.strictEqual(getUserMediaCalled, false, 'applyConstraints()が成功すればgetUserMedia()での再取得は行われないこと');
+  assert.strictEqual(CallPanel._videoQualityPreset, 'medium', 'applyConstraints成功でプリセットが更新されること');
+  assert.ok(toasts.some((t) => t.type === 'info' && t.msg.includes('標準')), '成功時は成功トーストが表示されること');
+  navigatorMock.mediaDevices.getUserMedia = originalGetUserMedia;
+
+  // 20b) applyConstraints()が失敗した場合はgetUserMedia()再取得にフォールバックし、
+  //      replaceTrack()成功後にのみプリセットが更新され、古いトラックは停止されること
+  await resetAll();
+  CallPanel._videoQualityPreset = 'high';
+  const { videoTrack: oldTrackB, sender: senderB } = setupVideoCall({
+    applyConstraints: () => Promise.reject(new Error('not supported')),
+  });
+  await CallPanel.lowerVideoQuality();
+  assert.strictEqual(CallPanel._videoQualityPreset, 'medium', 'applyConstraints失敗時はgetUserMedia再取得にフォールバックしプリセットが更新されること');
+  assert.strictEqual(senderB.track.kind, 'video', 'replaceTrack()で新トラックに置き換わること');
+  assert.notStrictEqual(senderB.track, oldTrackB, '差し替え後のsender.trackは新しく取得したトラックであること');
+  assert.strictEqual(oldTrackB._stopped, true, '古い映像トラックが停止されること');
+  assert.notStrictEqual(CallPanel.localStream.getVideoTracks()[0], oldTrackB, 'localStreamが新しいトラックに差し替わること');
+  assert.ok(toasts.some((t) => t.type === 'info'), '成功トーストが表示されること');
+
+  // 20c) BUG FIX: getUserMedia()自体が失敗した場合、プリセット・localStorageは
+  //      元のまま(成功を騙らない)で、警告トーストのみ表示されること
+  await resetAll();
+  CallPanel._videoQualityPreset = 'high';
+  setupVideoCall({ applyConstraints: () => Promise.reject(new Error('not supported')) });
+  const storedQualityBefore = localStorageStore.get('tbs_video_quality');
+  navigatorMock.mediaDevices.getUserMedia = () => Promise.reject(new Error('camera busy'));
+  await CallPanel.lowerVideoQuality();
+  assert.strictEqual(CallPanel._videoQualityPreset, 'high', 'BUG FIX: 再取得に失敗した場合プリセットは元のままであること');
+  assert.strictEqual(localStorageStore.get('tbs_video_quality'), storedQualityBefore, 'BUG FIX: 再取得に失敗した場合localStorageも書き換えられないこと');
+  assert.ok(toasts.some((t) => t.type === 'warning' && t.msg.includes('失敗')), 'BUG FIX: 失敗時は警告トーストが表示されること');
+  assert.ok(!toasts.some((t) => t.type === 'info'), 'BUG FIX: 失敗時に成功を騙るトーストが出ないこと');
+  navigatorMock.mediaDevices.getUserMedia = originalGetUserMedia;
+
+  // 20d) BUG FIX: 新しい映像トラックを取得できても対応するsenderが見つからない
+  //      場合は失敗として扱い、新規取得トラックを停止する(カメラを保持し続けない)こと
+  await resetAll();
+  CallPanel._videoQualityPreset = 'high';
+  CallPanel.localStream = new FakeMediaStream([makeFakeTrack('audio'), makeFakeTrack('video')]);
+  CallPanel.peerConnection = new FakeRTCPeerConnection(); // 映像senderを追加しない
+  let capturedNewTrack = null;
+  navigatorMock.mediaDevices.getUserMedia = (c) => originalGetUserMedia(c).then((stream) => {
+    capturedNewTrack = stream.getVideoTracks()[0];
+    return stream;
+  });
+  await CallPanel.lowerVideoQuality();
+  assert.ok(capturedNewTrack, 'このシナリオではgetUserMediaで新トラックが取得されること(前提の確認)');
+  assert.strictEqual(capturedNewTrack._stopped, true, 'BUG FIX: senderが見つからない場合、新規取得トラックが停止されカメラを保持し続けないこと');
+  assert.strictEqual(CallPanel._videoQualityPreset, 'high', 'senderが見つからない場合プリセットは変更されないこと');
+  assert.ok(toasts.some((t) => t.type === 'warning'), 'senderが見つからない場合も警告トーストが表示されること');
+  navigatorMock.mediaDevices.getUserMedia = originalGetUserMedia;
+
+  // 20e) 既に最低画質の場合は何もせず案内するだけであること
+  await resetAll();
+  CallPanel._videoQualityPreset = 'low';
+  await CallPanel.lowerVideoQuality();
+  assert.ok(toasts.some((t) => t.type === 'info' && t.msg.includes('すでに最低画質')), '既に最低画質のときはその旨を通知して終了すること');
+  assert.strictEqual(CallPanel._videoQualityPreset, 'low', '既に最低画質のときプリセットは変わらないこと');
+
+  // 20f) 通話中でない(peerConnection/localStreamが無い)場合は設定のみ更新すること
+  await resetAll();
+  CallPanel._videoQualityPreset = 'high';
+  CallPanel.peerConnection = null;
+  CallPanel.localStream = null;
+  await CallPanel.lowerVideoQuality();
+  assert.strictEqual(CallPanel._videoQualityPreset, 'medium', '通話中でなくても設定のみ更新されること');
+  assert.strictEqual(localStorageStore.get('tbs_video_quality'), 'medium', 'localStorageにも保存されること');
 
   await resetAll();
   console.log('Call panel checks passed.');

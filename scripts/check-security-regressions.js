@@ -2420,3 +2420,83 @@ assert(
   })(),
   'showCallSelectionDialog must disable the voice button when no mic is found, the video button when no mic or no camera is found, and must not disable either button when enumeration merely failed'
 );
+
+// ── シグナリングのack識別子(client)は他端末から閲覧可能な値を流用してはならない ──
+
+// _device_idはハートビートで送信され、GET /api/device/list を叩ける端末
+// (共有APIトークンさえあれば全端末が叩ける)からは他端末の正確な値がそのまま
+// 見える。これをclientとして流用すると、それを指定するだけで本来別端末に
+// 届くはずのメッセージを先にack(受信済み扱いに)でき、以後その端末は同じ
+// メッセージを二度と受け取れなくなる(着信・ICE候補・切断通知等の横取りに
+// よる着信妨害)。ハートビート等どのAPIレスポンスにも含まれない、別の秘匿値を
+// 使わなければならない
+assert(
+  (() => {
+    const idx = call.indexOf('getClientId() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes("localStorage.getItem('_signaling_client_id')") &&
+      !body.includes("localStorage.getItem('_device_id')");
+  })(),
+  'CallPanel.getClientId must use a dedicated, non-public secret (not the heartbeat _device_id that GET /api/device/list exposes to every token-holding terminal), or any terminal can steal another terminal\'s incoming signaling messages by pre-acking them'
+);
+assert(
+  call.includes("typeof crypto.randomUUID === 'function'"),
+  'the signaling client secret generator must prefer crypto.randomUUID() for strong entropy, or the fallback id remains guessable enough to brute-force the ack-stealing attack'
+);
+
+// ── 画質変更(lowerVideoQuality)は失敗時に設定・UIを成功扱いにしてはならない ──
+
+// 以前はメディア再取得/replaceTrack()より前にプリセットをlocalStorageへ
+// 保存していたため、途中で失敗しても設定とUIだけが新しい画質を騙り、
+// 実際の映像は変わっていなかった
+assert(
+  (() => {
+    const idx = call.indexOf('async lowerVideoQuality() {');
+    const end = call.indexOf('\n  _onVideoQualityChanged', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    // 元のバグの形そのもの: 「既に最低画質」ガードの直後、通話中かどうかの
+    // 分岐にすら入る前に、newPresetKeyを無条件でthis._videoQualityPreset/
+    // localStorageへ書き込んでいないこと
+    const guardIdx = body.indexOf('if (idx >= order.length - 1)');
+    const notInCallIdx = body.indexOf('if (!this.peerConnection || !this.localStream) {');
+    if (guardIdx < 0 || notInCallIdx < 0) return false;
+    const immediatelyAfterGuard = body.slice(guardIdx, notInCallIdx);
+    if (immediatelyAfterGuard.includes("localStorage.setItem('tbs_video_quality'") ||
+      immediatelyAfterGuard.includes('this._videoQualityPreset = newPresetKey;')) {
+      return false;
+    }
+    // getUserMedia()での再取得からreplaceTrack()成功までの間にも
+    // 現れてはならない(先に保存していたら未達成の画質を騙ることになる)
+    const getUserMediaIdx = body.indexOf('await navigator.mediaDevices.getUserMedia(');
+    const replaceTrackIdx = body.indexOf('await sender.replaceTrack(newTrack);');
+    if (getUserMediaIdx < 0 || replaceTrackIdx < 0 || replaceTrackIdx < getUserMediaIdx) return false;
+    const betweenAcquireAndReplace = body.slice(getUserMediaIdx, replaceTrackIdx);
+    return !betweenAcquireAndReplace.includes("localStorage.setItem('tbs_video_quality'");
+  })(),
+  'lowerVideoQuality must persist the new quality preset only after getUserMedia()/replaceTrack() succeed, not before attempting them'
+);
+assert(
+  (() => {
+    const idx = call.indexOf('async lowerVideoQuality() {');
+    const end = call.indexOf('\n  _onVideoQualityChanged', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    const catchIdx = body.indexOf('} catch (e) {');
+    if (catchIdx < 0) return false;
+    const catchBody = body.slice(catchIdx);
+    return catchBody.includes('if (newStream) newStream.getTracks().forEach(t => t.stop());') &&
+      catchBody.includes("UI.toast('画質の変更に失敗しました");
+  })(),
+  'lowerVideoQuality must stop any newly-acquired stream and warn the user on failure, or a failed switch silently keeps the camera open while claiming success'
+);
+assert(
+  call.includes("throw new Error(sender ? '新しいビデオトラックを取得できませんでした' : '既存の映像senderが見つかりませんでした');"),
+  'lowerVideoQuality must treat "got a new track but no matching sender" as a failure (so the new track gets stopped in the catch block), not silently drop the unused track and keep the camera open'
+);
+assert(
+  call.includes('existingTrack.applyConstraints({'),
+  'lowerVideoQuality must try applyConstraints() on the existing track before falling back to re-acquiring the camera via getUserMedia()'
+);

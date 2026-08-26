@@ -240,13 +240,32 @@ const CallPanel = {
     }
   },
 
+  // シグナリングpoll用のack識別子(client)には、他端末が閲覧できる_device_id
+  // を流用してはならない。_device_idはハートビートで送信され、
+  // GET /api/device/list を叩ける端末(共有APIトークンさえあれば全端末が叩ける)
+  // からは他端末の正確な値がそのまま見える。流用すると、それを使って
+  // clientに指定するだけで、本来別端末に届くはずのメッセージを自分が
+  // 先にack(受信済み扱いに)でき、以後その端末は同じメッセージを二度と
+  // 受け取れなくなる(着信・ICE候補・切断通知等の横取りによる着信妨害)。
+  // 十分なエントロピーを持つ、ハートビート等どのAPIレスポンスにも
+  // 含まれない秘匿値を別途生成して使う
   getClientId() {
-    let id = localStorage.getItem('_device_id');
+    let id = localStorage.getItem('_signaling_client_id');
     if (!id) {
-      id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      localStorage.setItem('_device_id', id);
+      id = `sig-${this._generateSignalingClientSecret()}`;
+      localStorage.setItem('_signaling_client_id', id);
     }
     return id;
+  },
+
+  _generateSignalingClientSecret() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    // crypto.randomUUID()が無い環境向けのフォールバック。単発のMath.random()
+    // (base36で最大6桁≒31bit相当)では総当たりの余地が残るため複数回連結する
+    return [Date.now().toString(36), Math.random().toString(36).slice(2),
+      Math.random().toString(36).slice(2), Math.random().toString(36).slice(2)].join('-');
   },
 
   // 病棟IDは管理画面で任意の文字列を設定できる（'ward-'接頭辞は既定の例示に過ぎず必須ではない）
@@ -1172,44 +1191,92 @@ const CallPanel = {
   },
 
   // ── 画質を1段階下げる ──
+  // プリセットの保存(_videoQualityPreset/localStorage)は、実際にメディアの
+  // 切り替えが成功した後にのみ行う。先に保存してしまうと、途中で失敗しても
+  // 設定・UIだけ変更後の画質を騙り、実際の映像は変わっていない状態になる
   async lowerVideoQuality() {
     const order = ['high', 'medium', 'low'];
-    const idx = order.indexOf(this._videoQualityPreset);
+    const oldPreset = this._videoQualityPreset;
+    const idx = order.indexOf(oldPreset);
     if (idx >= order.length - 1) { UI.toast('すでに最低画質です', 'info'); return; }
-    this._videoQualityPreset = order[idx + 1];
-    localStorage.setItem('tbs_video_quality', this._videoQualityPreset);
+    const newPresetKey = order[idx + 1];
+    const preset = this.VIDEO_QUALITY_PRESETS[newPresetKey];
+    const names = { low: '低画質(320×240)', medium: '標準(640×480)', high: '高画質(1280×720)' };
 
-    if (this.peerConnection && this.localStream) {
-      const preset = this.VIDEO_QUALITY_PRESETS[this._videoQualityPreset];
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { width: { ideal: preset.width }, height: { ideal: preset.height },
-            frameRate: { ideal: preset.frameRate },
-            ...(this._selectedVideoInput ? { deviceId: { exact: this._selectedVideoInput } } : {}) }
-        });
-        const newTrack = newStream.getVideoTracks()[0];
-        const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
-        if (sender && newTrack) {
-          await sender.replaceTrack(newTrack);
-          await this._applyBitrateConstraint(sender, preset.maxBitrateBps);
-          const oldVideoTracks = this.localStream.getVideoTracks();
-          // localStreamを新トラックで更新し、通話終了時のcleanupCall()が新トラックも
-          // 停止できるようにする(そのままだとカメラが解放されず動作し続ける)
-          this.localStream = new MediaStream([newTrack, ...this.localStream.getAudioTracks()]);
-          const localVideo = document.getElementById('webrtc-local-video');
-          if (localVideo) localVideo.srcObject = this.localStream;
-          oldVideoTracks.forEach(t => t.stop());
-        }
-      } catch(e) { console.error('[WebRTC] lowerQuality:', e); }
+    if (!this.peerConnection || !this.localStream) {
+      // 通話中でなければ切り替える実体が無いため、設定値のみ更新して終える
+      this._videoQualityPreset = newPresetKey;
+      localStorage.setItem('tbs_video_quality', newPresetKey);
+      this._onVideoQualityChanged(newPresetKey, names);
+      return;
     }
 
-    const names = { low: '低画質(320×240)', medium: '標準(640×480)', high: '高画質(1280×720)' };
-    UI.toast(`画質を「${names[this._videoQualityPreset]}」に変更しました`, 'info');
+    const sender = this.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+    const existingTrack = this.localStream.getVideoTracks()[0];
+    let newStream = null;
+    try {
+      // まず既存トラックへのapplyConstraints()で済ませられないか試す。
+      // カメラの再取得(getUserMedia)を避けられれば、機種によっては起きる
+      // 映像の一瞬の途切れやカメラの再初期化を避けられる
+      if (sender && existingTrack && typeof existingTrack.applyConstraints === 'function') {
+        try {
+          await existingTrack.applyConstraints({
+            width: { ideal: preset.width },
+            height: { ideal: preset.height },
+            frameRate: { ideal: preset.frameRate },
+          });
+          await this._applyBitrateConstraint(sender, preset.maxBitrateBps);
+          this._videoQualityPreset = newPresetKey;
+          localStorage.setItem('tbs_video_quality', newPresetKey);
+          this._onVideoQualityChanged(newPresetKey, names);
+          return;
+        } catch (constraintErr) {
+          console.warn('[WebRTC] applyConstraints失敗、カメラを再取得します:', constraintErr);
+          // ここでは中断せず、下のgetUserMedia再取得へフォールバックする
+        }
+      }
+
+      newStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { width: { ideal: preset.width }, height: { ideal: preset.height },
+          frameRate: { ideal: preset.frameRate },
+          ...(this._selectedVideoInput ? { deviceId: { exact: this._selectedVideoInput } } : {}) }
+      });
+      const newTrack = newStream.getVideoTracks()[0];
+      if (!sender || !newTrack) {
+        throw new Error(sender ? '新しいビデオトラックを取得できませんでした' : '既存の映像senderが見つかりませんでした');
+      }
+      await sender.replaceTrack(newTrack);
+      await this._applyBitrateConstraint(sender, preset.maxBitrateBps);
+      const oldVideoTracks = this.localStream.getVideoTracks();
+      // localStreamを新トラックで更新し、通話終了時のcleanupCall()が新トラックも
+      // 停止できるようにする(そのままだとカメラが解放されず動作し続ける)
+      this.localStream = new MediaStream([newTrack, ...this.localStream.getAudioTracks()]);
+      const localVideo = document.getElementById('webrtc-local-video');
+      if (localVideo) localVideo.srcObject = this.localStream;
+      oldVideoTracks.forEach(t => t.stop());
+
+      this._videoQualityPreset = newPresetKey;
+      localStorage.setItem('tbs_video_quality', newPresetKey);
+      this._onVideoQualityChanged(newPresetKey, names);
+    } catch (e) {
+      console.error('[WebRTC] lowerQuality:', e);
+      // 置き換えに使われなかった(または失敗した)新規取得トラックを停止しないと
+      // 使われないままカメラを掴み続けてしまう
+      if (newStream) newStream.getTracks().forEach(t => t.stop());
+      // プリセット・localStorageはまだ変更していないため(成功時にのみ更新する
+      // 方式にした)、_videoQualityPresetは元のままで一致している。設定と
+      // 実際の映像が食い違ったまま「成功」を騙らないよう、失敗を明示する
+      UI.toast('画質の変更に失敗しました。元の設定のままです', 'warning');
+    }
+  },
+
+  _onVideoQualityChanged(newPresetKey, names) {
+    UI.toast(`画質を「${names[newPresetKey]}」に変更しました`, 'info');
     const btn = document.getElementById('webrtc-btn-lower-quality');
     if (btn) {
-      btn.innerHTML = `<i class="fas fa-compress-arrows-alt"></i> ${names[this._videoQualityPreset]}`;
-      if (this._videoQualityPreset === 'low') btn.disabled = true;
+      btn.innerHTML = `<i class="fas fa-compress-arrows-alt"></i> ${names[newPresetKey]}`;
+      if (newPresetKey === 'low') btn.disabled = true;
     }
   },
 
