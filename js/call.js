@@ -612,12 +612,33 @@ const CallPanel = {
           </button>
     `;
 
-    const templateBtns = templates.map((t, idx) => `
+    // 定型文中に{n}トークンがあれば、クリック即送信のボタンではなく、
+    // 数字入力欄を常時表示した複合行として描画する(展開式にはしない)。
+    // 1つの定型文に{n}を複数書いた場合は、その数だけ入力欄が並ぶ
+    const templateBtns = templates.map((t, idx) => {
+      const parsed = UI.splitAnnouncementTemplate(t);
+      if (!parsed.hasBlank) {
+        return `
       <button class="btn btn-sm btn-outline btn-send-announcement" data-text="${UI.escapeHTML(t)}" style="font-size:11.5px; padding:8px 10px; text-align:left; white-space:normal; line-height:1.2; width:100%; display:flex; align-items:center; gap:6px;">
         <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
         <span>${UI.escapeHTML(t)}</span>
       </button>
-    `).join('');
+    `;
+      }
+      const innerHtml = parsed.segments.map(seg => seg.type === 'text'
+        ? `<span>${UI.escapeHTML(seg.value)}</span>`
+        : `<input type="number" inputmode="numeric" class="template-blank-input" data-template-idx="${idx}" style="width:52px;padding:3px 4px;border:1px solid #cbd5e0;border-radius:4px;font-size:11.5px;text-align:center;">`
+      ).join('');
+      return `
+      <div class="btn-send-announcement-blank" data-template-idx="${idx}" style="font-size:11.5px; padding:8px 10px; display:flex; flex-wrap:wrap; align-items:center; gap:4px; width:100%; border:1px solid #cbd5e0; border-radius:6px; background:#fff;">
+        <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
+        ${innerHtml}
+        <button class="btn btn-primary btn-sm btn-send-blank-template" data-template-idx="${idx}" style="margin-left:auto;padding:4px 10px;font-size:11px;white-space:nowrap;">
+          <i class="fas fa-paper-plane"></i> 送信
+        </button>
+      </div>
+    `;
+    }).join('');
 
     const overlay = document.createElement('div');
     overlay.id = 'webrtc-call-overlay';
@@ -805,9 +826,38 @@ const CallPanel = {
       if (e.key === 'Enter' && !e.isComposing) sendAnnounce(e.target.value);
     });
 
-    // 定型アナウンスボタンイベント
+    // 定型アナウンスボタンイベント({n}を含まない、クリック即送信のもの)
     overlay.querySelectorAll('.btn-send-announcement').forEach(btn => {
       btn.addEventListener('click', () => sendAnnounce(btn.dataset.text));
+    });
+
+    // 数字入力欄を含む定型文の送信処理。未入力の欄が1つでもあれば送信せず
+    // 警告を出す(空欄のままアナウンスが流れてしまうことを防ぐ)。
+    // 各行(div)配下だけを対象にせず、入力欄・送信ボタンいずれもdata-template-idx
+    // で紐付けてoverlay全体からフラットに集める(要素は出現順=文中で左から右の
+    // 順で並ぶため、そのままfillAnnouncementTemplateへ渡す順序として使える)
+    const blankInputsByTemplate = new Map();
+    overlay.querySelectorAll('.template-blank-input').forEach(inp => {
+      const idx = parseInt(inp.dataset.templateIdx, 10);
+      if (!blankInputsByTemplate.has(idx)) blankInputsByTemplate.set(idx, []);
+      blankInputsByTemplate.get(idx).push(inp);
+    });
+    overlay.querySelectorAll('.btn-send-blank-template').forEach(sendBtn => {
+      const idx = parseInt(sendBtn.dataset.templateIdx, 10);
+      const template = templates[idx];
+      const inputs = blankInputsByTemplate.get(idx) || [];
+      const sendFromRow = () => {
+        if (inputs.some(inp => inp.value.trim() === '')) {
+          UI.toast('数字をすべて入力してください', 'warning');
+          return;
+        }
+        const composed = UI.fillAnnouncementTemplate(template, inputs.map(inp => inp.value.trim()));
+        if (composed !== null) sendAnnounce(composed);
+      };
+      sendBtn.addEventListener('click', sendFromRow);
+      inputs.forEach(inp => {
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) sendFromRow(); });
+      });
     });
   },
 

@@ -2447,6 +2447,18 @@ Object.assign(Settings, {
     const includePatientNameSetting = AppState.systemSettings?.find(s => s.id === 'speech_include_patient_name');
     let includePatientName = includePatientNameSetting?.value === 'true';
 
+    // {n}を含む定型文のプレビュー用HTML。数字入力欄になる位置を小さなバッジで
+    // 示す(通話画面での実際の見え方をここで確認できるようにするため)。
+    // {n}を含まない場合は入力欄の文言と重複するので何も表示しない
+    const renderTemplatePreviewHtml = (t) => {
+      const parsed = UI.splitAnnouncementTemplate(t);
+      if (!parsed.hasBlank) return '';
+      return parsed.segments.map(seg => seg.type === 'text'
+        ? UI.escapeHTML(seg.value)
+        : '<span style="display:inline-block;background:#dbeafe;color:#1d4ed8;border-radius:4px;padding:0 5px;font-weight:700;">🔢</span>'
+      ).join('');
+    };
+
     const renderList = () => {
       const listEl = document.getElementById('templates-list-container');
       if (!listEl) return;
@@ -2457,20 +2469,50 @@ Object.assign(Settings, {
       }
 
       listEl.innerHTML = templates.map((t, idx) => `
-        <div class="template-item-row" style="display:flex; gap:8px; align-items:center; margin-bottom:8px; background:rgba(0,0,0,0.02); padding:8px; border-radius:6px; border:1px solid #e2e8f0;">
-          <span style="font-size:12px; font-weight:bold; color:#718096; width:24px; text-align:center;">${idx + 1}</span>
-          <input type="text" class="template-input-text" data-index="${idx}" value="${UI.escapeHTML(t)}" style="flex:1; padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px;" placeholder="アナウンスで読み上げる定型文を入力してください">
+        <div class="template-item-row" style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; background:rgba(0,0,0,0.02); padding:8px; border-radius:6px; border:1px solid #e2e8f0;">
+          <span style="font-size:12px; font-weight:bold; color:#718096; width:24px; text-align:center; margin-top:6px;">${idx + 1}</span>
+          <div style="flex:1;">
+            <input type="text" class="template-input-text" data-index="${idx}" value="${UI.escapeHTML(t)}" style="width:100%; padding:6px 10px; border:1px solid #cbd5e0; border-radius:4px; font-size:13px;" placeholder="アナウンスで読み上げる定型文を入力してください">
+            <div class="template-preview" data-index="${idx}" style="font-size:11px; color:#64748b; margin-top:3px; min-height:14px;">${renderTemplatePreviewHtml(t)}</div>
+          </div>
+          <button class="btn btn-secondary btn-sm btn-insert-blank" data-index="${idx}" style="padding:6px 8px;" title="数字入力欄を挿入">
+            <i class="fas fa-hashtag"></i>
+          </button>
           <button class="btn btn-secondary btn-sm btn-delete-template" data-index="${idx}" style="padding:6px 10px; background:#ef4444; border-color:#ef4444; color:#fff;" title="削除">
             <i class="fas fa-trash-alt"></i>
           </button>
         </div>
       `).join('');
 
+      const refreshPreview = (idx) => {
+        const previewEl = listEl.querySelector(`.template-preview[data-index="${idx}"]`);
+        if (previewEl) previewEl.innerHTML = renderTemplatePreviewHtml(templates[idx]);
+      };
+
       // 入力値変更時の配列への即時同期
       listEl.querySelectorAll('.template-input-text').forEach(input => {
         input.addEventListener('change', (e) => {
           const idx = parseInt(e.target.dataset.index, 10);
           templates[idx] = e.target.value.trim();
+          refreshPreview(idx);
+        });
+      });
+
+      // 数字欄を挿入ボタン: {n}を手打ちしなくても、カーソル位置に挿入できる
+      listEl.querySelectorAll('.btn-insert-blank').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.index, 10);
+          const input = listEl.querySelector(`.template-input-text[data-index="${idx}"]`);
+          if (!input) return;
+          const start = input.selectionStart ?? input.value.length;
+          const end = input.selectionEnd ?? input.value.length;
+          const newValue = input.value.slice(0, start) + '{n}' + input.value.slice(end);
+          input.value = newValue;
+          templates[idx] = newValue;
+          refreshPreview(idx);
+          input.focus();
+          const pos = start + 3;
+          input.setSelectionRange(pos, pos);
         });
       });
 
@@ -2495,6 +2537,7 @@ Object.assign(Settings, {
         <div class="settings-panel-body" style="padding:16px;">
           <p style="font-size:12px; color:#64748b; margin-bottom:16px; line-height:1.4;">
             コールの代わりに音声合成で読み上げて相手に伝える「ワンクリック定型アナウンス」の定型文リストを編集します。<br>
+            定型文の中に <code>{n}</code> と入力すると、その位置が送信時に数字入力欄になります(例:「検査室{n}番からお迎えください」)。1つの定型文に複数の<code>{n}</code>を入れることもできます。右側の <i class="fas fa-hashtag"></i> ボタンでカーソル位置に挿入できます。<br>
             追加・削除・編集を行った後は、最下部の「定型文設定を保存」ボタンを押してください。
           </p>
           <label style="display:flex; align-items:flex-start; gap:8px; font-size:12px; color:#475569; margin-bottom:14px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:6px; background:#f8fafc;">

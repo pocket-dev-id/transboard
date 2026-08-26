@@ -639,6 +639,35 @@ const UI = {
       .replace(/'/g, '&#039;');
   },
 
+  // アナウンス定型文中の{n}トークンでテキストを分割する。定型文の描画
+  // (js/call.js)と設定画面のプレビュー(js/settings/import-notify.js)の
+  // 両方が同じパース結果を必要とするため、DOM非依存の純粋関数として共有する。
+  // {n}が無ければhasBlank:falseで元の文字列全体を1つのtextセグメントとして返す
+  splitAnnouncementTemplate(text) {
+    const str = String(text || '');
+    const marker = '{n}';
+    if (!str.includes(marker)) return { hasBlank: false, segments: [{ type: 'text', value: str }] };
+    const parts = str.split(marker);
+    const segments = [];
+    parts.forEach((part, i) => {
+      if (part) segments.push({ type: 'text', value: part });
+      if (i < parts.length - 1) segments.push({ type: 'blank' });
+    });
+    return { hasBlank: true, segments };
+  },
+
+  // {n}の出現順にvalues配列を埋め込んで最終テキストを組み立てる。
+  // {n}の個数とvaluesの個数が一致しない場合はnullを返す(呼び出し元の実装ミス防止)。
+  // replaceへコールバック関数を渡しているため、valuesに$&等の特殊パターン
+  // 文字が含まれていても置換文字列として特別扱いされず、そのまま挿入される
+  fillAnnouncementTemplate(text, values) {
+    const str = String(text || '');
+    const count = (str.match(/\{n\}/g) || []).length;
+    if (count !== values.length) return null;
+    let i = 0;
+    return str.replace(/\{n\}/g, () => values[i++]);
+  },
+
   formatBedName(bed) {
     if (!bed) return '?';
     // マスター画面の「病床番号（結合）」と同じ bed_number を表示の正とする。

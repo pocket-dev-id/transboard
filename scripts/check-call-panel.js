@@ -10,11 +10,70 @@ const vm = require('vm');
 const ROOT = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(ROOT, 'js/call.js'), 'utf8');
 
+// js/ui.js本体をロードし、アナウンス定型文の{n}パース/合成の実装だけを
+// 下のUIモックへ拝借する(DOM非依存の純粋関数のため、モックで再実装せず
+// 実装コードそのものを使うことで、call.js側の描画テストがロジックの
+// ドリフトを検知できるようにする)
+const realUiSource = fs.readFileSync(path.join(ROOT, 'js/ui.js'), 'utf8');
+const realUiSandbox = { console };
+vm.runInNewContext(`${realUiSource}\nthis.UI = UI;`, realUiSandbox);
+const { splitAnnouncementTemplate, fillAnnouncementTemplate } = realUiSandbox.UI;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ── DOM モック ──
 // getElementById はIDベースの単純なレジストリ参照。実DOMと同様、要素がどのツリー配下に
 // 実際に追加されたかは無関係にID一致だけで解決されるため、これで call.js の用法には十分。
+//
+// querySelector/querySelectorAllは、innerHTMLへ文字列として代入されたHTMLを
+// 単純な正規表現で開始タグだけ走査し、単一のクラスセレクタ(".foo")に一致する
+// 要素を都度パースして返す(入れ子構造の解決やタグ内容の抽出は行わない、この
+// モックの用途に必要な範囲のみの簡易実装)。同一innerHTML文字列に対しては
+// パース結果をキャッシュして同一オブジェクト参照を返すため、call.js内部の
+// クロージャとテストコードの両方から同じ要素インスタンスを操作できる
+// (実DOMのquerySelectorAllが毎回同じノードを返すのと同じ振る舞い)
+function parseAttrs(attrStr) {
+  const attrs = {};
+  const attrRe = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*"([^"]*)"/g;
+  let m;
+  while ((m = attrRe.exec(attrStr))) attrs[m[1]] = m[2];
+  return attrs;
+}
+
+function parseHtmlToStubs(html) {
+  const results = [];
+  const tagRe = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let m;
+  while ((m = tagRe.exec(html))) {
+    const tag = m[1];
+    const attrs = parseAttrs(m[2]);
+    const classes = new Set((attrs.class || '').split(/\s+/).filter(Boolean));
+    const dataset = {};
+    Object.keys(attrs).forEach(k => {
+      if (k.startsWith('data-')) {
+        const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        dataset[camel] = attrs[k];
+      }
+    });
+    results.push({
+      tagName: tag.toUpperCase(),
+      _classes: classes,
+      dataset,
+      value: attrs.value || '',
+      disabled: attrs.disabled !== undefined,
+      _listeners: {},
+      addEventListener(type, handler) { (this._listeners[type] = this._listeners[type] || []).push(handler); },
+      removeEventListener() {},
+    });
+  }
+  return results;
+}
+
+function matchesClassSelector(elStub, selector) {
+  if (!selector.startsWith('.')) return false;
+  return elStub._classes.has(selector.slice(1));
+}
+
 function createElementStub(tag) {
   return {
     tagName: String(tag || 'div').toUpperCase(),
@@ -43,8 +102,21 @@ function createElementStub(tag) {
     addEventListener() {},
     removeEventListener() {},
     setAttribute() {},
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
+    _parsedCacheHtml: undefined,
+    _parsedCache: null,
+    _getParsedChildren() {
+      if (this._parsedCacheHtml !== this.innerHTML) {
+        this._parsedCache = parseHtmlToStubs(this.innerHTML);
+        this._parsedCacheHtml = this.innerHTML;
+      }
+      return this._parsedCache;
+    },
+    querySelector(selector) {
+      return this._getParsedChildren().find(el => matchesClassSelector(el, selector)) || null;
+    },
+    querySelectorAll(selector) {
+      return this._getParsedChildren().filter(el => matchesClassSelector(el, selector));
+    },
   };
 }
 
@@ -76,9 +148,15 @@ function resetElementRegistry() {
 // Escapeキー解除用のkeydownリスナーのみ
 const keydownListeners = [];
 
+// document.createElement()で作られた要素は、call.js内部のローカル変数
+// (例: showCallSelectionDialogのoverlay)としてのみ保持され、elementRegistry
+// には登録されない。テスト側からその実体(と実際にセットされたinnerHTML)へ
+// アクセスできるよう、生成された要素をすべて記録しておく
+const createdElements = [];
+
 const documentMock = {
   getElementById(id) { return elementRegistry.get(id) || null; },
-  createElement(tag) { return createElementStub(tag); },
+  createElement(tag) { const el = createElementStub(tag); createdElements.push(el); return el; },
   querySelector() { return null; },
   querySelectorAll() { return []; },
   body: { appendChild(el) { return el; } },
@@ -214,6 +292,8 @@ const UI = {
   _isNotifMuted: () => false,
   _getNotifVolume: () => 0.8,
   _isAutomaticSpeechEnabled: () => true,
+  splitAnnouncementTemplate,
+  fillAnnouncementTemplate,
 };
 
 // ── API モック（呼び出し履歴を配列に記録し、断言に使う）──
@@ -276,6 +356,7 @@ async function resetAll() {
   fullscreenState = false;
   audioContextCreateCount = 0;
   resetElementRegistry();
+  createdElements.length = 0;
 }
 
 async function main() {
@@ -717,6 +798,66 @@ async function main() {
   await CallPanel.lowerVideoQuality();
   assert.strictEqual(CallPanel._videoQualityPreset, 'medium', '通話中でなくても設定のみ更新されること');
   assert.strictEqual(localStorageStore.get('tbs_video_quality'), 'medium', 'localStorageにも保存されること');
+
+  // 21) アナウンス定型文中の{n}トークンは、常時表示の数字入力欄として描画され、
+  //     未入力のまま送信できないこと。{n}を含まない定型文は従来通りクリック
+  //     即送信のボタンのままであること
+  await resetAll();
+  AppState.systemSettings = [
+    { id: 'speech_templates', value: JSON.stringify(['患者が到着しました。', '検査室{n}番からお迎えください。']) },
+  ];
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  let overlay = createdElements.find((el) => el.id === 'webrtc-call-overlay');
+  assert.ok(overlay, 'showCallSelectionDialogがwebrtc-call-overlayというidの要素を作成すること(前提の確認)');
+  assert.strictEqual(overlay.querySelectorAll('.btn-send-announcement').length, 1, '{n}を含まない定型文は引き続きクリック即送信のボタンとして1つ描画されること');
+  assert.strictEqual(overlay.querySelectorAll('.btn-send-blank-template').length, 1, '{n}を含む定型文は送信ボタン付きの複合行として1つ描画されること');
+  const blankInputs1 = overlay.querySelectorAll('.template-blank-input');
+  assert.strictEqual(blankInputs1.length, 1, '{n}が1箇所の定型文には数字入力欄が1つ描画されること(常時表示、クリックで展開する方式ではないこと)');
+  assert.strictEqual(blankInputs1[0].dataset.templateIdx, '1', '数字入力欄には対応する定型文のインデックスがdata属性で付与されること');
+  assert.ok(overlay.innerHTML.includes('検査室') && overlay.innerHTML.includes('番からお迎えください。'), '{n}の前後のテキストがそのまま描画されること');
+
+  // 未入力のまま送信ボタンを押しても送信されず、警告が出ること
+  const sendBtn1 = overlay.querySelectorAll('.btn-send-blank-template')[0];
+  sendBtn1._listeners.click[0]();
+  assert.strictEqual(apiCalls.webrtcSend.length, 0, 'BUG FIX: 数字が未入力のまま送信ボタンを押してもAPI.webrtcSendが呼ばれないこと(空欄のままアナウンスが流れないこと)');
+  assert.ok(toasts.some((t) => t.type === 'warning' && t.msg.includes('数字をすべて入力')), 'BUG FIX: 未入力のまま送信しようとすると警告トーストが表示されること');
+
+  // 数字を入力してから送信すると、{n}が入力値に置き換わった文字列で送信されること
+  blankInputs1[0].value = '7';
+  sendBtn1._listeners.click[0]();
+  assert.strictEqual(apiCalls.webrtcSend.length, 1, '数字を入力していれば送信できること');
+  assert.strictEqual(apiCalls.webrtcSend[0].text, '検査室7番からお迎えください。', '{n}が入力した数字に置き換わった状態で送信されること');
+  assert.strictEqual(apiCalls.webrtcSend[0].type, 'speech', '通常のアナウンスと同じtype:speechで送信されること');
+
+  // 22) 1つの定型文に{n}が複数ある場合、その数だけ入力欄が並び、出現順に
+  //     埋め込まれること。Enterキーでも送信できること(自由入力欄と同じ操作性)
+  await resetAll();
+  AppState.systemSettings = [
+    { id: 'speech_templates', value: JSON.stringify(['{n}階{n}号室の患者様、お待ちしております。']) },
+  ];
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  overlay = createdElements.find((el) => el.id === 'webrtc-call-overlay');
+  const blankInputs2 = overlay.querySelectorAll('.template-blank-input');
+  assert.strictEqual(blankInputs2.length, 2, '1つの定型文に{n}が2つあれば、数字入力欄も2つ描画されること(複数箇所を許容)');
+  blankInputs2[0].value = '3';
+  blankInputs2[1].value = '12';
+  // Enterキーはどちらの入力欄からでも同じ送信処理を起動できること
+  blankInputs2[1]._listeners.keydown[0]({ key: 'Enter', isComposing: false });
+  assert.strictEqual(apiCalls.webrtcSend.length, 1, 'Enterキーでも送信できること');
+  assert.strictEqual(apiCalls.webrtcSend[0].text, '3階12号室の患者様、お待ちしております。', '複数の{n}が出現順(左から右)に、それぞれの入力欄の値で埋め込まれること');
+
+  // IME変換確定のEnter(isComposing:true)では誤送信しないこと(自由入力欄の
+  // 既存の挙動と同じガード)
+  await resetAll();
+  AppState.systemSettings = [
+    { id: 'speech_templates', value: JSON.stringify(['検査室{n}番からお迎えください。']) },
+  ];
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  overlay = createdElements.find((el) => el.id === 'webrtc-call-overlay');
+  const blankInputs3 = overlay.querySelectorAll('.template-blank-input');
+  blankInputs3[0].value = '5';
+  blankInputs3[0]._listeners.keydown[0]({ key: 'Enter', isComposing: true });
+  assert.strictEqual(apiCalls.webrtcSend.length, 0, 'IME変換確定のEnter(isComposing:true)では送信されないこと');
 
   await resetAll();
   console.log('Call panel checks passed.');
