@@ -57,7 +57,16 @@ const CallPanel = {
   _selectedAudioInput: null,
   _selectedVideoInput: null,
   _callSourceId: null,
-  _fullscreenChangeHandler: null,
+
+  // ビデオ通話の全画面表示状態(Electronのウィンドウ全体のフルスクリーンを
+  // IPC経由で管理する。HTML Fullscreen APIは使わない)
+  _isFullscreen: false,
+  // このビデオ通話の全画面ボタンでフルスクリーンに入ったかどうか。通話終了時、
+  // 通話が原因で入ったフルスクリーンだけを自動解除する(通話開始前から
+  // 既に全体をフルスクリーン表示していた場合まで解除してしまわないため)
+  _fullscreenEnteredForCall: false,
+  _unsubscribeFullscreenChanged: null,
+  _fullscreenEscapeHandler: null,
 
   VIDEO_QUALITY_PRESETS: {
     low:    { width: 320,  height: 240, frameRate: 10,  maxBitrateBps: 200_000 },
@@ -468,6 +477,50 @@ const CallPanel = {
     }
   },
 
+  // navigator.mediaDevices / getUserMedia / enumerateDevices自体が存在しない
+  // 環境(制限されたビルド・古いWebView等)でも安全に判定できるようにする
+  _isMediaDevicesApiAvailable() {
+    return !!(navigator.mediaDevices &&
+      typeof navigator.mediaDevices.getUserMedia === 'function' &&
+      typeof navigator.mediaDevices.enumerateDevices === 'function');
+  },
+
+  // マイク・カメラの有無を判定する。enumerateDevices()自体が権限等の理由で
+  // 失敗した場合は「実際に無い」と決めつけず、発信時のgetUserMedia()の成否に
+  // 判断を委ねる(発信ボタンを一律に禁止しない)
+  async _detectMediaCapabilities() {
+    if (!this._isMediaDevicesApiAvailable()) {
+      return { apiAvailable: false, hasMic: false, hasCam: false, enumerationFailed: false };
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return {
+        apiAvailable: true,
+        hasMic: devices.some(d => d.kind === 'audioinput'),
+        hasCam: devices.some(d => d.kind === 'videoinput'),
+        enumerationFailed: false,
+      };
+    } catch (e) {
+      console.warn('[CallPanel] デバイス列挙に失敗しました:', e);
+      return { apiAvailable: true, hasMic: true, hasCam: true, enumerationFailed: true };
+    }
+  },
+
+  _disableCallButton(btn) {
+    if (!btn) return;
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btn.style.cursor = 'not-allowed';
+    btn.style.pointerEvents = 'none';
+    btn.onclick = null;
+  },
+
+  _showMediaWarning(el, text) {
+    if (!el || !text) return;
+    el.style.display = 'block';
+    el.textContent = text;
+  },
+
   // ── コール選択ダイアログ (音声通話 or 定型アナウンス) ──
   showCallSelectionDialog(targetId, { fromId = null, eventId = null } = {}) {
     if (this.isCalling || this.isConnected) {
@@ -530,6 +583,8 @@ const CallPanel = {
             <i class="fas fa-video" style="font-size: 15px;"></i>
             <span>ビデオ通話を開始</span>
           </button>
+          <!-- マイク/カメラが利用できない場合の警告(非同期のデバイス確認後に表示) -->
+          <div id="webrtc-media-warning" style="display:none; font-size:11px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:6px 9px; margin-top:6px;"></div>
     ` : `
           <!-- 無効化時の表示 -->
           <button class="btn btn-secondary" id="webrtc-btn-start-voice" disabled style="padding: 12px; font-size: 13px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; opacity: 0.6; cursor: not-allowed; pointer-events: none;">
@@ -628,22 +683,25 @@ const CallPanel = {
     `;
     document.body.appendChild(overlay);
  
-    // デバイスリストを非同期でポピュレート
-    navigator.mediaDevices.enumerateDevices().then(devices => {
-      const micSel = document.getElementById('webrtc-mic-select');
-      const camSel = document.getElementById('webrtc-cam-select');
-      devices.forEach(d => {
-        const opt = document.createElement('option');
-        opt.value = d.deviceId;
-        opt.textContent = d.label || `デバイス (${d.deviceId.slice(0, 8)})`;
-        if (d.kind === 'audioinput' && micSel) micSel.appendChild(opt);
-        if (d.kind === 'videoinput' && camSel) camSel.appendChild(opt);
-      });
-      if (micSel && this._selectedAudioInput) micSel.value = this._selectedAudioInput;
-      if (camSel && this._selectedVideoInput) camSel.value = this._selectedVideoInput;
-      if (micSel) micSel.onchange = () => { this._selectedAudioInput = micSel.value || null; };
-      if (camSel) camSel.onchange = () => { this._selectedVideoInput = camSel.value || null; };
-    }).catch(() => {});
+    // デバイスリストを非同期でポピュレート(navigator.mediaDevices自体が
+    // 無い環境ではAPIに触れずスキップする)
+    if (this._isMediaDevicesApiAvailable()) {
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        const micSel = document.getElementById('webrtc-mic-select');
+        const camSel = document.getElementById('webrtc-cam-select');
+        devices.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `デバイス (${d.deviceId.slice(0, 8)})`;
+          if (d.kind === 'audioinput' && micSel) micSel.appendChild(opt);
+          if (d.kind === 'videoinput' && camSel) camSel.appendChild(opt);
+        });
+        if (micSel && this._selectedAudioInput) micSel.value = this._selectedAudioInput;
+        if (camSel && this._selectedVideoInput) camSel.value = this._selectedVideoInput;
+        if (micSel) micSel.onchange = () => { this._selectedAudioInput = micSel.value || null; };
+        if (camSel) camSel.onchange = () => { this._selectedVideoInput = camSel.value || null; };
+      }).catch(() => {});
+    }
 
     // ビデオ品質セレクト
     const qSel = document.getElementById('webrtc-quality-select');
@@ -662,18 +720,46 @@ const CallPanel = {
  
     // 音声通話を開始するボタン (有効な場合のみイベントを設定)
     if (isWebRtcEnabled) {
-      document.getElementById('webrtc-btn-start-voice').onclick = () => {
+      const voiceBtn = document.getElementById('webrtc-btn-start-voice');
+      const videoBtn = document.getElementById('webrtc-btn-start-video');
+      const warningEl = document.getElementById('webrtc-media-warning');
+
+      voiceBtn.onclick = () => {
         this.isVideoCall = false;
         overlay.remove(); // 選択画面を閉じて
         this.startCall(targetId, sourceId); // WebRTC通話を開始
       };
-      const vBtn = document.getElementById('webrtc-btn-start-video');
-      if (vBtn) {
-        vBtn.onclick = () => {
+      if (videoBtn) {
+        videoBtn.onclick = () => {
           this.isVideoCall = true;
           overlay.remove();
           this.startCall(targetId, sourceId);
         };
+      }
+
+      // デバイスの利用可否を確認し、無いものだけを個別に無効化する。
+      // navigator.mediaDevices/getUserMedia/enumerateDevices自体が使えない
+      // 環境では両方とも無効化して警告する。enumerateDevices()自体が権限等で
+      // 失敗した場合は「実在するか判断できない」ため無効化せず、発信時の
+      // getUserMedia()の成否に一律禁止せず委ねる
+      if (!this._isMediaDevicesApiAvailable()) {
+        this._disableCallButton(voiceBtn);
+        this._disableCallButton(videoBtn);
+        this._showMediaWarning(warningEl, 'この端末ではマイク・カメラを利用できないため、通話機能を無効化しました');
+      } else {
+        this._detectMediaCapabilities().then(({ hasMic, hasCam, enumerationFailed }) => {
+          if (enumerationFailed) return;
+          const reasons = [];
+          if (!hasMic) {
+            this._disableCallButton(voiceBtn);
+            reasons.push('マイクが見つかりません');
+          }
+          if (!hasMic || !hasCam) {
+            this._disableCallButton(videoBtn);
+            if (hasMic && !hasCam) reasons.push('カメラが見つかりません');
+          }
+          if (reasons.length) this._showMediaWarning(warningEl, reasons.join(' / '));
+        }).catch(() => {});
       }
     }
  
@@ -1270,60 +1356,72 @@ const CallPanel = {
       }, 50);
     }
 
-    // 全画面ボタン
+    // 全画面ボタン。HTML要素のFullscreen APIではなく、IPC経由でElectronの
+    // BrowserWindow.setFullScreen()を明示的に呼び出す(main.jsの'set-fullscreen')
     const fsBtn = document.getElementById('webrtc-btn-fullscreen');
     if (fsBtn) {
-      const getFullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
-      const requestFullscreen = element => {
-        if (element.requestFullscreen) return element.requestFullscreen();
-        if (element.webkitRequestFullscreen) {
-          element.webkitRequestFullscreen();
-          return Promise.resolve();
-        }
-        return Promise.reject(new Error('Fullscreen API is not supported'));
-      };
-      const exitFullscreen = () => {
-        if (document.exitFullscreen) return document.exitFullscreen();
-        if (document.webkitExitFullscreen) {
-          document.webkitExitFullscreen();
-          return Promise.resolve();
-        }
-        return Promise.reject(new Error('Fullscreen API is not supported'));
-      };
       const updateFullscreenButton = () => {
-        const active = !!getFullscreenElement();
+        const active = this._isFullscreen;
         fsBtn.innerHTML = `<i class="fas ${active ? 'fa-compress' : 'fa-expand'}"></i>`;
         fsBtn.title = active ? '全画面表示を終了' : '全画面表示';
         if (typeof fsBtn.setAttribute === 'function') fsBtn.setAttribute('aria-label', fsBtn.title);
       };
-      fsBtn.onclick = async event => {
-        event.preventDefault();
-        const container = document.getElementById('webrtc-video-container');
-        if (!container) return;
+
+      const applyFullscreen = async wantFullscreen => {
+        if (!window.electronAPI?.setFullscreen) {
+          UI.toast('この環境では全画面表示に対応していません', 'warning');
+          return;
+        }
         try {
-          if (!getFullscreenElement()) {
-            await requestFullscreen(container);
-          } else {
-            await exitFullscreen();
-          }
+          const result = await window.electronAPI.setFullscreen(wantFullscreen);
+          this._isFullscreen = !!result;
+          this._fullscreenEnteredForCall = this._isFullscreen && wantFullscreen;
           updateFullscreenButton();
         } catch (error) {
           console.warn('[Fullscreen] ビデオ通話の全画面切替に失敗しました:', error);
-          updateFullscreenButton();
           UI.toast('全画面表示に切り替えられませんでした', 'warning');
         }
       };
-      // 通話ごとに古いリスナーを外してから登録する。{once:true}だと通話中に一度も
-      // 発火しない(全画面を使わない)場合に外れず、通話を重ねるたびにdocumentへ
-      // 溜まり続けてしまうため、cleanupCall()で明示的に解除する方式にする
-      if (this._fullscreenChangeHandler) {
-        document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
-      }
-      this._fullscreenChangeHandler = () => {
-        updateFullscreenButton();
+
+      fsBtn.onclick = event => {
+        event.preventDefault();
+        applyFullscreen(!this._isFullscreen);
       };
-      document.addEventListener('fullscreenchange', this._fullscreenChangeHandler);
-      document.addEventListener('webkitfullscreenchange', this._fullscreenChangeHandler);
+
+      // 通話ごとに古い購読・リスナーを外してから登録する(通話を重ねるたびに
+      // 溜まり続けないよう、cleanupCall()でも明示的に解除する)
+      if (this._unsubscribeFullscreenChanged) {
+        this._unsubscribeFullscreenChanged();
+        this._unsubscribeFullscreenChanged = null;
+      }
+      if (window.electronAPI?.onFullscreenChanged) {
+        // F11キー・OS操作等、このボタン以外で状態が変わった場合もElectron側からの
+        // 通知で追従する
+        this._unsubscribeFullscreenChanged = window.electronAPI.onFullscreenChanged(isFullscreen => {
+          this._isFullscreen = !!isFullscreen;
+          if (!this._isFullscreen) this._fullscreenEnteredForCall = false;
+          updateFullscreenButton();
+        });
+      }
+
+      // Escapeキーで全画面表示を解除する(HTML Fullscreen APIが標準で持っていた
+      // Escape解除の挙動を、ウィンドウ全体のフルスクリーンに対して明示的に再現する)
+      if (this._fullscreenEscapeHandler) {
+        document.removeEventListener('keydown', this._fullscreenEscapeHandler);
+      }
+      this._fullscreenEscapeHandler = e => {
+        if (e.key === 'Escape' && this._isFullscreen) applyFullscreen(false);
+      };
+      document.addEventListener('keydown', this._fullscreenEscapeHandler);
+
+      // ダイアログを開いた時点の実際のウィンドウ状態を取得する(通話開始前から
+      // 既に全画面だった場合を含め、通知のpushだけに頼らず初期表示を正しく合わせる)
+      if (window.electronAPI?.isFullscreen) {
+        window.electronAPI.isFullscreen().then(isFS => {
+          this._isFullscreen = !!isFS;
+          updateFullscreenButton();
+        }).catch(() => {});
+      }
       updateFullscreenButton();
     }
 
@@ -1351,10 +1449,21 @@ const CallPanel = {
     if (this._ringTimeoutId) { clearTimeout(this._ringTimeoutId); this._ringTimeoutId = null; }
     if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
 
-    if (this._fullscreenChangeHandler) {
-      document.removeEventListener('fullscreenchange', this._fullscreenChangeHandler);
-      document.removeEventListener('webkitfullscreenchange', this._fullscreenChangeHandler);
-      this._fullscreenChangeHandler = null;
+    if (this._fullscreenEscapeHandler) {
+      document.removeEventListener('keydown', this._fullscreenEscapeHandler);
+      this._fullscreenEscapeHandler = null;
+    }
+    if (this._unsubscribeFullscreenChanged) {
+      this._unsubscribeFullscreenChanged();
+      this._unsubscribeFullscreenChanged = null;
+    }
+    // 通話が原因で全画面表示に入っていた場合のみ、通話終了とあわせて解除する
+    // (通話開始前から全体をフルスクリーン表示していた場合は解除しない)
+    if (this._fullscreenEnteredForCall) {
+      this._fullscreenEnteredForCall = false;
+      window.electronAPI?.setFullscreen?.(false).then(result => {
+        this._isFullscreen = !!result;
+      }).catch(() => {});
     }
 
     if (this.reconnectTimeout) {

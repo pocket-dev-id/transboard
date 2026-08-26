@@ -51,11 +51,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // アプリケーションを再起動する
   relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
 
-  // フルスクリーン切り替え
+  // フルスクリーン切り替え(現在の状態をトグル)
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+  // フルスクリーンの期待状態を明示的に指定するブリッジ(トグルとは別)。
+  // ビデオ通話の全画面表示のように「必ずONにする/必ずOFFにする」呼び出し元向け
+  setFullscreen: (value) => ipcRenderer.invoke('set-fullscreen', Boolean(value)),
+  // 現在のフルスクリーン状態を取得する(状態変更のpush通知だけに頼らず、
+  // ダイアログを開いた時点の実際の状態と初期表示を合わせるため)
+  isFullscreen: () => ipcRenderer.invoke('is-fullscreen'),
+  // フルスクリーン状態変更の通知。全体のフルスクリーンボタン(js/app.js)と
+  // ビデオ通話の全画面ボタン(js/call.js)など、複数の呼び出し元が独立に
+  // 購読できるよう、removeAllListenersでは無くlistenerを都度追加し、
+  // 購読解除用の関数を返す(呼び出し元は不要になったら呼ぶ)
   onFullscreenChanged: (callback) => {
-    ipcRenderer.removeAllListeners('fullscreen-changed');
-    ipcRenderer.on('fullscreen-changed', (event, value) => callback(value));
+    const listener = (event, value) => callback(value);
+    ipcRenderer.on('fullscreen-changed', listener);
+    return () => ipcRenderer.removeListener('fullscreen-changed', listener);
   },
 
   // データベースバックアップ & リストア

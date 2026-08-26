@@ -40,7 +40,9 @@ function createElementStub(tag) {
     },
     appendChild(child) { return child; },
     remove() { this._removed = true; },
-    requestFullscreen() { return Promise.resolve(); },
+    addEventListener() {},
+    removeEventListener() {},
+    setAttribute() {},
     querySelector() { return null; },
     querySelectorAll() { return []; },
   };
@@ -55,7 +57,7 @@ const KNOWN_IDS = [
   'webrtc-btn-mute', 'webrtc-btn-reject', 'webrtc-btn-start-video',
   'webrtc-btn-start-voice', 'webrtc-call-duration', 'webrtc-call-overlay',
   'webrtc-call-status-label', 'webrtc-cam-select', 'webrtc-local-video',
-  'webrtc-mic-select', 'webrtc-net-stats', 'webrtc-quality-indicator',
+  'webrtc-media-warning', 'webrtc-mic-select', 'webrtc-net-stats', 'webrtc-quality-indicator',
   'webrtc-quality-select', 'webrtc-remote-video', 'webrtc-video-container',
 ];
 
@@ -69,25 +71,26 @@ function resetElementRegistry() {
   }
 }
 
-const fullscreenListeners = [];
+// call.jsはHTML Fullscreen APIを使わず、Electronの'set-fullscreen' IPC経由で
+// ウィンドウ全体のフルスクリーンを管理する。documentへ登録するのは
+// Escapeキー解除用のkeydownリスナーのみ
+const keydownListeners = [];
 
 const documentMock = {
-  fullscreenElement: null,
   getElementById(id) { return elementRegistry.get(id) || null; },
   createElement(tag) { return createElementStub(tag); },
   querySelector() { return null; },
   querySelectorAll() { return []; },
   body: { appendChild(el) { return el; } },
   addEventListener(type, handler) {
-    if (type === 'fullscreenchange') fullscreenListeners.push(handler);
+    if (type === 'keydown') keydownListeners.push(handler);
   },
   removeEventListener(type, handler) {
-    if (type === 'fullscreenchange') {
-      const idx = fullscreenListeners.indexOf(handler);
-      if (idx !== -1) fullscreenListeners.splice(idx, 1);
+    if (type === 'keydown') {
+      const idx = keydownListeners.indexOf(handler);
+      if (idx !== -1) keydownListeners.splice(idx, 1);
     }
   },
-  exitFullscreen() { documentMock.fullscreenElement = null; return Promise.resolve(); },
 };
 
 // ── localStorage モック（_videoQualityPresetの初期化がロード時に参照する）──
@@ -167,10 +170,33 @@ class FakeAudioContext {
   }
   close() { return Promise.resolve(); }
 }
+// ── electronAPI モック（IPC経由のフルスクリーン管理: set-fullscreen/is-fullscreen/fullscreen-changed）──
+let fullscreenState = false;
+const fullscreenChangedListeners = [];
+function emitFullscreenChanged(value) {
+  fullscreenState = !!value;
+  fullscreenChangedListeners.slice().forEach((cb) => cb(fullscreenState));
+}
+const electronAPIMock = {
+  setFullscreen(value) {
+    fullscreenState = !!value;
+    return Promise.resolve(fullscreenState);
+  },
+  isFullscreen() { return Promise.resolve(fullscreenState); },
+  onFullscreenChanged(callback) {
+    fullscreenChangedListeners.push(callback);
+    return () => {
+      const idx = fullscreenChangedListeners.indexOf(callback);
+      if (idx !== -1) fullscreenChangedListeners.splice(idx, 1);
+    };
+  },
+};
+
 const windowMock = {
   AudioContext: FakeAudioContext,
   webkitAudioContext: FakeAudioContext,
   speechSynthesis: { cancel() {}, speak() {} },
+  electronAPI: electronAPIMock,
 };
 
 // ── UI モック ──
@@ -241,7 +267,9 @@ async function resetAll() {
   apiCalls.patch.length = 0;
   apiCalls.webrtcSend.length = 0;
   toasts.length = 0;
-  fullscreenListeners.length = 0;
+  keydownListeners.length = 0;
+  fullscreenChangedListeners.length = 0;
+  fullscreenState = false;
   audioContextCreateCount = 0;
   resetElementRegistry();
 }
@@ -327,16 +355,108 @@ async function main() {
   muteBtn.onclick();
   assert.strictEqual(audioTrack.enabled, true, '再クリックでミュートが解除されること');
 
-  // 6) fullscreenchangeリスナーが通話ごとに重複登録されず、通話終了時に解除される
+  // 6) 全画面表示: HTML Fullscreen APIではなくIPC(electronAPI.setFullscreen)を
+  // 使うこと。購読・リスナーは通話ごとに重複登録されず、Escapeキー・通話終了で
+  // 同期して解除されること
   await resetAll();
   CallPanel.isVideoCall = true;
   CallPanel.localStream = new FakeMediaStream([makeFakeTrack('audio'), makeFakeTrack('video')]);
   CallPanel.showConnectedDialog('east-7f');
-  assert.strictEqual(fullscreenListeners.length, 1, '1回目の描画でfullscreenchangeリスナーが1つ登録されること');
+  assert.strictEqual(fullscreenChangedListeners.length, 1, '1回目の描画でonFullscreenChangedの購読が1つ登録されること');
+  assert.strictEqual(keydownListeners.length, 1, '1回目の描画でEscapeキー用のkeydownリスナーが1つ登録されること');
   CallPanel.showConnectedDialog('east-7f');
-  assert.strictEqual(fullscreenListeners.length, 1, '再描画しても重複登録されず1つのままであること');
+  assert.strictEqual(fullscreenChangedListeners.length, 1, '再描画しても購読が重複登録されず1つのままであること');
+  assert.strictEqual(keydownListeners.length, 1, '再描画してもkeydownリスナーが重複登録されず1つのままであること');
+
+  const fsBtn = documentMock.getElementById('webrtc-btn-fullscreen');
+  assert.strictEqual(typeof fsBtn.onclick, 'function', '全画面ボタンにクリックハンドラが設定されること');
+  fsBtn.onclick({ preventDefault() {} });
+  await sleep(10);
+  assert.strictEqual(fullscreenState, true, '全画面ボタンのクリックでIPC(setFullscreen)経由で全画面になること');
+  assert.ok(fsBtn.innerHTML.includes('fa-compress'), '全画面中はボタンアイコンがfa-compressになること');
+
+  // Escapeキーで全画面表示を解除する
+  keydownListeners[0]({ key: 'Escape' });
+  await sleep(10);
+  assert.strictEqual(fullscreenState, false, 'Escapeキーで全画面がIPC経由で解除されること');
+  assert.ok(fsBtn.innerHTML.includes('fa-expand'), '解除後はボタンアイコンがfa-expandに戻ること');
+
+  // 通話中に再度全画面へ → 通話終了時、通話が原因の全画面表示は自動解除される
+  fsBtn.onclick({ preventDefault() {} });
+  await sleep(10);
+  assert.strictEqual(fullscreenState, true, '全画面に戻せること');
   await CallPanel.cleanupCall();
-  assert.strictEqual(fullscreenListeners.length, 0, '通話終了(cleanupCall)でリスナーが解除されること');
+  await sleep(10);
+  assert.strictEqual(fullscreenState, false, '通話終了(cleanupCall)時、通話が原因の全画面表示は自動解除されること');
+  assert.strictEqual(fullscreenChangedListeners.length, 0, '通話終了で購読が解除されること');
+  assert.strictEqual(keydownListeners.length, 0, '通話終了でEscapeキーのリスナーが解除されること');
+
+  // Electron側からの状態通知(F11キー等、全画面ボタン以外での変化)にもボタン表示を同期する
+  await resetAll();
+  CallPanel.isVideoCall = true;
+  CallPanel.localStream = new FakeMediaStream([makeFakeTrack('audio'), makeFakeTrack('video')]);
+  CallPanel.showConnectedDialog('east-7f');
+  const fsBtn2 = documentMock.getElementById('webrtc-btn-fullscreen');
+  emitFullscreenChanged(true);
+  assert.ok(fsBtn2.innerHTML.includes('fa-compress'), 'Electron側からの通知でボタン表示が全画面中に更新されること');
+  emitFullscreenChanged(false);
+  assert.ok(fsBtn2.innerHTML.includes('fa-expand'), 'Electron側からの通知でボタン表示が解除後に更新されること');
+
+  // 6b) デバイス列挙結果に応じて音声・ビデオ通話ボタンを個別に無効化すること。
+  // 列挙自体の失敗では一律禁止しない、API自体が無い環境でも例外を投げない、
+  // ことも合わせて確認する
+  const realEnumerateDevices = navigatorMock.mediaDevices.enumerateDevices;
+  const realMediaDevices = navigatorMock.mediaDevices;
+
+  // マイク・カメラともに有る → どちらも有効なまま
+  await resetAll();
+  navigatorMock.mediaDevices.enumerateDevices = () =>
+    Promise.resolve([{ kind: 'audioinput' }, { kind: 'videoinput' }]);
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  await sleep(10);
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-voice').disabled, false, 'マイク・カメラ両方あれば音声通話ボタンは有効なままであること');
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-video').disabled, false, 'マイク・カメラ両方あればビデオ通話ボタンは有効なままであること');
+  assert.strictEqual(documentMock.getElementById('webrtc-media-warning').style.display, undefined, '問題が無ければ警告は表示されないこと');
+
+  // マイクが無い → 音声・ビデオ両方を無効化
+  await resetAll();
+  navigatorMock.mediaDevices.enumerateDevices = () =>
+    Promise.resolve([{ kind: 'videoinput' }]);
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  await sleep(10);
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-voice').disabled, true, 'BUG FIX: マイクが無ければ音声通話ボタンを無効化すること');
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-video').disabled, true, 'BUG FIX: マイクが無ければビデオ通話ボタンも無効化すること');
+  assert.ok(documentMock.getElementById('webrtc-media-warning').textContent.includes('マイク'), '警告文にマイクが無い旨が含まれること');
+
+  // マイクは有るがカメラが無い → ビデオ通話だけを無効化
+  await resetAll();
+  navigatorMock.mediaDevices.enumerateDevices = () =>
+    Promise.resolve([{ kind: 'audioinput' }]);
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  await sleep(10);
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-voice').disabled, false, 'BUG FIX: マイクがあれば音声通話ボタンは有効のままであること');
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-video').disabled, true, 'BUG FIX: カメラが無ければビデオ通話ボタンを無効化すること');
+  assert.ok(documentMock.getElementById('webrtc-media-warning').textContent.includes('カメラ'), '警告文にカメラが無い旨が含まれること');
+
+  // enumerateDevices()自体が失敗(権限プロンプト未許可等) → 一律禁止せず両方とも有効のまま
+  await resetAll();
+  navigatorMock.mediaDevices.enumerateDevices = () => Promise.reject(new Error('Permission denied'));
+  CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  await sleep(10);
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-voice').disabled, false, 'BUG FIX: デバイス列挙の失敗だけでは音声通話ボタンを無効化しないこと(発信時のgetUserMedia()に委ねる)');
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-video').disabled, false, 'BUG FIX: デバイス列挙の失敗だけではビデオ通話ボタンも無効化しないこと');
+
+  // navigator.mediaDevices自体が存在しない環境 → 例外を投げず両方とも無効化して警告
+  await resetAll();
+  navigatorMock.mediaDevices = undefined;
+  assert.doesNotThrow(() => {
+    CallPanel.showCallSelectionDialog('east-7f', { fromId: 'ward-1' });
+  }, 'BUG FIX: navigator.mediaDevices自体が無い環境でも例外を投げず安全に描画できること');
+  await sleep(10);
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-voice').disabled, true, 'BUG FIX: mediaDevices API自体が無ければ音声通話ボタンを無効化すること');
+  assert.strictEqual(documentMock.getElementById('webrtc-btn-start-video').disabled, true, 'BUG FIX: mediaDevices API自体が無ければビデオ通話ボタンも無効化すること');
+  navigatorMock.mediaDevices = realMediaDevices;
+  navigatorMock.mediaDevices.enumerateDevices = realEnumerateDevices;
 
   // 7) 発信音(playRingBackTone)が着信音と同じくミュート・音量設定に従うこと
   await resetAll();
