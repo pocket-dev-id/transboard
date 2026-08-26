@@ -837,6 +837,39 @@ assert(
   'parseScheduleDatetimeMs must accept :, ：, and . as the time separator (e.g. hh.mm.ss) via SCHEDULE_TIME_RE_SRC'
 );
 
+// JavaScriptのDateコンストラクタは範囲外の値(2月31日→3月3日、25時→翌日1時等)
+// を拒否せず自動的に繰り上げるため、range検証だけでなく構築後の値を入力値と
+// 突き合わせて食い違いを検出しなければ、CSVの入力ミスが取り込みエラーになら
+// ず全く別の日時の予定として黙って取り込まれてしまう
+assert(
+  (() => {
+    const idx = main.indexOf('function buildValidatedScheduleDateMs(y, mo, dy, h, mi, se) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('mo >= 1 && mo <= 12') &&
+      body.includes('dy >= 1 && dy <= 31') &&
+      body.includes('h >= 0 && h <= 23') &&
+      body.includes('mi >= 0 && mi <= 59') &&
+      body.includes('se >= 0 && se <= 59') &&
+      body.includes('d.getFullYear() !== y') &&
+      body.includes('d.getMonth() !== mo - 1') &&
+      body.includes('d.getDate() !== dy');
+  })(),
+  'buildValidatedScheduleDateMs must range-check the numeric components AND re-verify the constructed Date against the input (getFullYear/getMonth/getDate/...), or an out-of-range value like Feb 31 silently rolls over to Mar 3 and gets imported as a different, wrong date'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return !body.includes('new Date(combined)') &&
+      body.includes('buildValidatedScheduleDateMs(');
+  })(),
+  'parseScheduleDatetimeMs must not trust a bare `new Date(combined)` parse of the raw CSV string (V8 silently rolls a day-of-month overflow like "2026-02-31" into a valid-looking "2026-03-03"); it must route every match through buildValidatedScheduleDateMs instead'
+);
+
 // インストーラをspawnした直後に固定時間(setTimeout)でapp.quit()すると、
 // 旧exeのファイルロックがまだ解放されていないうちに新インストーラの
 // サイレントアンインストール(electron-builder製NSISが旧バージョン検出時に

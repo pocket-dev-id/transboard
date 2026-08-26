@@ -1981,32 +1981,52 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
 // 混在するため、いずれも許容する（例: 13:05:30 / 13：05 / 13.05.30 / 13.05）
 const SCHEDULE_TIME_RE_SRC = '(\\d{1,2})[：:.](\\d{2})(?:[：:.](\\d{2}))?';
 
+// 年月日時分秒からDateを生成する。JavaScriptのDateコンストラクタは範囲外の値
+// (2月31日→3月3日前後、13月→翌年1月、25時→翌日1時等)を拒否せず自動的に
+// 繰り上げてしまうため、CSVの入力ミスがエラーにならず全く別の日時の予定として
+// 取り込まれてしまう。range検証に加え、構築後の値を入力値と突き合わせ、
+// 繰り上がっていれば(=食い違っていれば)採用しない
+function buildValidatedScheduleDateMs(y, mo, dy, h, mi, se) {
+  if (!(mo >= 1 && mo <= 12)) return null;
+  if (!(dy >= 1 && dy <= 31)) return null;
+  if (!(h >= 0 && h <= 23)) return null;
+  if (!(mi >= 0 && mi <= 59)) return null;
+  if (!(se >= 0 && se <= 59)) return null;
+  const d = new Date(y, mo - 1, dy, h, mi, se);
+  if (isNaN(d.getTime())) return null;
+  if (d.getFullYear() !== y || d.getMonth() !== mo - 1 || d.getDate() !== dy ||
+    d.getHours() !== h || d.getMinutes() !== mi || d.getSeconds() !== se) {
+    // 例: 2026年2月31日を渡すと2026年3月3日を返してくる等、範囲外の値が
+    // 繰り上げられて別の日時になった場合はここで食い違う
+    return null;
+  }
+  return d.getTime();
+}
+
 function parseScheduleDatetimeMs(dateStr, timeStr) {
   if (!dateStr) return null;
   const combined = timeStr ? `${dateStr.trim()} ${timeStr.trim()}` : dateStr.trim();
 
-  // ISO形式 or ブラウザ互換形式を試みる
-  // (ドット区切り時刻は Date コンストラクタでは常に Invalid Date になるため、
-  // ここで誤った日時が拾われる心配はない)
-  let d = new Date(combined);
-  if (!isNaN(d.getTime())) return d.getTime();
-
-  // YYYY/MM/DD HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
+  // YYYY-MM-DD / YYYY/MM/DD HH:mm[:ss] (日付区切りは - / のいずれも可、
+  // ISO 8601のT区切りを含む。時刻区切りは : ： . のいずれも可)
   const m1 = combined.match(new RegExp(`^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})(?:[\\s　T]+${SCHEDULE_TIME_RE_SRC})?`));
   if (m1) {
     const [, y, mo, dy, h = '0', mi = '0', se = '0'] = m1;
-    d = new Date(Number(y), Number(mo) - 1, Number(dy), Number(h), Number(mi), Number(se));
-    if (!isNaN(d.getTime())) return d.getTime();
+    const ms = buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+    if (ms !== null) return ms;
   }
 
   // MM/DD/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
   const m2 = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
   if (m2) {
     const [, mo, dy, y, h = '0', mi = '0', se = '0'] = m2;
-    d = new Date(Number(y), Number(mo) - 1, Number(dy), Number(h), Number(mi), Number(se));
-    if (!isNaN(d.getTime())) return d.getTime();
+    const ms = buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+    if (ms !== null) return ms;
   }
 
+  // どちらの形式にも一致しない場合、Dateコンストラクタへ丸投げして「解釈でき
+  // てしまう」ことに賭けない(範囲外の値を無検証で繰り上げて別の日時として
+  // 受理してしまう恐れがあるため)。この2形式が現場CSVの実質すべてをカバーする
   return null;
 }
 
