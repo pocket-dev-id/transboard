@@ -1969,8 +1969,18 @@ const App = {
       ]);
       if (eventResult.status === 'rejected') throw eventResult.reason;
       const eventStatus = eventResult.value;
-      const partialSync = [settingsResult, feedsResult, itemsResult]
-        .some(result => result.status === 'rejected');
+      const auxResults = [settingsResult, feedsResult, itemsResult];
+      // 検査室端末はeventResultが実通信ではなく常に成功するダミー値のため、
+      // 上のeventResult.rejected判定だけでは通信断を検知できない。残り3件
+      // (system_settings/予定フィード/予定項目)全てが失敗した場合はここで
+      // 明示的に失敗扱いにしないと、親機停止・LAN断時にも5秒ごとの通常
+      // ポーリングが _setConnectionStatus(true) を呼び続け、ハートビートや
+      // ParentServerMonitorが検知した切断表示を毎回上書きしてしまう
+      const auxFulfilledCount = auxResults.filter(r => r.status === 'fulfilled').length;
+      if (isExamTerminal && auxFulfilledCount === 0) {
+        throw settingsResult.reason ?? feedsResult.reason ?? itemsResult.reason ?? new Error('通信に失敗しました');
+      }
+      const partialSync = auxFulfilledCount < auxResults.length;
       const systemSettings = settingsResult.status === 'fulfilled'
         ? settingsResult.value
         : (AppState.systemSettings || []);
