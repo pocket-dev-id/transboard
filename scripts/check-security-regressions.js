@@ -2500,3 +2500,27 @@ assert(
   call.includes('existingTrack.applyConstraints({'),
   'lowerVideoQuality must try applyConstraints() on the existing track before falling back to re-acquiring the camera via getUserMedia()'
 );
+
+// ── 検査室端末は親機との通信が全滅しても「接続中」に戻してはならない ──
+
+// 検査室端末では_refreshDataOnce()のeventResultが実通信ではなく常に成功する
+// Promise.resolve(...)のダミー値に置き換わっており、残り3件(system_settings/
+// 予定フィード/予定項目)はPromise.allSettled()経由で失敗しても前回値へ
+// フォールバックするだけで例外を投げない。3件の実通信が全て失敗していても
+// ここで明示的に失敗扱いにしないと、_setConnectionStatus(true)が必ず呼ばれ、
+// 親機停止・LAN断時にも5秒ごとの通常ポーリングがハートビートや
+// ParentServerMonitorの切断検知を毎回上書きし、バックオフも作動しなくなる
+assert(
+  (() => {
+    const idx = app.indexOf('async _refreshDataOnce(wardId, todayMs) {');
+    const end = app.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = app.slice(idx, end);
+    const eventCheckIdx = body.indexOf("if (eventResult.status === 'rejected') throw eventResult.reason;");
+    const partialSyncIdx = body.indexOf('const partialSync');
+    if (eventCheckIdx < 0 || partialSyncIdx < 0 || partialSyncIdx < eventCheckIdx) return false;
+    const between = body.slice(eventCheckIdx, partialSyncIdx);
+    return between.includes('isExamTerminal') && /throw\s/.test(between);
+  })(),
+  '_refreshDataOnce must treat all-3-auxiliary-requests-failed as an overall failure for exam terminals (whose eventResult is a dummy that never rejects), or the connection banner keeps flapping back to "connected" every 5s while the parent server is actually down'
+);
