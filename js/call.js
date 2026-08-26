@@ -271,7 +271,16 @@ const CallPanel = {
   // 一切受信できなくなる
   _getWardListenIds() {
     const wardId = AppState.currentWardId || 'ward-1';
-    if (!this._homeWardId && wardId) this._homeWardId = wardId;
+    if (!this._homeWardId) {
+      // ホーム病棟はlocalStorageで再起動をまたいで保持する。メモリ上だけで
+      // 確立していると、前回終了時にたまたま別病棟を一時閲覧していた場合、
+      // その閲覧先(current_ward_idとして復元される)が再起動直後の新しい
+      // ホーム病棟として誤って確立されてしまい、本来のホーム病棟宛の
+      // 着信・自動アナウンスを再び取りこぼす
+      const savedHomeWardId = localStorage.getItem('_home_ward_id');
+      this._homeWardId = savedHomeWardId || wardId;
+      if (!savedHomeWardId && wardId) localStorage.setItem('_home_ward_id', wardId);
+    }
     const ids = [wardId];
     if (this._homeWardId && this._homeWardId !== wardId) ids.push(this._homeWardId);
     return ids;
