@@ -2670,9 +2670,14 @@ assert(
     const end = call.indexOf("}).join('');", idx);
     if (idx < 0 || end < idx) return false;
     const body = call.slice(idx, end);
-    return body.includes('UI.splitAnnouncementTemplate(t)') &&
-      body.includes('parsed.hasBlank') &&
-      body.includes("class=\"btn btn-sm btn-outline btn-send-announcement\"");
+    if (!body.includes('UI.splitAnnouncementTemplate(t)') || !body.includes('parsed.hasBlank')) return false;
+    // !parsed.hasBlankの分岐は<button>を返さなければならない。<div>等の
+    // 非対話要素になると、既存の全定型文がクリック一発で送信できなくなる
+    const guardIdx = body.indexOf('if (!parsed.hasBlank) {');
+    const blankDivIdx = body.indexOf('announcement-template-item has-blank');
+    if (guardIdx < 0 || blankDivIdx < 0 || blankDivIdx < guardIdx) return false;
+    const nonBlankBranch = body.slice(guardIdx, blankDivIdx);
+    return nonBlankBranch.includes('<button') && nonBlankBranch.includes('btn-send-announcement"');
   })(),
-  'templates without {n} must still render as the original single click-to-send button (btn-send-announcement), or every existing announcement template silently becomes a multi-element row and loses one-click sending'
+  'templates without {n} must still render as a clickable <button> (btn-send-announcement), or every existing announcement template silently becomes a non-clickable multi-element row and loses one-click sending'
 );
