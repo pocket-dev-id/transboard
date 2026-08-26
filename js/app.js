@@ -1241,6 +1241,14 @@ const App = {
           }
           console.log(`[ScheduleFeed] "${feedName}" 取り込み完了 (${fileName}): ${count}件`);
           UI.toast(`📅 ${feedName}: ${count}件のスケジュールを取り込みました`, 'info');
+          if (message) {
+            // 予定のDB保存自体は成功したが、元CSVのアーカイブ/削除に失敗した等、
+            // 完全な成功ではない場合の部分成功メッセージ。success:falseにはせず、
+            // 別トーストで警告として明示する(取り込み自体を失敗扱いにすると、
+            // 実際には保存できた予定まで無かったことのように見えてしまうため)
+            console.warn(`[ScheduleFeed] "${feedName}" ${message}`);
+            UI.toast(`⚠️ ${feedName}: ${message}`, 'warning', 10000);
+          }
           await App.refreshData({ force: true });
           const activePage = document.querySelector('.page.active');
           if (activePage && activePage.id === 'page-ward-dashboard') {
