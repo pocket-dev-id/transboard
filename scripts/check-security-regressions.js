@@ -2300,3 +2300,123 @@ assert(
   })(),
   'scanAndImportScheduleFolder must record per-file stat errors (fileErrors + console.warn) instead of silently swallowing them with an empty catch block'
 );
+
+// ── ビデオ通話の全画面表示: IPC経由のBrowserWindow.setFullScreen()に統一 ──
+
+// トグルとは別に、期待状態を明示的に指定できるIPCブリッジが要る
+// (ビデオ通話の全画面ボタンは「必ずこの状態にしたい」を指定する)
+assert(
+  main.includes("handleTrusted('set-fullscreen', (event, value) => {") &&
+  main.includes('mainWindow.setFullScreen(Boolean(value));'),
+  'main.js must expose a set-fullscreen IPC handler that calls BrowserWindow.setFullScreen() with an explicit desired state, separate from the existing toggle'
+);
+assert(
+  main.includes("handleTrusted('is-fullscreen'"),
+  'main.js must expose an is-fullscreen IPC handler so a dialog opened while already fullscreen can sync its initial button state'
+);
+assert(
+  preload.includes("setFullscreen: (value) => ipcRenderer.invoke('set-fullscreen'"),
+  'preload.js must bridge the set-fullscreen IPC channel as electronAPI.setFullscreen'
+);
+
+// onFullscreenChangedは全体のフルスクリーンボタン(js/app.js)とビデオ通話の
+// 全画面ボタン(js/call.js)など、複数の独立した呼び出し元が同時に購読できな
+// ければならない。removeAllListeners方式に戻すと、後から購読した側が
+// 先に購読していた側のリスナーを消してしまう
+assert(
+  !preload.includes("ipcRenderer.removeAllListeners('fullscreen-changed')"),
+  'preload.js onFullscreenChanged must not use removeAllListeners, or a second subscriber (e.g. the video call fullscreen button) silently unregisters the first (e.g. the app-wide fullscreen indicator)'
+);
+assert(
+  (() => {
+    const idx = preload.indexOf('onFullscreenChanged: (callback) => {');
+    const end = preload.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = preload.slice(idx, end);
+    return body.includes('ipcRenderer.on(') && /return \(\) => /.test(body);
+  })(),
+  'preload.js onFullscreenChanged must return an unsubscribe function, or per-dialog subscribers (video call) cannot clean up their own listener independently on call end'
+);
+
+// js/call.jsはビデオ通話の全画面表示にHTML要素のFullscreen APIを使っては
+// ならない。IPC(electronAPI.setFullscreen/isFullscreen/onFullscreenChanged)
+// に統一する
+assert(
+  !call.includes('requestFullscreen') &&
+  !call.includes('document.fullscreenElement') &&
+  !call.includes("addEventListener('fullscreenchange'"),
+  'js/call.js must not use the HTML Fullscreen API for the video call, or the fullscreen state can no longer be driven by BrowserWindow.setFullScreen()'
+);
+assert(
+  call.includes('window.electronAPI.setFullscreen(wantFullscreen)') &&
+  call.includes('window.electronAPI.onFullscreenChanged(isFullscreen => {') &&
+  call.includes("window.electronAPI.isFullscreen()"),
+  'the video call fullscreen button must call the IPC bridge (setFullscreen/onFullscreenChanged/isFullscreen), or Electron never actually enters/exits fullscreen'
+);
+
+// Escapeキーでの解除と、通話終了時に「通話が原因で入った全画面表示」だけを
+// 自動解除することの両方を維持する
+assert(
+  (() => {
+    const idx = call.indexOf('this._fullscreenEscapeHandler = e => {');
+    const end = call.indexOf('\n      };', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes("e.key === 'Escape'") && body.includes('this._isFullscreen');
+  })(),
+  'js/call.js must exit fullscreen on Escape while the video call is fullscreen'
+);
+assert(
+  (() => {
+    const idx = call.indexOf('async cleanupCall(message = \'\') {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('this._unsubscribeFullscreenChanged()') &&
+      body.includes('if (this._fullscreenEnteredForCall)') &&
+      body.includes('window.electronAPI?.setFullscreen?.(false)');
+  })(),
+  'cleanupCall must unsubscribe the fullscreen-changed listener and exit fullscreen if this call is the reason it entered fullscreen'
+);
+
+// ── 通話ボタンの安全な無効化: mediaDevices API欠如・デバイス列挙結果 ──
+
+// navigator.mediaDevices/getUserMedia/enumerateDevices自体が無い環境でも
+// 同期的に例外を投げず判定できる、専用のチェックが要る
+assert(
+  call.includes('_isMediaDevicesApiAvailable() {') &&
+  call.includes("typeof navigator.mediaDevices.getUserMedia === 'function'") &&
+  call.includes("typeof navigator.mediaDevices.enumerateDevices === 'function'"),
+  'js/call.js must have a synchronous, safe check for navigator.mediaDevices/getUserMedia/enumerateDevices availability before ever calling them'
+);
+assert(
+  call.includes('if (this._isMediaDevicesApiAvailable()) {') &&
+  call.includes('navigator.mediaDevices.enumerateDevices().then(devices => {'),
+  'the device-select population in showCallSelectionDialog must guard navigator.mediaDevices.enumerateDevices() behind the availability check, or it throws synchronously in environments without the API'
+);
+
+// マイクが無ければ音声通話を、マイクまたはカメラが無ければビデオ通話を
+// 無効化する。列挙自体の失敗(enumerationFailed)では一律禁止しない
+assert(
+  (() => {
+    const idx = call.indexOf('async _detectMediaCapabilities() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('enumerationFailed: false') && body.includes('enumerationFailed: true') &&
+      body.includes("hasMic: true, hasCam: true, enumerationFailed: true");
+  })(),
+  '_detectMediaCapabilities must distinguish "no device" from "enumeration failed" and must not report hasMic/hasCam as false merely because enumeration itself threw'
+);
+assert(
+  (() => {
+    const idx = call.indexOf('this._detectMediaCapabilities().then(');
+    const end = call.indexOf('\n      }', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('if (enumerationFailed) return;') &&
+      body.includes('if (!hasMic) {') &&
+      body.includes('if (!hasMic || !hasCam) {');
+  })(),
+  'showCallSelectionDialog must disable the voice button when no mic is found, the video button when no mic or no camera is found, and must not disable either button when enumeration merely failed'
+);

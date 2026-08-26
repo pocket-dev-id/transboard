@@ -5577,6 +5577,20 @@ handleTrusted('toggle-fullscreen', () => {
   return false;
 });
 
+// IPC通信でフルスクリーン表示を明示的な状態(ON/OFF)に設定する。トグルと違い、
+// 呼び出し元(ビデオ通話の全画面ボタン等)が「必ずこの状態にしたい」を
+// 指定できる。現在値と一致していれば何もしない
+handleTrusted('set-fullscreen', (event, value) => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(Boolean(value));
+    return mainWindow.isFullScreen();
+  }
+  return false;
+});
+
+// IPC通信で現在のフルスクリーン状態を取得する
+handleTrusted('is-fullscreen', () => (mainWindow ? mainWindow.isFullScreen() : false));
+
 // スクリーンセイバー・ディスプレイスリープを抑制する
 handleTrusted('set-power-save', (event, prevent) => {
   if (prevent) {
