@@ -1962,8 +1962,15 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
   // が食い違っていた
   const result = commitScheduleFeedImport(feed, parsedFiles);
   const overallSuccess = result.success && fileErrors.length === 0;
-  const combinedMessage = fileErrors.length > 0
-    ? [result.message, `${fileErrors.length}件のファイルでエラー: ${fileErrors.join('; ')}`].filter(Boolean).join(' / ')
+  // アーカイブ/削除の失敗(result.archiveWarning)は予定の保存自体には
+  // 影響しないため overallSuccess は変えないが、「保存はできたが元CSVの
+  // 後処理には失敗した」という部分成功の事実はメッセージに含めて呼び出し元
+  // (通知・手動取り込みAPIの戻り値)へ伝える
+  const notices = [];
+  if (fileErrors.length > 0) notices.push(`${fileErrors.length}件のファイルでエラー: ${fileErrors.join('; ')}`);
+  if (result.archiveWarning) notices.push(result.archiveWarning);
+  const combinedMessage = notices.length > 0
+    ? [result.message, ...notices].filter(Boolean).join(' / ')
     : result.message;
 
   if (csvFiles.length > 0 || fileErrors.length > 0) {
@@ -1974,7 +1981,7 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
   if (!overallSuccess) {
     return { success: false, importedCount: result.importedCount, message: combinedMessage || '取り込みに失敗したファイルがあります' };
   }
-  return { success: true, importedCount: result.importedCount, message: null };
+  return { success: true, importedCount: result.importedCount, message: combinedMessage || null };
 }
 
 // 時刻部分の区切り文字は現場のCSV/機器出力によって : (半角/全角) と . が
@@ -2212,10 +2219,29 @@ function commitScheduleFeedImport(feed, parsedFiles) {
     return { success: false, importedCount: 0, message };
   }
 
-  const policy = feed.retention_policy || { action: 'archive', retentionDays: '30' };
-  succeeded.forEach(p => archiveScheduleFeedFile(p.filePath, feed, policy));
+  // retentionDaysはこのフィードの取り込みでは参照しない(アーカイブ後の保存
+  // 期間による削除は未実装のため、既定値に含めて実装済みであるかのように
+  // 見せない)。設定画面の各フィード編集フォームもaction(archive/delete/skip)
+  // しか保存しておらず、アーカイブされたCSVは実質無期限に積み上がる
+  const policy = feed.retention_policy || { action: 'archive' };
+  // DB反映(予定の保存)自体はここまでで既に成功している。以降のアーカイブ/
+  // 削除に失敗しても、それだけを理由に取り込み全体を失敗として報告しない
+  // (成功したはずの予定保存を「失敗」と偽ることになるため)。ただし、
+  // 失敗した事実は警告としてまとめ、呼び出し元がログ・通知・手動取り込み
+  // APIの戻り値へ「部分成功」として反映できるようにする
+  const archiveFailures = [];
+  succeeded.forEach(p => {
+    const archiveResult = archiveScheduleFeedFile(p.filePath, feed, policy);
+    if (archiveResult && archiveResult.success === false) {
+      archiveFailures.push(archiveResult.message);
+    }
+  });
+  const archiveWarning = archiveFailures.length > 0
+    ? `予定の保存には成功しましたが、元CSVの${policy.action === 'delete' ? '削除' : 'アーカイブ移動'}に失敗しました: ${archiveFailures.join('; ')}`
+    : null;
+  if (archiveWarning) console.warn(`[ScheduleFeed] "${feed.name}" ${archiveWarning}`);
 
-  return { success: true, importedCount: allItems.length, message: null };
+  return { success: true, importedCount: allItems.length, message: null, archiveWarning };
 }
 
 function notifyScheduleImported(feed, fileName, { success, count, message }) {
@@ -2230,16 +2256,36 @@ function notifyScheduleImported(feed, fileName, { success, count, message }) {
   });
 }
 
+// 取り込み済みCSVの削除・アーカイブ移動を行う。DB反映は既に完了済みの前提で
+// 呼ばれるため、この関数の失敗は「予定の保存自体」には影響しない。しかし
+// 以前は unlinkSync/mkdirSync/renameSync の例外をすべて無条件で握りつぶして
+// おり、共有フォルダが読み取り専用等の理由でこの後処理に失敗しても、UIには
+// 取り込み成功としか表示されず、元CSVが監視フォルダに残り続けて
+// インターバル/時刻指定モードで同じCSVを繰り返し取り込んでしまっていた。
+// 呼び出し元がログ・通知・手動取り込みAPIの戻り値へ反映できるよう、
+// 成否をそのまま返す
 function archiveScheduleFeedFile(filePath, feed, policy) {
-  if (policy.action === 'skip') return;
+  const baseName = path.basename(filePath);
+  if (policy.action === 'skip') return { success: true, message: null };
   if (policy.action === 'delete') {
-    try { fs.unlinkSync(filePath); } catch (e) {}
-    return;
+    try {
+      fs.unlinkSync(filePath);
+      return { success: true, message: null };
+    } catch (e) {
+      const message = `${baseName}の削除に失敗しました: ${e.message}`;
+      console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+      return { success: false, message };
+    }
   }
   // archive
   const archiveDir = path.join(path.dirname(filePath), 'archive');
-  try { fs.mkdirSync(archiveDir, { recursive: true }); } catch (e) {}
-  const baseName = path.basename(filePath);
+  try {
+    fs.mkdirSync(archiveDir, { recursive: true });
+  } catch (e) {
+    const message = `${baseName}のアーカイブフォルダ作成に失敗しました: ${e.message}`;
+    console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, message };
+  }
   const ext = path.extname(baseName);
   const stem = path.basename(baseName, ext);
   let destPath = path.join(archiveDir, baseName);
@@ -2247,7 +2293,14 @@ function archiveScheduleFeedFile(filePath, feed, policy) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     destPath = path.join(archiveDir, `${stem}_${ts}${ext}`);
   }
-  try { fs.renameSync(filePath, destPath); } catch (e) {}
+  try {
+    fs.renameSync(filePath, destPath);
+    return { success: true, message: null };
+  } catch (e) {
+    const message = `${baseName}のアーカイブへの移動に失敗しました: ${e.message}`;
+    console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, message };
+  }
 }
 
 // UTF-8 のバイナリパターン検証（日本語対応）

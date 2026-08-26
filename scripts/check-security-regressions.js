@@ -2591,3 +2591,57 @@ assert(
   })(),
   "loadMasters must fall back to null (not []) when system_settings fails to fetch, and only overwrite AppState.systemSettings when Array.isArray(systemSettings) is true, or a single transient fetch failure during the 30s master sync wipes the terminal's current settings to defaults"
 );
+
+// ── スケジュール取り込み後のCSVアーカイブ/削除の失敗を成功として報告してはならない ──
+
+// unlinkSync/mkdirSync/renameSyncの例外を無条件で握りつぶすと、共有フォルダが
+// 読み取り専用等の理由で後処理に失敗しても、DB保存(予定の登録)自体は成功して
+// いるためUIには「取り込み成功」としか表示されず、元CSVが監視フォルダに残り
+// 続けてインターバル/時刻指定モードで同じCSVを繰り返し取り込んでしまう
+assert(
+  (() => {
+    const idx = main.indexOf('function archiveScheduleFeedFile(filePath, feed, policy) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    const deleteCatchIdx = body.indexOf("if (policy.action === 'delete') {");
+    if (deleteCatchIdx < 0) return false;
+    const afterDelete = body.slice(deleteCatchIdx);
+    return afterDelete.includes('success: false') &&
+      body.includes('fs.mkdirSync(archiveDir') &&
+      body.includes('fs.renameSync(filePath, destPath)') &&
+      (body.match(/success: false/g) || []).length >= 3;
+  })(),
+  'archiveScheduleFeedFile must return {success:false, message} when unlinkSync/mkdirSync/renameSync throw, not silently swallow the exception in an empty catch block, or the UI reports a successful import while the source CSV is left in the watch folder and keeps getting re-imported'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('archiveResult.success === false') &&
+      body.includes('archiveWarning') &&
+      body.includes("return { success: true, importedCount: allItems.length, message: null, archiveWarning };");
+  })(),
+  'commitScheduleFeedImport must collect archiveScheduleFeedFile failures into an archiveWarning and return it (success stays true since the DB write itself succeeded), or a failed post-import archive/delete is silently dropped instead of being reported as a partial success'
+);
+assert(
+  !main.includes("retention_policy || { action: 'archive', retentionDays: '30' }"),
+  "commitScheduleFeedImport's retention policy default must not claim a retentionDays that archiveScheduleFeedFile never reads and the per-feed settings form never saves, or the unused default misleadingly implies archived CSVs are pruned when they in fact accumulate indefinitely"
+);
+assert(
+  (() => {
+    const idx = app.indexOf('window.electronAPI.onScheduleImported(async (');
+    const end = app.indexOf('\n        });', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = app.slice(idx, end);
+    const countToastIdx = body.indexOf('count}件のスケジュールを取り込みました');
+    if (countToastIdx < 0) return false;
+    const afterSuccessToast = body.slice(countToastIdx);
+    const ifMessageIdx = afterSuccessToast.indexOf('if (message) {');
+    if (ifMessageIdx < 0) return false;
+    return afterSuccessToast.indexOf('UI.toast(', ifMessageIdx) > ifMessageIdx;
+  })(),
+  'onScheduleImported must surface a non-empty message as a separate warning toast even when success !== false, or a partial-success case (schedule saved, but archiving/deleting the source CSV failed) reports as a plain, silent success with no way for the operator to notice'
+);
