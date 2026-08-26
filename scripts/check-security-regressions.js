@@ -2524,3 +2524,23 @@ assert(
   })(),
   '_refreshDataOnce must treat all-3-auxiliary-requests-failed as an overall failure for exam terminals (whose eventResult is a dummy that never rejects), or the connection banner keeps flapping back to "connected" every 5s while the parent server is actually down'
 );
+
+// ── loadMasters()はsystem_settingsの一時的な取得失敗を「空設定」として確定してはならない ──
+
+// staffsは取得失敗時にnullへフォールバックし、Array.isArray()で判定できた場合
+// だけAppState.staffsを上書きする(失敗時は前回値を保持する)実装になっている
+// 一方、system_settingsが取得失敗時に[]を返しそれをそのまま無条件で
+// AppState.systemSettingsへ上書きしていると、子機で30秒ごとに実行される
+// loadMasters()の一時的な応答失敗だけで、ステータス表示・通知・表示調整・
+// 各種運用設定が既定値へ戻って見えてしまう
+assert(
+  (() => {
+    const idx = app.indexOf('async loadMasters({ silent = false, loadHandover = true } = {}) {');
+    const end = app.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = app.slice(idx, end);
+    return body.includes("API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : null).catch(() => null)") &&
+      body.includes('if (Array.isArray(systemSettings)) {');
+  })(),
+  "loadMasters must fall back to null (not []) when system_settings fails to fetch, and only overwrite AppState.systemSettings when Array.isArray(systemSettings) is true, or a single transient fetch failure during the 30s master sync wipes the terminal's current settings to defaults"
+);
