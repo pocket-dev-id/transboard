@@ -381,8 +381,15 @@ assert(
   'Discharge must keep the active-transfer confirmation (both discharge entry points)'
 );
 assert(
-  /results\.length > 0 && newItems\.length === 0/.test(main) &&
-  main.indexOf('const newItems = []') < main.indexOf("db.schedule_items.filter(x => x.feed_id !== feed.id)"),
+  (() => {
+    const idx = main.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    const guardIdx = body.indexOf('totalRowCount > 0 && allItems.length === 0');
+    const filterIdx = body.indexOf("db.schedule_items.filter(x => x.feed_id !== feed.id)");
+    return guardIdx >= 0 && filterIdx > guardIdx;
+  })(),
   'Schedule feed import must validate parsed rows before deleting existing items'
 );
 assert(
@@ -1861,13 +1868,8 @@ assert(
 // ハンドラの無いこのプロセスではElectronアプリ全体が落ちる
 // (「リアルタイム」モードのスケジュール取り込みが常に失敗する原因)。
 assert(
-  (() => {
-    const idx = main.indexOf('function importScheduleFeedCSV(filePath, feed) {');
-    if (idx < 0) return false;
-    const body = main.slice(idx, idx + 300);
-    return body.includes('return new Promise(resolve => {');
-  })(),
-  'importScheduleFeedCSV must return a Promise, or callers using .catch() on its result (chokidar realtime watcher) throw synchronously on every CSV file'
+  main.includes('async function importScheduleFeedCSV(filePath, feed) {'),
+  'importScheduleFeedCSV must return a Promise (e.g. be declared async), or callers using .catch() on its result (chokidar realtime watcher) throw synchronously on every CSV file'
 );
 
 // 手動でのスケジュール取り込み(schedule-feed-import)は、実際にCSVの取り込みが
@@ -2251,4 +2253,50 @@ assert(
       body.includes("localStorage.setItem('_home_ward_id', wardId)");
   })(),
   '_getWardListenIds must persist _homeWardId to localStorage and read it back on next launch, or the home ward is re-guessed from whatever ward happens to be displayed at restart'
+);
+
+// ── スケジュール取り込み: 複数CSVの置換・集計不整合とファイルエラーの黙殺 ──
+
+// フォルダ内に複数CSVがある場合、既存アイテムの置換は全ファイル分を
+// まとめて1回だけ行わなければならない。ファイルごとに個別へ置換すると、
+// 後続ファイルの書き込みで先行ファイル分が消えてしまい、取り込み件数の
+// 集計(全ファイルの合計)とDBの実際の中身(最後のファイル分のみ)が食い違う
+assert(
+  (() => {
+    const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const end = main.indexOf('\n}', main.indexOf('function importScheduleFeedCSV', idx));
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('const parsedFiles = []') &&
+      body.includes('commitScheduleFeedImport(feed, parsedFiles)') &&
+      !body.includes('await importScheduleFeedCSV(filePath, feed)');
+  })(),
+  'scanAndImportScheduleFolder must parse all CSV files first and commit them together in one call, not replace the feed\'s items once per file'
+);
+assert(
+  (() => {
+    const idx = main.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('const allItems = succeeded.flatMap(p => p.items)') &&
+      body.includes('db.schedule_items.push(...allItems)') &&
+      body.indexOf("db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id)") ===
+        body.lastIndexOf("db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id)");
+  })(),
+  'commitScheduleFeedImport must delete the feed\'s existing items exactly once and insert every parsed file\'s items together, or multi-file folder scans lose earlier files\' items'
+);
+
+// フォルダ走査中、個別ファイルのfs.statSync等の例外は以前完全に握りつぶされ、
+// ログにも取り込み結果にも一切残らなかった(権限エラーやスキャン中の
+// ファイル削除等が誰にも気づかれない)。記録した上で処理を継続しなければならない
+assert(
+  (() => {
+    const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const end = main.indexOf('const parsedFiles = []', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('fileErrors.push(') && body.includes('console.warn(') && !/catch \(e\) \{\}/.test(body);
+  })(),
+  'scanAndImportScheduleFolder must record per-file stat errors (fileErrors + console.warn) instead of silently swallowing them with an empty catch block'
 );

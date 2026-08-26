@@ -1888,9 +1888,8 @@ function setupScheduleFeedTriggers() {
 }
 
 // 手動取り込みAPI(triggerScheduleFeedImportOnParent)がフォルダ内のCSV全件の
-// 取り込み完了を待ってから結果を返せるよう、Promiseを返す。同期例外・各CSVの
-// 個別エラーはimportScheduleFeedCSV側で吸収されるためここではthrowしない
-// (setInterval等のfire-and-forgetな呼び出し元でも安全に使える)
+// 取り込み完了を待ってから結果を返せるよう、Promiseを返す。同期例外はここで
+// 全てcatchし、setInterval等のfire-and-forgetな呼び出し元でも安全に使える
 async function scanAndImportScheduleFolder(watchDir, feed) {
   // UNC監視先はセッションが切れていることがあるため都度確認する
   // （同一資格情報で接続済みならレジストリがskipするので実質無コスト）
@@ -1904,19 +1903,55 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
   } catch (e) {
     return { success: false, importedCount: 0, message: e.message };
   }
-  const results = [];
+
+  // 以前はここでファイル単位のtry/catchが例外を完全に握りつぶしており、
+  // 権限エラーやレース状態(スキャン中に他プロセスが削除した等)でファイルを
+  // 確認できなかったことがログにも結果にも一切残らなかった。記録した上で
+  // 他のファイルの処理は継続する
+  const csvFiles = [];
+  const fileErrors = [];
   for (const file of files) {
     try {
       const filePath = path.join(watchDir, file);
       if (fs.statSync(filePath).isFile() && path.extname(file).toLowerCase() === '.csv') {
-        results.push(await importScheduleFeedCSV(filePath, feed));
+        csvFiles.push(filePath);
       }
-    } catch (e) {}
+    } catch (e) {
+      fileErrors.push(`${file}: ${e.message}`);
+      console.warn(`[ScheduleFeed] "${feed.name}" ファイル確認エラー: ${file}: ${e.message}`);
+    }
   }
-  const importedCount = results.reduce((sum, r) => sum + (r?.count || 0), 0);
-  const failed = results.find(r => r && r.success === false);
-  if (failed) return { success: false, importedCount, message: failed.message || '取り込みに失敗したCSVファイルがあります' };
-  return { success: true, importedCount, message: null };
+
+  const parsedFiles = [];
+  for (const filePath of csvFiles) {
+    const parsed = await parseScheduleFeedCsvFile(filePath, feed);
+    parsedFiles.push({ filePath, ...parsed });
+    if (!parsed.success) {
+      fileErrors.push(`${path.basename(filePath)}: ${parsed.message}`);
+      console.warn(`[ScheduleFeed] "${feed.name}" 取り込みエラー: ${path.basename(filePath)}: ${parsed.message}`);
+    }
+  }
+
+  // このフィードの既存アイテムは、フォルダ内の全CSVをまとめて1回だけ置換する。
+  // 以前はファイルごとに個別へ置換していたため、同じフォルダに複数のCSVが
+  // あると後続ファイルの書き込みで先行ファイル分が消えてしまい、
+  // 取り込み件数の集計(全ファイルの合計)とDBの実際の中身(最後のファイル分のみ)
+  // が食い違っていた
+  const result = commitScheduleFeedImport(feed, parsedFiles);
+  const overallSuccess = result.success && fileErrors.length === 0;
+  const combinedMessage = fileErrors.length > 0
+    ? [result.message, `${fileErrors.length}件のファイルでエラー: ${fileErrors.join('; ')}`].filter(Boolean).join(' / ')
+    : result.message;
+
+  if (csvFiles.length > 0 || fileErrors.length > 0) {
+    const fileName = csvFiles.length === 1 ? path.basename(csvFiles[0]) : `${csvFiles.length}件のファイル`;
+    notifyScheduleImported(feed, fileName, { success: overallSuccess, count: result.importedCount, message: combinedMessage });
+  }
+
+  if (!overallSuccess) {
+    return { success: false, importedCount: result.importedCount, message: combinedMessage || '取り込みに失敗したファイルがあります' };
+  }
+  return { success: true, importedCount: result.importedCount, message: null };
 }
 
 // 時刻部分の区切り文字は現場のCSV/機器出力によって : (半角/全角) と . が
@@ -2032,11 +2067,11 @@ function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto', credenti
   }
 }
 
-// この関数は失敗時も例外をthrow/rejectしない(全て内部でcatchしIPC/ログへ報告する)。
-// スケジュール監視のイベントハンドラ(setInterval・chokidarの'add')から呼ばれた際に
-// 未処理のPromise拒否や同期例外でプロセス全体が落ちるのを避けるため。
-// 呼び出し元(手動取り込みAPI等)は返り値の{success, count, message}で結果を判定できる
-function importScheduleFeedCSV(filePath, feed) {
+// CSV1件を読み込み・パースし、アイテム配列を組み立てるだけの純粋な処理。
+// DBへの書き込み・アーカイブ・通知は一切行わない(commitScheduleFeedImportが
+// 複数ファイル分をまとめて1回で行う)。この関数は失敗時も例外をthrow/rejectせず、
+// 常に{success, items, rowCount, message, encoding}で解決する
+function parseScheduleFeedCsvFile(filePath, feed) {
   return new Promise(resolve => {
     try {
       assertCsvFileSize(filePath);
@@ -2044,25 +2079,20 @@ function importScheduleFeedCSV(filePath, feed) {
       const { text: decodedText, encoding } = decodeScheduleCsvBuffer(buffer, feed.encoding);
 
       const mapping = feed.mapping || {};
-      const results = [];
+      const rows = [];
       const parser = csv();
       parser.on('data', row => {
-        if (results.length >= MAX_CSV_ROWS) {
+        if (rows.length >= MAX_CSV_ROWS) {
           parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
           return;
         }
-        results.push(row);
+        rows.push(row);
       });
       Readable.from([decodedText])
         .pipe(parser)
         .on('end', () => {
-          const db = readDB();
-          if (!db.schedule_items) db.schedule_items = [];
-
-          // 取り込みは「このフィードの既存アイテムを全削除してから再挿入」する方式のため、
-          // 先に新しいアイテムを組み立て、既存を消す前に妥当性を確認する
-          const newItems = [];
-          results.forEach(row => {
+          const items = [];
+          rows.forEach(row => {
             const dateVal = mapping.col_date ? row[mapping.col_date] : null;
             const timeVal = mapping.col_time ? row[mapping.col_time] : null;
             const dtVal = mapping.col_datetime ? row[mapping.col_datetime] : null;
@@ -2074,8 +2104,10 @@ function importScheduleFeedCSV(filePath, feed) {
             const identifier = mapping.col_id ? (row[mapping.col_id] || '') : '';
             const durationMin = mapping.col_duration_min ? parseInt(row[mapping.col_duration_min]) || null : null;
 
-            newItems.push({
-              id: `sched-${feed.id}-${startMs}-${newItems.length}`,
+            // 複数ファイル分をまとめて挿入することがあるため、ファイル名も含めて
+            // ID衝突を避ける(同じstart_msの行が別ファイルにもあり得るため)
+            items.push({
+              id: `sched-${feed.id}-${startMs}-${items.length}-${path.basename(filePath)}`,
               feed_id: feed.id,
               feed_name: feed.name || '取り込みスケジュール',
               color: feed.color || '#7c3aed',
@@ -2088,77 +2120,92 @@ function importScheduleFeedCSV(filePath, feed) {
               imported_at: Date.now()
             });
           });
-
-          // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
-          // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
-          // 既存アイテムには触れずに中止する（患者CSV取り込み側の空振りガードと同じ方針）
-          if (results.length > 0 && newItems.length === 0) {
-            const message = `${results.length}行すべてで日時を解釈できなかったため、取り込みを中止しました。日付・時刻の列マッピングを確認してください。`;
-            console.warn(`[ScheduleFeed] "${feed.name}" ${message}`);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('schedule-imported', {
-                success: false,
-                feedId: feed.id,
-                feedName: feed.name,
-                fileName: path.basename(filePath),
-                count: 0,
-                encoding,
-                message,
-              });
-            }
-            resolve({ success: false, count: 0, message });
-            return;
-          }
-
-          db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
-          db.schedule_items.push(...newItems);
-          const count = newItems.length;
-
-          const saved = writeDB(db);
-          if (!saved) {
-            const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
-            console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('schedule-imported', {
-                success: false,
-                feedId: feed.id,
-                feedName: feed.name,
-                fileName: path.basename(filePath),
-                count: 0,
-                encoding,
-                message,
-              });
-            }
-            resolve({ success: false, count: 0, message });
-            return;
-          }
-          console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${count}件 (${path.basename(filePath)}, ${encoding})`);
-
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('schedule-imported', {
-              success: true,
-              feedId: feed.id,
-              feedName: feed.name,
-              fileName: path.basename(filePath),
-              count,
-              encoding
-            });
-          }
-
-          // アーカイブ処理（メイン取り込みと同様）
-          const policy = feed.retention_policy || { action: 'archive', retentionDays: '30' };
-          archiveScheduleFeedFile(filePath, feed, policy);
-          resolve({ success: true, count, message: null });
+          resolve({ success: true, items, rowCount: rows.length, message: null, encoding });
         })
         .on('error', err => {
-          console.error(`[ScheduleFeed] "${feed.name}" パースエラー:`, err);
-          resolve({ success: false, count: 0, message: err.message });
+          console.error(`[ScheduleFeed] "${feed.name}" パースエラー: ${path.basename(filePath)}:`, err);
+          resolve({ success: false, items: [], rowCount: 0, message: err.message, encoding });
         });
     } catch (err) {
-      console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー:`, err);
-      resolve({ success: false, count: 0, message: err.message });
+      console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー: ${path.basename(filePath)}:`, err);
+      resolve({ success: false, items: [], rowCount: 0, message: err.message, encoding: null });
     }
   });
+}
+
+// parseScheduleFeedCsvFileの結果1件以上をまとめて1回のDB書き込みで反映する。
+// 単一ファイル(リアルタイム監視のadd時)・複数ファイル(フォルダ走査)の両方で使う。
+// 以前はファイルごとに個別へ「このフィードの既存アイテムを全削除してから再挿入」
+// していたため、同じフォルダに複数のCSVがあると後続ファイルの書き込みで
+// 先行ファイル分が消えてしまい、取り込み件数の集計とDBの実際の中身が
+// 食い違うバグがあった。既存アイテムの置換は、渡された全ファイル分をまとめて
+// 1回だけ行う
+function commitScheduleFeedImport(feed, parsedFiles) {
+  const succeeded = parsedFiles.filter(p => p.success);
+  const totalRowCount = succeeded.reduce((sum, p) => sum + p.rowCount, 0);
+  const allItems = succeeded.flatMap(p => p.items);
+
+  // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
+  // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
+  // 既存アイテムには触れずに中止する（患者CSV取り込み側の空振りガードと同じ方針）
+  if (totalRowCount > 0 && allItems.length === 0) {
+    const message = `${totalRowCount}行すべてで日時を解釈できなかったため、取り込みを中止しました。日付・時刻の列マッピングを確認してください。`;
+    console.warn(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, importedCount: 0, message };
+  }
+
+  if (succeeded.length === 0) return { success: true, importedCount: 0, message: null };
+
+  const db = readDB();
+  if (!db.schedule_items) db.schedule_items = [];
+  db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
+  db.schedule_items.push(...allItems);
+
+  const saved = writeDB(db);
+  if (!saved) {
+    const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
+    console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, importedCount: 0, message };
+  }
+
+  const policy = feed.retention_policy || { action: 'archive', retentionDays: '30' };
+  succeeded.forEach(p => archiveScheduleFeedFile(p.filePath, feed, policy));
+
+  return { success: true, importedCount: allItems.length, message: null };
+}
+
+function notifyScheduleImported(feed, fileName, { success, count, message }) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('schedule-imported', {
+    success,
+    feedId: feed.id,
+    feedName: feed.name,
+    fileName,
+    count,
+    message: message || null,
+  });
+}
+
+// この関数は失敗時も例外をthrow/rejectしない(全て内部でcatchしIPC/ログへ報告する)。
+// スケジュール監視のイベントハンドラ(chokidarの'add')から呼ばれた際に
+// 未処理のPromise拒否や同期例外でプロセス全体が落ちるのを避けるため。
+// 呼び出し元は返り値の{success, count, message}で結果を判定できる
+async function importScheduleFeedCSV(filePath, feed) {
+  const fileName = path.basename(filePath);
+  const parsed = await parseScheduleFeedCsvFile(filePath, feed);
+  if (!parsed.success) {
+    console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー: ${fileName}: ${parsed.message}`);
+    notifyScheduleImported(feed, fileName, { success: false, count: 0, message: parsed.message });
+    return { success: false, count: 0, message: parsed.message };
+  }
+  const result = commitScheduleFeedImport(feed, [{ filePath, ...parsed }]);
+  if (result.success) {
+    console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${result.importedCount}件 (${fileName}, ${parsed.encoding})`);
+  } else {
+    console.warn(`[ScheduleFeed] "${feed.name}" ${result.message}`);
+  }
+  notifyScheduleImported(feed, fileName, { success: result.success, count: result.importedCount, message: result.message });
+  return { success: result.success, count: result.importedCount, message: result.message };
 }
 
 function archiveScheduleFeedFile(filePath, feed, policy) {
