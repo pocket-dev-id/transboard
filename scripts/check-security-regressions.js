@@ -1862,14 +1862,29 @@ assert(
   'processStatusUpdateRequest must recompute estimated_pickup_at from current.expected_duration_min when transitioning to IN_EXAM, or the "検査終了の目安" stays pinned to the pre-transit departure-time estimate'
 );
 
-// importScheduleFeedCSVはPromiseを返さなければならない。返さないまま
-// chokidarの'add'ハンドラで`.catch()`を呼ぶと、CSV検知のたびに
-// TypeError(undefinedにcatchは無い)を同期的にthrowし、uncaughtException
-// ハンドラの無いこのプロセスではElectronアプリ全体が落ちる
-// (「リアルタイム」モードのスケジュール取り込みが常に失敗する原因)。
+// リアルタイム監視のchokidar'add'ハンドラは、CSV1件ごとに単独で取り込む
+// (commitScheduleFeedImportを都度呼ぶ)のではなく、フィード単位でデバウンスして
+// scanAndImportScheduleFolder()でフォルダ全体をまとめて取り込まなければならない。
+// ファイル単位で個別に取り込むと、commitScheduleFeedImportが呼び出しごとに
+// 「そのフィードの既存アイテムを全削除してから今回渡された分だけ追加」するため、
+// 同じフォルダに複数のCSVが立て続けに現れた場合(起動時に既存の複数CSVを検出、
+// 運用者が複数ファイルを同時投入等)、後から処理されたファイルが先に処理された
+// ファイル分の予定を消してしまう
 assert(
-  main.includes('async function importScheduleFeedCSV(filePath, feed) {'),
-  'importScheduleFeedCSV must return a Promise (e.g. be declared async), or callers using .catch() on its result (chokidar realtime watcher) throw synchronously on every CSV file'
+  !main.includes('importScheduleFeedCSV'),
+  'the standalone importScheduleFeedCSV(filePath, feed) helper (single-file replace-then-insert) must not exist any more; the realtime add handler must route through scanAndImportScheduleFolder so multiple CSVs in one watch folder are committed together, not one file at a time'
+);
+assert(
+  (() => {
+    const idx = main.indexOf("watcher.on('add', filePath => {");
+    const end = main.indexOf('\n      });', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('scheduleFeedRealtimeDebounceTimers') &&
+      body.includes('setTimeout(') &&
+      body.includes('scanAndImportScheduleFolder(watchDir, feed)');
+  })(),
+  "the realtime watcher's 'add' handler must debounce per feed (via scheduleFeedRealtimeDebounceTimers) and call scanAndImportScheduleFolder once quiet, or CSVs added close together (startup with multiple existing files, or two files dropped at once) overwrite each other's imported items"
 );
 
 // 手動でのスケジュール取り込み(schedule-feed-import)は、実際にCSVの取り込みが
@@ -2264,12 +2279,11 @@ assert(
 assert(
   (() => {
     const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
-    const end = main.indexOf('\n}', main.indexOf('function importScheduleFeedCSV', idx));
+    const end = main.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
     const body = main.slice(idx, end);
     return body.includes('const parsedFiles = []') &&
-      body.includes('commitScheduleFeedImport(feed, parsedFiles)') &&
-      !body.includes('await importScheduleFeedCSV(filePath, feed)');
+      body.includes('commitScheduleFeedImport(feed, parsedFiles)');
   })(),
   'scanAndImportScheduleFolder must parse all CSV files first and commit them together in one call, not replace the feed\'s items once per file'
 );

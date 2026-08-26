@@ -1794,6 +1794,13 @@ function scanAndImportFolder(watchPath) {
 let scheduleFeedWatchers = [];
 let scheduleFeedTimers = [];
 let scheduleFeedRetryTimer = null;
+// リアルタイム監視(chokidarの'add')でフィード単位にデバウンスするためのタイマー。
+// feed.id -> setTimeoutハンドル
+let scheduleFeedRealtimeDebounceTimers = new Map();
+// 起動時に既存CSVが複数見つかった場合や、運用者が複数ファイルをまとめて
+// 投入した場合でも、addイベントが出揃ってから1回のフォルダ走査でまとめて
+// 取り込むための待機時間
+const SCHEDULE_FEED_REALTIME_DEBOUNCE_MS = 1500;
 
 function setupScheduleFeedTriggers() {
   if (scheduleFeedRetryTimer) {
@@ -1805,6 +1812,8 @@ function setupScheduleFeedTriggers() {
   scheduleFeedWatchers = [];
   scheduleFeedTimers.forEach(t => clearInterval(t));
   scheduleFeedTimers = [];
+  scheduleFeedRealtimeDebounceTimers.forEach(t => clearTimeout(t));
+  scheduleFeedRealtimeDebounceTimers = new Map();
 
   const db = readDB();
 
@@ -1854,9 +1863,23 @@ function setupScheduleFeedTriggers() {
         awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 }
       });
       watcher.on('add', filePath => {
-        if (path.extname(filePath).toLowerCase() === '.csv') {
-          importScheduleFeedCSV(filePath, feed).catch(err => console.error(`[ScheduleFeed] CSV取り込みエラー: ${filePath}`, err));
-        }
+        if (path.extname(filePath).toLowerCase() !== '.csv') return;
+        // 同じ監視フォルダに複数のCSVが立て続けに現れた場合(アプリ起動時に既存の
+        // 複数CSVをまとめて検出した場合、運用者が複数ファイルを同時に投入した場合等)、
+        // ファイル1件ごとにcommitScheduleFeedImport()を呼ぶと、それぞれの呼び出しが
+        // 「このフィードの既存アイテムを全削除してから今回のファイル分だけ追加」する
+        // ため、後から処理されたファイルが先に処理されたファイル分の予定を消してしまう。
+        // フィード単位でaddイベントをデバウンスし、一定時間イベントが来なくなってから
+        // フォルダ全体をscanAndImportScheduleFolder()でまとめて1回だけ取り込む
+        // (フォルダ走査経路がすでに使っている、複数CSVをまとめてコミットする対策を
+        // リアルタイム経路にも適用する)
+        const existingTimer = scheduleFeedRealtimeDebounceTimers.get(feed.id);
+        if (existingTimer) clearTimeout(existingTimer);
+        const debounceTimer = setTimeout(() => {
+          scheduleFeedRealtimeDebounceTimers.delete(feed.id);
+          scanAndImportScheduleFolder(watchDir, feed).catch(err => console.error(`[ScheduleFeed] CSV取り込みエラー: ${watchDir}`, err));
+        }, SCHEDULE_FEED_REALTIME_DEBOUNCE_MS);
+        scheduleFeedRealtimeDebounceTimers.set(feed.id, debounceTimer);
       });
       scheduleFeedWatchers.push(watcher);
     } else if (schedule.mode === 'interval') {
@@ -2134,7 +2157,8 @@ function parseScheduleFeedCsvFile(filePath, feed) {
 }
 
 // parseScheduleFeedCsvFileの結果1件以上をまとめて1回のDB書き込みで反映する。
-// 単一ファイル(リアルタイム監視のadd時)・複数ファイル(フォルダ走査)の両方で使う。
+// scanAndImportScheduleFolder(フォルダ走査・リアルタイム監視のいずれも、
+// 最終的にこの関数を通ってフォルダ内の全CSVをまとめて渡す)から使う。
 // 以前はファイルごとに個別へ「このフィードの既存アイテムを全削除してから再挿入」
 // していたため、同じフォルダに複数のCSVがあると後続ファイルの書き込みで
 // 先行ファイル分が消えてしまい、取り込み件数の集計とDBの実際の中身が
@@ -2184,28 +2208,6 @@ function notifyScheduleImported(feed, fileName, { success, count, message }) {
     count,
     message: message || null,
   });
-}
-
-// この関数は失敗時も例外をthrow/rejectしない(全て内部でcatchしIPC/ログへ報告する)。
-// スケジュール監視のイベントハンドラ(chokidarの'add')から呼ばれた際に
-// 未処理のPromise拒否や同期例外でプロセス全体が落ちるのを避けるため。
-// 呼び出し元は返り値の{success, count, message}で結果を判定できる
-async function importScheduleFeedCSV(filePath, feed) {
-  const fileName = path.basename(filePath);
-  const parsed = await parseScheduleFeedCsvFile(filePath, feed);
-  if (!parsed.success) {
-    console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー: ${fileName}: ${parsed.message}`);
-    notifyScheduleImported(feed, fileName, { success: false, count: 0, message: parsed.message });
-    return { success: false, count: 0, message: parsed.message };
-  }
-  const result = commitScheduleFeedImport(feed, [{ filePath, ...parsed }]);
-  if (result.success) {
-    console.log(`[ScheduleFeed] "${feed.name}" 取り込み完了: ${result.importedCount}件 (${fileName}, ${parsed.encoding})`);
-  } else {
-    console.warn(`[ScheduleFeed] "${feed.name}" ${result.message}`);
-  }
-  notifyScheduleImported(feed, fileName, { success: result.success, count: result.importedCount, message: result.message });
-  return { success: result.success, count: result.importedCount, message: result.message };
 }
 
 function archiveScheduleFeedFile(filePath, feed, policy) {
