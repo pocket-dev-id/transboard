@@ -2236,3 +2236,19 @@ assert(
   !networkSettings.includes('d.page || d.mode'),
   'no device-presence display site may fall back from page to mode, or an empty page value renders the terminal\'s role string (e.g. "client") as if it were a screen name'
 );
+
+// ホーム病棟(_homeWardId)はメモリ上だけで確立してはならない。前回終了時に
+// たまたま別病棟を一時閲覧していた場合、current_ward_idとして復元される
+// その閲覧先が再起動直後の新しいホーム病棟として誤って確立されてしまい、
+// 本来のホーム病棟宛の着信・自動アナウンスを再び取りこぼす
+assert(
+  (() => {
+    const idx = call.indexOf('_getWardListenIds() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes("localStorage.getItem('_home_ward_id')") &&
+      body.includes("localStorage.setItem('_home_ward_id', wardId)");
+  })(),
+  '_getWardListenIds must persist _homeWardId to localStorage and read it back on next launch, or the home ward is re-guessed from whatever ward happens to be displayed at restart'
+);
