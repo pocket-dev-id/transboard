@@ -52,6 +52,7 @@ const networkSettings = read('js/settings/network.js');
 const importNotify = read('js/settings/import-notify.js');
 const terminalAccess = read('js/settings/terminal-access.js');
 const statusCustomize = read('js/settings/status-customize.js');
+const history = read('js/history.js');
 const styles = read('css/style.css');
 const modal = read('js/modal.js');
 const carryover = read('js/carryover.js');
@@ -2721,3 +2722,13 @@ assert(
   })(),
   'togglePanel must delegate to showPanel()/hidePanel() instead of directly toggling the hidden class, or a future change to either method can silently diverge from the toggle behavior'
 );
+
+// ── RBAC(Auth.can/setRole/CONFIG.PERMISSIONS)は撤去済みで、部分的に復活していないこと ──
+
+// ロール切り替えUIが存在しないままAuth.canの呼び出しだけが復活すると、
+// cfg_user_roleが常にNURSE既定のままの状態で権限判定が「動いているように
+// 見えて実は何も制限しない」死んだアクセス制御に逆戻りする
+assert(!fs.existsSync(path.join(root, 'js/auth.js')), 'js/auth.js (RBACモジュール) が復活しています。ロール切り替えUIを伴わないAuth.can()呼び出しは実質何も制限しない飾りの権限チェックになるため、再導入する場合はロール変更手段とセットで設計すること');
+assert(!/js\/auth\.js/.test(indexHtml), 'index.htmlがjs/auth.jsを読み込んでいます。RBACモジュールは撤去済みのはずです');
+assert(!/\bROLES\s*:/.test(config) && !/\bPERMISSIONS\s*:/.test(config), 'js/config.jsにCONFIG.ROLES/CONFIG.PERMISSIONSが復活しています(RBACモジュールと一緒に撤去済みのはず)');
+assert(!/\bAuth\.can\(/.test(history) && !/\bAuth\.requirePermission\(/.test(history), 'js/history.jsにAuth.can()/Auth.requirePermission()の呼び出しが復活しています。Authは撤去済みのはずです');

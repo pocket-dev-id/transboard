@@ -94,7 +94,7 @@ const Priority = {
     const items = AppState.getPriorityList();
 
     if (items.length === 0) {
-      list.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle" style="color:#16a34a"></i><p>現在、出棟中の患者はいません</p></div>';
+      list.innerHTML = UI.emptyStateHtml('現在、出棟中の患者はいません', { icon: 'fas fa-check-circle', iconStyle: 'color:#16a34a' });
       return;
     }
 
@@ -175,7 +175,7 @@ const StaffStatus = {
       !staff.ward_id || staff.ward_id === AppState.currentWardId
     );
     if (wardStaffs.length === 0) {
-      panel.innerHTML = '<div class="empty-state"><i class="fas fa-user-nurse"></i><p>スタッフが登録されていません</p></div>';
+      panel.innerHTML = UI.emptyStateHtml('スタッフが登録されていません', { icon: 'fas fa-user-nurse' });
       return;
     }
 
@@ -196,7 +196,7 @@ const StaffStatus = {
       .filter(({ event }) => filter === 'busy' ? !!event : true);
 
     if (rows.length === 0) {
-      panel.innerHTML = '<div class="empty-state"><i class="fas fa-user-nurse"></i><p>稼働中のスタッフはいません</p></div>';
+      panel.innerHTML = UI.emptyStateHtml('稼働中のスタッフはいません', { icon: 'fas fa-user-nurse' });
       return;
     }
 
@@ -271,7 +271,7 @@ const NotificationHistory = {
 
     if (logs.length === 0) {
       const emptyLabel = unconfirmedOnly?.checked ? '未確認の通知はありません' : '通知履歴はありません';
-      list.innerHTML = `<div class="empty-state"><i class="fas fa-bell-slash"></i><p>${emptyLabel}</p></div>`;
+      list.innerHTML = UI.emptyStateHtml(emptyLabel, { icon: 'fas fa-bell-slash' });
       return;
     }
 

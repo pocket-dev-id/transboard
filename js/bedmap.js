@@ -28,7 +28,7 @@ const BedMap = {
     }
 
     if (beds.length === 0) {
-      grid.innerHTML = '<div class="empty-state"><i class="fas fa-bed"></i><p>病床データがありません</p></div>';
+      grid.innerHTML = UI.emptyStateHtml('病床データがありません', { icon: 'fas fa-bed' });
       return;
     }
 
