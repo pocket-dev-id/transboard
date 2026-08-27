@@ -493,9 +493,9 @@ const ExamRoom = {
       return;
     }
 
-    container.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
+    container.innerHTML = UI.loadingSpinnerHtml();
     if (historyArea) historyArea.hidden = false;
-    if (historyList) historyList.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
+    if (historyList) historyList.innerHTML = UI.loadingSpinnerHtml();
 
     try {
       const { events, recentStatusLogs } = await API.getExamRoomStatus(roomId);
@@ -549,7 +549,7 @@ const ExamRoom = {
           this._renderViewToggle(summaryContainer);
         }
         container.classList.remove('exam-queue-list-mode');
-        container.innerHTML = '<div class="empty-state"><i class="fas fa-check-circle" style="color:#16a34a"></i><p>現在待機中の患者はいません</p></div>';
+        container.innerHTML = UI.emptyStateHtml('現在待機中の患者はいません', { icon: 'fas fa-check-circle', iconStyle: 'color:#16a34a' });
         return;
       }
 
@@ -710,9 +710,9 @@ const ExamRoom = {
       }
     } catch (e) {
       console.error(e);
-      container.innerHTML = '<div class="empty-state"><p>読み込みに失敗しました</p></div>';
+      container.innerHTML = UI.emptyStateHtml('読み込みに失敗しました', { icon: null });
       if (historyList) {
-        historyList.innerHTML = '<div class="empty-state"><p>通知履歴を取得できませんでした</p></div>';
+        historyList.innerHTML = UI.emptyStateHtml('通知履歴を取得できませんでした', { icon: null });
       }
     }
   },
@@ -899,7 +899,7 @@ const ExamRoom = {
       .slice(0, 20);
     if (items.length === 0) {
       const emptyLabel = unconfirmedOnly?.checked ? '未確認の通知はありません' : '通知履歴はありません';
-      list.innerHTML = `<div class="empty-state"><i class="fas fa-bell-slash"></i><p>${emptyLabel}</p></div>`;
+      list.innerHTML = UI.emptyStateHtml(emptyLabel, { icon: 'fas fa-bell-slash' });
       return;
     }
 
@@ -1080,11 +1080,10 @@ const ExamRoom = {
   // ── 全検査室グリッド ──────────────────────────────────
   async _renderRoomGrid() {
     if (!AppState.examRooms || AppState.examRooms.length === 0) {
-      return `<div class="empty-state">
-        <i class="fas fa-hospital-symbol"></i>
-        <p>検査室が登録されていません</p>
-        <p style="font-size:11px;margin-top:4px;">設定 → 検査室マスタ から登録してください。</p>
-      </div>`;
+      return UI.emptyStateHtml('検査室が登録されていません', {
+        icon: 'fas fa-hospital-symbol',
+        hint: '設定 → 検査室マスタ から登録してください。',
+      });
     }
 
     // 検査室は病棟をまたいで共有されるため、病棟横断の専用集計データを使う。

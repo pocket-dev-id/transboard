@@ -398,26 +398,28 @@ const UI = {
     setInterval(update, 1000);
   },
 
-  /* ---------- ローディング ---------- */
-  showLoading(containerId) {
-    const el = document.getElementById(containerId);
-    if (el) el.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
+  /* ---------- ローディング / 空状態 ---------- */
+  loadingSpinnerHtml() {
+    return '<div class="loading-spinner"><div class="spinner"></div></div>';
   },
 
-  showEmpty(containerId, message = 'データがありません') {
+  showLoading(containerId) {
     const el = document.getElementById(containerId);
-    if (!el) return;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'empty-state';
-    const icon = document.createElement('i');
-    icon.className = 'fas fa-inbox';
-    icon.setAttribute('aria-hidden', 'true');
-    const p = document.createElement('p');
-    p.textContent = message;
-    wrapper.appendChild(icon);
-    wrapper.appendChild(p);
-    el.innerHTML = '';
-    el.appendChild(wrapper);
+    if (el) el.innerHTML = this.loadingSpinnerHtml();
+  },
+
+  // icon: false/nullでアイコン無し。hint: 本文の下に添える小さな補足行
+  emptyStateHtml(message, { icon = 'fas fa-inbox', iconStyle = '', hint = '', style = '' } = {}) {
+    const wrapperStyleAttr = style ? ` style="${style}"` : '';
+    const iconStyleAttr = iconStyle ? ` style="${iconStyle}"` : '';
+    const iconHtml = icon ? `<i class="${icon}" aria-hidden="true"${iconStyleAttr}></i>` : '';
+    const hintHtml = hint ? `<p style="font-size:11px;margin-top:4px;">${this.escapeHTML(hint)}</p>` : '';
+    return `<div class="empty-state"${wrapperStyleAttr}>${iconHtml}<p>${this.escapeHTML(message)}</p>${hintHtml}</div>`;
+  },
+
+  showEmpty(containerId, message = 'データがありません', options = {}) {
+    const el = document.getElementById(containerId);
+    if (el) el.innerHTML = this.emptyStateHtml(message, options);
   },
 
   /* ---------- タブ切り替え ---------- */

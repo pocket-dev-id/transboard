@@ -392,7 +392,7 @@ const Timeline = {
     if (dayStart === todayStart.getTime()) {
       events = AppState.todayEvents;
     } else {
-      container.innerHTML = '<div class="empty-state"><i class="fas fa-spinner fa-spin"></i><p>データを読み込み中...</p></div>';
+      container.innerHTML = UI.emptyStateHtml('データを読み込み中...', { icon: 'fas fa-spinner fa-spin' });
       try {
         const all = await API.getAllEventsForWard(AppState.currentWardId);
         events = all.filter(e => {
@@ -400,7 +400,7 @@ const Timeline = {
           return ref != null && ref >= dayStart && ref < dayEnd;
         });
       } catch (err) {
-        container.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-circle"></i><p>データの取得に失敗しました</p></div>';
+        container.innerHTML = UI.emptyStateHtml('データの取得に失敗しました', { icon: 'fas fa-exclamation-circle' });
         return;
       }
     }
@@ -448,7 +448,7 @@ const Timeline = {
     this._renderFilterBar(filtered.length + schedItems.length, scheduleFetchFailed);
 
     if (filtered.length === 0 && schedItems.length === 0) {
-      container.innerHTML = '<div class="empty-state"><i class="fas fa-calendar"></i><p>この日のデータがありません</p></div>';
+      container.innerHTML = UI.emptyStateHtml('この日のデータがありません', { icon: 'fas fa-calendar' });
       return;
     }
 

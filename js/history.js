@@ -6,10 +6,6 @@ const HistoryView = {
   _isInitialized: false,
 
   async render() {
-    if (typeof Auth !== 'undefined' && !Auth.can('HISTORY_VIEW')) {
-      UI.toast('履歴を表示する権限がありません', 'warning');
-      return;
-    }
     await this._loadData();
     ExamStats.render();
     this._renderEventList();
@@ -114,7 +110,7 @@ const HistoryView = {
 
     const events = filtered.slice(0, 50);
     if (events.length === 0) {
-      el.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>該当するイベントがありません</p></div>';
+      el.innerHTML = UI.emptyStateHtml('該当するイベントがありません');
       return;
     }
 
@@ -189,7 +185,7 @@ const HistoryView = {
 
     const logs = filtered.slice(0, 50);
     if (logs.length === 0) {
-      el.innerHTML = '<div class="empty-state"><i class="fas fa-list"></i><p>該当する状態変更ログがありません</p></div>';
+      el.innerHTML = UI.emptyStateHtml('該当する状態変更ログがありません', { icon: 'fas fa-list' });
       return;
     }
 
@@ -223,7 +219,7 @@ const HistoryView = {
     try {
       const calls = await API.getCallHistory();
       if (calls.length === 0) {
-        el.innerHTML = '<div class="empty-state"><i class="fas fa-phone-slash"></i><p>通話履歴がありません</p></div>';
+        el.innerHTML = UI.emptyStateHtml('通話履歴がありません', { icon: 'fas fa-phone-slash' });
         return;
       }
 
@@ -250,7 +246,7 @@ const HistoryView = {
         `;
       }).join('');
     } catch (e) {
-      el.innerHTML = '<div class="empty-state"><p>読み込み失敗</p></div>';
+      el.innerHTML = UI.emptyStateHtml('読み込み失敗', { icon: null });
     }
   },
 
@@ -381,7 +377,7 @@ const ExamStats = {
     const rows = this.aggregate(AppState.allEvents, { periodDays, groupBy });
 
     if (rows.length === 0) {
-      container.innerHTML = '<div class="empty-state" style="padding:16px;"><i class="fas fa-stopwatch"></i><p>対象期間に帰棟済みの移送がありません</p></div>';
+      container.innerHTML = UI.emptyStateHtml('対象期間に帰棟済みの移送がありません', { icon: 'fas fa-stopwatch', style: 'padding:16px;' });
       return;
     }
 
