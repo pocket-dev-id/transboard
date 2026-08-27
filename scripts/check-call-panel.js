@@ -859,6 +859,61 @@ async function main() {
   blankInputs3[0]._listeners.keydown[0]({ key: 'Enter', isComposing: true });
   assert.strictEqual(apiCalls.webrtcSend.length, 0, 'IME変換確定のEnter(isComposing:true)では送信されないこと');
 
+  // 23) 右下のFAB(#btn-call-toggle)は、発信中・着信中・通話中はactiveクラスで
+  //     赤くパルスし、パネルを閉じていても一目で通話状態がわかること
+  //     (css/style.cssの.call-fab.activeに対応する状態管理)
+  // resetAll()はresetElementRegistry()でelementRegistryを丸ごと作り直すため、
+  // 都度新しいスタブオブジェクトに差し替わる。古い参照を使い回すとテストが
+  // 常に「別のボタン」を見てしまうため、resetAll()の直後に毎回取り直す
+  await resetAll();
+  let fabBtn = documentMock.getElementById('btn-call-toggle');
+  assert.strictEqual(fabBtn.classList.contains('active'), false, '待機中はactiveクラスが付いていないこと(前提の確認)');
+
+  // 発信するとFABがactiveになること
+  await CallPanel.startCall('east-7f', 'ward-1');
+  assert.strictEqual(fabBtn.classList.contains('active'), true, 'BUG FIX: 発信するとFABにactiveクラスが付くこと');
+
+  // 発信を終了(cleanupCall)するとactiveが外れること
+  await CallPanel.cleanupCall('test');
+  assert.strictEqual(fabBtn.classList.contains('active'), false, 'BUG FIX: 通話終了(cleanupCall)後はFABのactiveクラスが外れること');
+
+  // 着信するとFABがactiveになること(応答前、着信ダイアログの呼び出し中)
+  await resetAll();
+  fabBtn = documentMock.getElementById('btn-call-toggle');
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake-offer' } });
+  assert.strictEqual(fabBtn.classList.contains('active'), true, 'BUG FIX: 着信するとFABにactiveクラスが付くこと');
+
+  // 応答(acceptCall)後もactiveのままであること
+  await CallPanel.acceptCall('room-1', { type: 'offer', sdp: 'fake-offer' });
+  assert.strictEqual(fabBtn.classList.contains('active'), true, '応答して通話中になってもactiveのままであること');
+
+  // 通話が確立した発信側(setConnectedState)でもactiveのままであること
+  await resetAll();
+  fabBtn = documentMock.getElementById('btn-call-toggle');
+  await CallPanel.startCall('east-7f', 'ward-1');
+  CallPanel.setConnectedState();
+  assert.strictEqual(fabBtn.classList.contains('active'), true, '発信が接続完了(setConnectedState)してもactiveのままであること');
+  await CallPanel.cleanupCall('test');
+  assert.strictEqual(fabBtn.classList.contains('active'), false, '通話終了後はactiveが外れること(前提の確認)');
+
+  // 着信中に、別端末が先に応答した(answered受信)場合もactiveが外れること
+  await resetAll();
+  fabBtn = documentMock.getElementById('btn-call-toggle');
+  await CallPanel.handleSignalingMessage({ type: 'offer', from: 'room-1', sdp: { type: 'offer', sdp: 'fake' } });
+  assert.strictEqual(fabBtn.classList.contains('active'), true, '着信中はactiveであること(前提の確認)');
+  await CallPanel.handleSignalingMessage({ type: 'answered', from: CallPanel.getMyId() });
+  assert.strictEqual(fabBtn.classList.contains('active'), false, 'BUG FIX: 別端末が先に応答(answered受信)した場合もFABのactiveクラスが外れること');
+
+  // 24) togglePanel()はshowPanel()/hidePanel()に委譲すること(重複実装を避ける)。
+  //     従来通りクリックのたびに表示/非表示が切り替わること自体も確認する
+  await resetAll();
+  const panelEl = documentMock.getElementById('call-panel');
+  panelEl.classList.add('hidden');
+  CallPanel.togglePanel();
+  assert.strictEqual(panelEl.classList.contains('hidden'), false, 'togglePanel(): 非表示→表示に切り替わること');
+  CallPanel.togglePanel();
+  assert.strictEqual(panelEl.classList.contains('hidden'), true, 'togglePanel(): 表示→非表示に切り替わること');
+
   await resetAll();
   console.log('Call panel checks passed.');
   process.exit(0);

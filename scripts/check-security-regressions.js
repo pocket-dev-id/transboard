@@ -2681,3 +2681,43 @@ assert(
   })(),
   'templates without {n} must still render as a clickable <button> (btn-send-announcement), or every existing announcement template silently becomes a non-clickable multi-element row and loses one-click sending'
 );
+
+// ── 右下のFAB(#btn-call-toggle)は通話状態(発信中/着信中/通話中)をactiveクラスで反映しなければならない ──
+
+// css/style.cssには.call-fab.active(赤くパルスするスタイル)が定義されて
+// いるが、それに対応するclassList操作が無いと単なる死んだCSSになり、
+// パネルを閉じている間、通話中/着信中であることが一目でわからなくなる
+assert(
+  (() => {
+    const idx = call.indexOf('_updateCallFabState() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes("document.getElementById('btn-call-toggle')") &&
+      body.includes('this.isCalling') &&
+      body.includes('this.isConnected') &&
+      body.includes('this._isRinging') &&
+      body.includes("classList.toggle('active'");
+  })(),
+  '_updateCallFabState must exist and toggle the active class on #btn-call-toggle based on isCalling/isConnected/_isRinging, or the FAB never shows a call-in-progress/incoming-call indicator'
+);
+assert(
+  (call.match(/this\._updateCallFabState\(\);/g) || []).length >= 6,
+  '_updateCallFabState must be called from every place isCalling/isConnected/_isRinging change (startCall, showIncomingCallDialog, acceptCall, setConnectedState, cleanupCall, and the answered-by-another-terminal branch of handleSignalingMessage), or some call state transitions leave the FAB showing stale active/inactive state'
+);
+
+// ── togglePanel()はshowPanel()/hidePanel()に委譲しなければならない(重複実装の分岐を避ける) ──
+
+// classList.toggle('hidden')を直接呼ぶ独自実装だと、showPanel/hidePanelに
+// 副作用(通話状態バッジの更新等)を足した際にtogglePanel側だけ古い挙動の
+// ままになりうる
+assert(
+  (() => {
+    const idx = call.indexOf('togglePanel() {');
+    const end = call.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    return body.includes('this.showPanel()') && body.includes('this.hidePanel()');
+  })(),
+  'togglePanel must delegate to showPanel()/hidePanel() instead of directly toggling the hidden class, or a future change to either method can silently diverge from the toggle behavior'
+);
