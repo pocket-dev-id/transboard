@@ -101,7 +101,8 @@ const CallPanel = {
 
   togglePanel() {
     const panel = document.getElementById('call-panel');
-    panel.classList.toggle('hidden');
+    if (panel.classList.contains('hidden')) this.showPanel();
+    else this.hidePanel();
   },
 
   showPanel() {
@@ -110,6 +111,18 @@ const CallPanel = {
 
   hidePanel() {
     document.getElementById('call-panel').classList.add('hidden');
+  },
+
+  // FAB(#btn-call-toggle)へ通話状態を反映する。発信中・着信中・通話中は
+  // activeクラスで赤くパルスさせ、パネルを閉じていても一目でわかるように
+  // する(css/style.cssの.call-fab.activeに対応)。状態が変わる全ての箇所
+  // (startCall/showIncomingCallDialog/acceptCall/setConnectedState/
+  // cleanupCall/answered受信時)から呼ぶ
+  _updateCallFabState() {
+    const btn = document.getElementById('btn-call-toggle');
+    if (!btn) return;
+    const active = this.isCalling || this.isConnected || this._isRinging;
+    btn.classList.toggle('active', active);
   },
 
   // ── メインパネルHTML描画 ──
@@ -482,6 +495,7 @@ const CallPanel = {
       if (!this.isConnected && !this.isCalling && this._isRinging) {
         if (this._incomingRingTimeoutId) { clearTimeout(this._incomingRingTimeoutId); this._incomingRingTimeoutId = null; }
         this._isRinging = false;
+        this._updateCallFabState();
         this.stopRingTone();
         // targetIdを残したままだと、この端末は「応答しなかった側」なのに
         // 後続のice/hangupをこの通話のものとして誤って処理し続けてしまう
@@ -888,7 +902,8 @@ const CallPanel = {
     this.targetId = targetId;
     this._callSourceId = myId;
     this.isCalling = true;
-    
+    this._updateCallFabState();
+
     this.showCallingDialog(targetId);
     this.playRingBackTone();
 
@@ -952,6 +967,7 @@ const CallPanel = {
     if (old) old.remove();
 
     this._isRinging = true;
+    this._updateCallFabState();
     this.playIncomingRingTone();
 
     const isVideo = this.isVideoCall;
@@ -1026,6 +1042,7 @@ const CallPanel = {
     this.isCalling = false;
     this.isConnected = true;
     this._isRinging = false;
+    this._updateCallFabState();
     this._callSourceId = this.getMyId();
 
     this.showConnectedDialog(callerId);
@@ -1170,6 +1187,7 @@ const CallPanel = {
     this.stopRingTone();
     this.isCalling = false;
     this.isConnected = true;
+    this._updateCallFabState();
     this.showConnectedDialog(this.targetId);
     this.startCallTimer();
     this._startStatsPolling();
@@ -1623,6 +1641,7 @@ const CallPanel = {
     this.isCalling = false;
     this.isConnected = false;
     this._isRinging = false;
+    this._updateCallFabState();
     this.targetId = null;
     this._callSourceId = null;
 
