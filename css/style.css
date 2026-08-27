@@ -1974,6 +1974,65 @@ h1, h2, h3, h4,
   background: #f8fafc;
 }
 
+/* ── アナウンス定型文一覧の共通見た目 ──
+   ワンクリック送信のボタン(<button class="announcement-template-item">)と、
+   数字入力欄付きの行(<div class="announcement-template-item has-blank">)の
+   両方に同じ枠線・角丸・paddingを適用し、見た目が食い違わないようにする。
+   has-blankには左端に色付きの太いボーダーを付け、文章を読まなくても
+   「数字入力が必要な項目」だと一目でわかるようにする */
+.announcement-template-item {
+  font-size: 11.5px;
+  padding: 8px 10px;
+  text-align: left;
+  line-height: 1.3;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  background: #fff;
+  transition: var(--transition);
+}
+button.announcement-template-item:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+.announcement-template-item .announcement-template-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.announcement-template-item.has-blank {
+  border-left: 3px solid #3b82f6;
+  padding-left: 8px;
+}
+.announcement-template-blank-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.template-blank-input {
+  width: 3.4em;
+  padding: 4px 3px;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+}
+.btn-send-blank-template {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
 /* ── 電話パネル内リスト ── */
 .call-section-title {
   font-size: 12px;

@@ -612,38 +612,69 @@ const CallPanel = {
           </button>
     `;
 
-    const templateBtns = templates.map((t, idx) => `
-      <button class="btn btn-sm btn-outline btn-send-announcement" data-text="${UI.escapeHTML(t)}" style="font-size:11.5px; padding:8px 10px; text-align:left; white-space:normal; line-height:1.2; width:100%; display:flex; align-items:center; gap:6px;">
-        <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
-        <span>${UI.escapeHTML(t)}</span>
+    // 定型文中に{n}トークンがあれば、クリック即送信のボタンではなく、
+    // 数字入力欄を常時表示した複合行として描画する(展開式にはしない)。
+    // 1つの定型文に{n}を複数書いた場合は、その数だけ入力欄が並ぶ。
+    // ワンクリック送信(button)と数字入力欄付き(div)の両方に
+    // announcement-template-itemクラスを与え、枠線・角丸・paddingを揃える
+    // ことで見た目の一貫性を持たせる(css/style.css参照)。数字入力欄付きの
+    // 行はhas-blankクラスによる左端の色付きボーダーと「🔢 要入力」バッジで、
+    // 文章を読まなくても一目で区別できるようにする
+    const templateBtns = templates.map((t, idx) => {
+      const parsed = UI.splitAnnouncementTemplate(t);
+      if (!parsed.hasBlank) {
+        return `
+      <button class="announcement-template-item btn-send-announcement" data-text="${UI.escapeHTML(t)}">
+        <span class="announcement-template-row">
+          <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
+          <span>${UI.escapeHTML(t)}</span>
+        </span>
       </button>
-    `).join('');
+    `;
+      }
+      const innerHtml = parsed.segments.map(seg => seg.type === 'text'
+        ? `<span>${UI.escapeHTML(seg.value)}</span>`
+        : `<input type="number" inputmode="numeric" class="template-blank-input" data-template-idx="${idx}">`
+      ).join('');
+      return `
+      <div class="announcement-template-item has-blank btn-send-announcement-blank" data-template-idx="${idx}">
+        <span class="announcement-template-row">
+          <i class="fas fa-bullhorn" style="color:#3b82f6;"></i>
+          <span class="announcement-template-blank-badge">🔢 要入力</span>
+          ${innerHtml}
+        </span>
+        <button class="btn btn-primary btn-send-blank-template" data-template-idx="${idx}">
+          <i class="fas fa-paper-plane"></i> 送信
+        </button>
+      </div>
+    `;
+    }).join('');
 
     const overlay = document.createElement('div');
     overlay.id = 'webrtc-call-overlay';
     overlay.className = 'phone-dialog-overlay';
     overlay.innerHTML = `
-      <div class="phone-dialog" role="dialog" style="border-color: #3b82f6; max-width: 360px;">
+      <div class="phone-dialog" role="dialog" style="border-color: #3b82f6; width: 420px;">
         <div class="phone-dialog-header" style="background: #3b82f6; color: white;">
           <i class="fas fa-phone-alt"></i>
           <span>連絡方法の選択: ${targetNameHtml}</span>
           <button class="phone-dialog-close" id="webrtc-btn-close-selection"><i class="fas fa-times"></i></button>
         </div>
-        <div class="phone-dialog-body" style="padding: 16px; display:flex; flex-direction:column; gap:16px;">
-          
+        <div class="phone-dialog-body" style="padding: 16px; display:flex; flex-direction:column; gap:16px; max-height: min(560px, 78vh); overflow-y: auto;">
+
           ${voiceBtnHtml}
-          <div style="font-size:11px;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 9px;">
+          <div style="font-size:11px;color:#64748b;">
             <i class="fas fa-arrow-right"></i> 発信元: <strong>${UI.escapeHTML(sourceName)}</strong>
             ${patientName ? ` / 対象患者: <strong>${UI.escapeHTML(prefixPatientName ? patientName : '患者名は読み上げません')}</strong>` : ''}
           </div>
- 
+
           <!-- 簡易定型アナウンスを送信するセクション -->
           <div style="border-top: 1px solid #e2e8f0; padding-top: 12px;">
             <div style="font-size: 11px; font-weight: bold; color: #475569; margin-bottom: 8px;">
               <i class="fas fa-comment-alt"></i> 呼び出さずにアナウンスを送信 (音声合成):
             </div>
             <!-- 手動入力エリア -->
-            <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <div style="display:flex;gap:6px;margin-bottom:8px;">
               <input type="text" id="announce-custom-text" maxlength="200"
                 placeholder="自由入力でアナウンスを送信..."
                 style="flex:1;padding:7px 10px;border:1px solid #cbd5e0;border-radius:6px;font-size:12.5px;">
@@ -652,7 +683,7 @@ const CallPanel = {
                 <i class="fas fa-paper-plane"></i> 送信
               </button>
             </div>
-            <div style="display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; padding-right: 4px;">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
               ${templateBtns}
             </div>
           </div>
@@ -688,9 +719,8 @@ const CallPanel = {
 
           <!-- 内線番号表示（バックアップ用） -->
           ${phoneNum ? `
-          <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center;">
-            <div style="font-size: 10px; color: #64748b;">(内線電話からかける場合の内線番号)</div>
-            <div style="font-size: 18px; font-weight: 800; color: #1e293b; margin-top: 2px;">内線 ${phoneNumHtml}</div>
+          <div style="border-top: 1px solid #e2e8f0; padding-top: 10px; text-align: center; font-size: 11px; color: #64748b;">
+            内線電話からかける場合: <strong style="font-size:13px;color:#1e293b;">内線 ${phoneNumHtml}</strong>
           </div>
           ` : ''}
 
@@ -805,9 +835,38 @@ const CallPanel = {
       if (e.key === 'Enter' && !e.isComposing) sendAnnounce(e.target.value);
     });
 
-    // 定型アナウンスボタンイベント
+    // 定型アナウンスボタンイベント({n}を含まない、クリック即送信のもの)
     overlay.querySelectorAll('.btn-send-announcement').forEach(btn => {
       btn.addEventListener('click', () => sendAnnounce(btn.dataset.text));
+    });
+
+    // 数字入力欄を含む定型文の送信処理。未入力の欄が1つでもあれば送信せず
+    // 警告を出す(空欄のままアナウンスが流れてしまうことを防ぐ)。
+    // 各行(div)配下だけを対象にせず、入力欄・送信ボタンいずれもdata-template-idx
+    // で紐付けてoverlay全体からフラットに集める(要素は出現順=文中で左から右の
+    // 順で並ぶため、そのままfillAnnouncementTemplateへ渡す順序として使える)
+    const blankInputsByTemplate = new Map();
+    overlay.querySelectorAll('.template-blank-input').forEach(inp => {
+      const idx = parseInt(inp.dataset.templateIdx, 10);
+      if (!blankInputsByTemplate.has(idx)) blankInputsByTemplate.set(idx, []);
+      blankInputsByTemplate.get(idx).push(inp);
+    });
+    overlay.querySelectorAll('.btn-send-blank-template').forEach(sendBtn => {
+      const idx = parseInt(sendBtn.dataset.templateIdx, 10);
+      const template = templates[idx];
+      const inputs = blankInputsByTemplate.get(idx) || [];
+      const sendFromRow = () => {
+        if (inputs.some(inp => inp.value.trim() === '')) {
+          UI.toast('数字をすべて入力してください', 'warning');
+          return;
+        }
+        const composed = UI.fillAnnouncementTemplate(template, inputs.map(inp => inp.value.trim()));
+        if (composed !== null) sendAnnounce(composed);
+      };
+      sendBtn.addEventListener('click', sendFromRow);
+      inputs.forEach(inp => {
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) sendFromRow(); });
+      });
     });
   },
 

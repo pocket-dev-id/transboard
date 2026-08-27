@@ -2645,3 +2645,39 @@ assert(
   })(),
   'onScheduleImported must surface a non-empty message as a separate warning toast even when success !== false, or a partial-success case (schedule saved, but archiving/deleting the source CSV failed) reports as a plain, silent success with no way for the operator to notice'
 );
+
+// ── アナウンス定型文の数字入力欄({n})は未入力のまま送信できてはならない ──
+
+// 数字入力欄を含む定型文の送信処理は、入力欄が1つでも空のままだと
+// UI.fillAnnouncementTemplateへ渡す前にブロックしてsendAnnounceを呼ばない
+// ようにしなければならない。ブロックせずに送信すると、{n}の位置が
+// 空文字のままアナウンスとして読み上げ・送信されてしまう
+assert(
+  (() => {
+    const idx = call.indexOf("overlay.querySelectorAll('.btn-send-blank-template').forEach(sendBtn => {");
+    const end = call.indexOf('\n    });', idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    const guardIdx = body.indexOf("inputs.some(inp => inp.value.trim() === '')");
+    const fillIdx = body.indexOf('UI.fillAnnouncementTemplate(');
+    return guardIdx >= 0 && fillIdx > guardIdx;
+  })(),
+  'the blank-template send handler must block (and warn) when any template-blank-input is empty before calling UI.fillAnnouncementTemplate/sendAnnounce, or an announcement with an unfilled {n} slot gets sent as-is'
+);
+assert(
+  (() => {
+    const idx = call.indexOf('const templateBtns = templates.map((t, idx) => {');
+    const end = call.indexOf("}).join('');", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = call.slice(idx, end);
+    if (!body.includes('UI.splitAnnouncementTemplate(t)') || !body.includes('parsed.hasBlank')) return false;
+    // !parsed.hasBlankの分岐は<button>を返さなければならない。<div>等の
+    // 非対話要素になると、既存の全定型文がクリック一発で送信できなくなる
+    const guardIdx = body.indexOf('if (!parsed.hasBlank) {');
+    const blankDivIdx = body.indexOf('announcement-template-item has-blank');
+    if (guardIdx < 0 || blankDivIdx < 0 || blankDivIdx < guardIdx) return false;
+    const nonBlankBranch = body.slice(guardIdx, blankDivIdx);
+    return nonBlankBranch.includes('<button') && nonBlankBranch.includes('btn-send-announcement"');
+  })(),
+  'templates without {n} must still render as a clickable <button> (btn-send-announcement), or every existing announcement template silently becomes a non-clickable multi-element row and loses one-click sending'
+);
