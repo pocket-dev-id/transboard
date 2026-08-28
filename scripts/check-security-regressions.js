@@ -2732,3 +2732,18 @@ assert(!fs.existsSync(path.join(root, 'js/auth.js')), 'js/auth.js (RBACモジュ
 assert(!/js\/auth\.js/.test(indexHtml), 'index.htmlがjs/auth.jsを読み込んでいます。RBACモジュールは撤去済みのはずです');
 assert(!/\bROLES\s*:/.test(config) && !/\bPERMISSIONS\s*:/.test(config), 'js/config.jsにCONFIG.ROLES/CONFIG.PERMISSIONSが復活しています(RBACモジュールと一緒に撤去済みのはず)');
 assert(!/\bAuth\.can\(/.test(history) && !/\bAuth\.requirePermission\(/.test(history), 'js/history.jsにAuth.can()/Auth.requirePermission()の呼び出しが復活しています。Authは撤去済みのはずです');
+
+// ── 端末間チャット(chat_messages)は患者データ扱いを外してはならない ──
+
+// チャット本文と、そこへ記録されるアナウンス文面には患者名が入りうる。
+// PATIENT_DATA_TABLESから外れると、APIトークン無しの端末から会話が読めてしまう
+assert(
+  /const PATIENT_DATA_TABLES = new Set\(\[[^\]]*'chat_messages'[^\]]*\]\);/.test(main),
+  'chat_messagesがPATIENT_DATA_TABLESから外れています。チャット本文・アナウンス履歴には患者名が入りうるため、APIトークン必須の患者データ扱いを維持すること'
+);
+
+// 上限管理が外れると、追記専用のchat_messagesがDBファイルを無制限に肥大化させる
+assert(
+  /table === 'chat_messages'\s*\)\s*\{\s*trimTable\(list, CHAT_MESSAGE_MAX_ENTRIES/.test(main),
+  'chat_messagesの書き込み経路でtrimTable(CHAT_MESSAGE_MAX_ENTRIES)が呼ばれていません。追記専用テーブルのためDBが無制限に肥大化します'
+);

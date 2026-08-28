@@ -20,6 +20,7 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 | `transfer_status_logs` | ステータス変更ログ（監査証跡） |
 | `audit_logs` | 操作監査ログ（患者登録・設定変更等） |
 | `calls` | 通話セッション記録 |
+| `chat_messages` | 端末間チャット（1対1のやりとりと、アナウンス送信履歴） |
 | `import_logs` | CSVインポート履歴 |
 | `schedule_feeds` | スケジュールフィード定義 |
 | `schedule_items` | スケジュールアイテム |
@@ -204,6 +205,31 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 病床履歴パネルは保持期間を含む注記を表示する。
 
 ---
+
+### `chat_messages` — 端末間チャット
+
+病棟・検査室の論理ID同士（1対1）でやりとりするテキストチャットと、アナウンス送信履歴を
+同じテーブルに時系列で保持します。通話パネル内の会話画面が、この1テーブルから
+統合タイムラインを描画します。
+
+本文やアナウンス文面に患者名が入りうるため、**患者データ扱い**（外部アクセスはAPIトークン必須）です。
+追記専用のため楽観的排他ロック（`_expectedUpdatedAt`）の対象外で、
+上限 `CHAT_MESSAGE_MAX_ENTRIES`（2000件）を超えると古いものから自動削除されます。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | `chat-<timestamp>-<random>` |
+| `conversation_key` | string | 2つの論理IDをソートして`\|`で連結（例 `room-3\|ward-1`）。A→BとB→Aを同じ会話として引くためのキー |
+| `from_id` | string | 送信元の論理ID（病棟ID / 検査室ID） |
+| `to_id` | string | 宛先の論理ID |
+| `from_name` | string | 送信時点の表示名（マスタ変更後も当時の名前で追えるようにする） |
+| `kind` | string | `chat`（チャット発言）または `announce`（アナウンス送信履歴） |
+| `body` | string | 本文。`announce`の場合は実際に読み上げた文面 |
+| `created_at` | number | 作成時刻（ミリ秒）。タイムラインの並び順 |
+
+**アナウンスとの関係:** アナウンスの即時読み上げは従来どおりWebRTCシグナリング
+（30秒で失効するメモリ上のキュー）で配送し、同じ内容をこのテーブルにも`kind:'announce'`で
+1件記録します。読み上げのリアルタイム性を保ちつつ、履歴は後から追えるようにするための役割分担です。
 
 ### `system_settings` — システム設定
 

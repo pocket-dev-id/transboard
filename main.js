@@ -468,6 +468,7 @@ const SEEDS = {
   schedule_feeds: [],
   schedule_items: [],
   handover_notes: [],
+  chat_messages: [],
   bed_occupancy_log: []
 };
 
@@ -496,6 +497,10 @@ const BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 // 申し送りは未確認の情報を優先して保持し、確認済みの古いメモだけを安全弁として整理する。
 // 上限を超えても未確認メモは削除しないため、業務上の確認漏れを防ぐ。
 const HANDOVER_NOTE_MAX_ENTRIES = 1000;
+// 端末間チャット(chat_messages)は追記専用で、業務ルール上「消してはいけない1件」が
+// 無いため、単純に新しい順でN件だけ残す(trimTable)。1対1の会話履歴として
+// 十分遡れる件数を確保しつつ、DBファイルの肥大化を防ぐ安全弁
+const CHAT_MESSAGE_MAX_ENTRIES = 2000;
 
 // 上限件数を超えたテーブルを古い順に間引く共通ヘルパー。単純な「新しいN件だけ残す」
 // テーブル(audit_logs/import_logs/calls等)で共有する。
@@ -988,6 +993,10 @@ function readDbShared() {
     }
     if (!db.handover_notes) {
       db.handover_notes = [];
+      hasDuplicates = true;
+    }
+    if (!db.chat_messages) {
+      db.chat_messages = [];
       hasDuplicates = true;
     }
     if (!db.bed_occupancy_log) {
@@ -3081,7 +3090,7 @@ const ALLOWED_TABLES = new Set([
   'pickup_assistance_types',
   'system_settings', 'transfer_events', 'transfer_status_logs',
   'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
-  'audit_logs', 'handover_notes', 'bed_occupancy_log',
+  'audit_logs', 'handover_notes', 'chat_messages', 'bed_occupancy_log',
 ]);
 
 // 共有マスターは親機を唯一の書き込み元とし、更新時刻で子機同士の上書きを検知する。
@@ -3145,7 +3154,8 @@ function validateMasterReferences(db, table, existing, payload) {
 // 患者情報（氏名・ID）を含むテーブル。追加のマスキング判断にも使用する。
 // 申し送りメモ(handover_notes)は本文に患者名等が入りうるため患者データ扱いとする
 // bed_occupancy_logは非マスクの氏名・IDを保持するため同様に患者データ扱いとする
-const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes', 'bed_occupancy_log']);
+// 端末間チャット(chat_messages)も本文・アナウンス文に患者名が入りうるため同様に扱う
+const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'handover_notes', 'chat_messages', 'bed_occupancy_log']);
 const ACTIVE_TRANSFER_STATUSES = new Set([
   'DEPART_REGISTERED',
   'MOVING',
@@ -4420,6 +4430,10 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     }
     if (table === 'handover_notes') {
       WRITE_HOOKS.handover_notes.finalize(db);
+    }
+    // チャットは追記専用で保護すべき個別レコードが無いため、単純に新しい順で残す
+    if (table === 'chat_messages') {
+      trimTable(list, CHAT_MESSAGE_MAX_ENTRIES, 'chat_messages');
     }
 
     appendAuditLog(db, index !== -1 ? 'DB_UPDATE' : 'DB_CREATE', {

@@ -143,6 +143,16 @@ const UI = {
     return t?.icon || null;
   },
 
+  // 端末間チャットの会話キー。2つの論理ID(病棟ID/検査室ID)をソートして連結し、
+  // A→BとB→Aが必ず同じキーになるようにする。送信時の保存と読み出しの双方が
+  // この1関数を使うこと(2箇所で別々に組むとキーがズレて会話が分裂する)
+  conversationKey(idA, idB) {
+    const a = String(idA || '').trim();
+    const b = String(idB || '').trim();
+    if (!a || !b) return '';
+    return [a, b].sort().join('|');
+  },
+
   /* ---------- 時刻フォーマット ---------- */
   formatTime(ms) {
     if (!ms) return '--:--';
