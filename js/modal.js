@@ -592,7 +592,7 @@ const BedModal = {
     const urgentBanner = event.current_status === 'PICKUP_REQUIRED'
       ? `<div class="modal-urgent-banner">
            <i class="fas fa-bell modal-urgent-bell"></i>
-           <span>迎えが必要です。早急に対応してください。${pickupAssistLabel ? `（${UI.escapeHTML(pickupAssistLabel)}）` : ''}</span>
+           <span>迎えが必要です。${pickupAssistLabel ? `（${UI.escapeHTML(pickupAssistLabel)}）` : ''}</span>
          </div>`
       : '';
 
