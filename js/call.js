@@ -20,10 +20,19 @@ const CallPanel = {
   callTimer: null,
   callDuration: 0,
   
-  // アナウンス（音声通知）キュー＆履歴用メンバ
+  // アナウンス（音声通知）キュー
   announcementQueue: [],
   isSpeakingAnnouncement: false,
-  announcementHistory: [],
+
+  // 端末間チャット。履歴は chat_messages テーブル(DB)が唯一の真実で、
+  // ここはあくまで表示中の会話のキャッシュ。_chatPeerId が非nullの間は
+  // 通話パネルが「会話状態」になる(nullなら発信先の一覧状態)
+  _chatPeerId: null,
+  _chatMessages: [],
+  _chatPollTimer: null,
+  _chatSending: false,
+  CHAT_POLL_INTERVAL_MS: 5000,
+  CHAT_MAX_LENGTH: 500,
 
   // 受信済みメッセージIDの管理（重複処理防止）
   _seenMsgIds: new Set(),
@@ -107,10 +116,17 @@ const CallPanel = {
 
   showPanel() {
     document.getElementById('call-panel').classList.remove('hidden');
+    // 閉じている間に止めたポーリングを、会話を開いたまま閉じていた場合は再開する
+    if (this._chatPeerId) {
+      this._loadChatMessages();
+      this._startChatPoll();
+    }
   },
 
   hidePanel() {
     document.getElementById('call-panel').classList.add('hidden');
+    // 閉じている間まで会話をポーリングし続けない
+    this._stopChatPoll();
   },
 
   // FAB(#btn-call-toggle)へ通話状態を反映する。発信中・着信中・通話中は
@@ -126,44 +142,54 @@ const CallPanel = {
   },
 
   // ── メインパネルHTML描画 ──
+  // パネルは「発信先の一覧」と「1対1の会話」の2状態を持つ。_renderCallPanel()は
+  // 子機の30秒ごとのマスタ再同期・病棟切り替え・マスタ保存後など、チャットの
+  // 状態とは無関係な箇所からも繰り返し呼ばれる。会話画面を丸ごと再構築すると
+  // 入力欄が新しいDOMノードに置き換わり、入力中のフォーカスが失われてしまうため、
+  // 既に会話画面が表示されている間は再構築せず、相手の表示名(改名等)だけを
+  // その場で更新する
   _renderCallPanel() {
+    if (this._chatPeerId) {
+      const peerNameEl = document.getElementById('chat-peer-name');
+      if (peerNameEl) {
+        peerNameEl.textContent = this.getNameById(this._chatPeerId);
+        return;
+      }
+      this._renderChatView();
+      return;
+    }
     const body = document.getElementById('call-panel-body');
     if (!body) return;
 
-    // 検査室ボタン一覧を構築
-    const roomBtns = AppState.examRooms.map(r => `
-      <button class="call-room-btn" data-room-id="${UI.escapeHTML(r.id)}">
-        <span class="call-room-name">${UI.escapeHTML(r.name)}</span>
-        <span class="call-room-phone">${r.phone ? '内線 ' + UI.escapeHTML(r.phone) : '番号未設定'}</span>
-      </button>
-    `).join('');
+    // 発信先1件分の行。行本体クリックは従来どおり「連絡方法の選択」を開き、
+    // 右端のチャットボタンだけが会話を開く
+    const targetRow = (record, kind) => `
+      <div class="call-target-row">
+        <button class="call-room-btn" data-${kind}-id="${UI.escapeHTML(record.id)}">
+          <span class="call-room-name">${UI.escapeHTML(record.name)}</span>
+          <span class="call-room-phone">${record.phone ? '内線 ' + UI.escapeHTML(record.phone) : '番号未設定'}</span>
+        </button>
+        <button class="call-chat-btn" data-chat-peer-id="${UI.escapeHTML(record.id)}"
+          title="${UI.escapeHTML(record.name)}とチャット" aria-label="${UI.escapeHTML(record.name)}とチャット">
+          <i class="fas fa-comment-alt" aria-hidden="true"></i>
+        </button>
+      </div>
+    `;
 
-    // 病棟ボタン一覧を構築（自分自身の病棟は除外）
+    const roomBtns = AppState.examRooms.map(r => targetRow(r, 'room')).join('');
+
+    // 病棟一覧は自分自身の病棟を除外する
     const wardBtns = AppState.wards
       .filter(w => w.id !== this.getMyId())
-      .map(w => `
-        <button class="call-room-btn" data-ward-id="${UI.escapeHTML(w.id)}">
-          <span class="call-room-name">${UI.escapeHTML(w.name)}</span>
-          <span class="call-room-phone">${w.phone ? '内線 ' + UI.escapeHTML(w.phone) : '番号未設定'}</span>
-        </button>
-      `).join('');
+      .map(w => targetRow(w, 'ward'))
+      .join('');
 
     body.innerHTML = `
-      <div class="call-section-title"><i class="fas fa-hospital"></i> 病棟へ発信 (通話 / アナウンス)</div>
+      <div class="call-section-title"><i class="fas fa-hospital"></i> 病棟へ発信 (通話 / アナウンス / チャット)</div>
       <div class="call-room-list">${wardBtns || '<div class="text-muted text-sm">病棟データ読込中...</div>'}</div>
       <div class="divider"></div>
-      <div class="call-section-title"><i class="fas fa-phone-alt"></i> 検査室へ発信 (通話 / アナウンス)</div>
+      <div class="call-section-title"><i class="fas fa-phone-alt"></i> 検査室へ発信 (通話 / アナウンス / チャット)</div>
       <div class="call-room-list">${roomBtns || '<div class="text-muted text-sm">検査室データ読込中...</div>'}</div>
-      <div class="divider"></div>
-      <div class="call-history-title" style="display:flex; justify-content:space-between; align-items:center;">
-        <span><i class="fas fa-bullhorn"></i> アナウンス受信履歴</span>
-        <div style="display:flex; gap:4px;">
-          <button class="btn btn-sm btn-outline" id="btn-stop-speech" style="font-size:10px; padding:2px 6px; min-width:auto; height:auto; border-color:#ef4444; color:#ef4444; font-weight:normal; border-radius:3px;">音声停止</button>
-          <button class="btn btn-sm btn-outline" id="btn-clear-ann-history" style="font-size:10px; padding:2px 6px; min-width:auto; height:auto; border-color:#cbd5e0; color:#64748b; font-weight:normal; border-radius:3px;">消去</button>
-        </div>
-      </div>
-      <div id="announcement-history-list" style="max-height:160px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin-top:4px; padding-right:2px;">
-      </div>
     `;
 
     // 各ボタンにイベント設定
@@ -180,55 +206,205 @@ const CallPanel = {
         }
       });
     });
-
-    this._renderAnnouncementHistory();
+    body.querySelectorAll('.call-chat-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.openChat(btn.dataset.chatPeerId));
+    });
   },
 
-  // ── アナウンス受信履歴の描画 ──
-  _renderAnnouncementHistory() {
-    const el = document.getElementById('announcement-history-list');
-    if (!el) return;
-    
-    if (this.announcementHistory.length === 0) {
-      el.innerHTML = '<div style="font-size:11px;color:#94a3b8;padding:4px 0;text-align:center;">アナウンス受信履歴はありません</div>';
-      const clearBtn = document.getElementById('btn-clear-ann-history');
-      if (clearBtn) clearBtn.style.display = 'none';
-      const stopBtn = document.getElementById('btn-stop-speech');
-      if (stopBtn) stopBtn.style.display = 'none';
-      return;
-    }
+  // ── 1対1チャット(アナウンス送信履歴を含む統合タイムライン) ──
 
-    const clearBtn = document.getElementById('btn-clear-ann-history');
-    if (clearBtn) {
-      clearBtn.style.display = 'inline-block';
-      clearBtn.onclick = () => {
-        this.announcementHistory = [];
-        this._renderAnnouncementHistory();
-      };
+  // 相手を指定して会話を開く。以後パネルは会話状態になる
+  openChat(peerId) {
+    if (!peerId) return;
+    this._chatPeerId = peerId;
+    this._chatMessages = [];
+    this._renderChatView();
+    this._loadChatMessages();
+    this._startChatPoll();
+  },
+
+  // 会話を閉じて発信先の一覧へ戻る
+  closeChat() {
+    this._chatPeerId = null;
+    this._chatMessages = [];
+    this._stopChatPoll();
+    this._renderCallPanel();
+  },
+
+  _startChatPoll() {
+    this._stopChatPoll();
+    this._chatPollTimer = setInterval(() => this._loadChatMessages(), this.CHAT_POLL_INTERVAL_MS);
+  },
+
+  _stopChatPoll() {
+    if (this._chatPollTimer) {
+      clearInterval(this._chatPollTimer);
+      this._chatPollTimer = null;
     }
+  },
+
+  // 会話画面の外枠。_renderCallPanel()経由で何度も呼ばれうるので、
+  // 入力途中のテキストは組み直しの前後で持ち越す
+  _renderChatView() {
+    const body = document.getElementById('call-panel-body');
+    if (!body) return;
+    const draft = document.getElementById('chat-input')?.value || '';
+    const peerName = this.getNameById(this._chatPeerId);
+
+    body.innerHTML = `
+      <div class="chat-view-header">
+        <button class="chat-back-btn" id="chat-back" aria-label="発信先の一覧へ戻る">
+          <i class="fas fa-chevron-left" aria-hidden="true"></i>
+        </button>
+        <span class="chat-peer-name" id="chat-peer-name">${UI.escapeHTML(peerName)}</span>
+        <button class="btn btn-sm btn-outline" id="btn-stop-speech"
+          style="font-size:10px; padding:2px 6px; min-width:auto; height:auto; border-color:#ef4444; color:#ef4444; font-weight:normal; border-radius:3px;">音声停止</button>
+      </div>
+      <div id="chat-timeline" class="chat-timeline"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" maxlength="${this.CHAT_MAX_LENGTH}" placeholder="メッセージを入力..." autocomplete="off">
+        <button class="btn btn-primary btn-sm" id="chat-send" aria-label="送信">
+          <i class="fas fa-paper-plane" aria-hidden="true"></i>
+        </button>
+      </div>
+    `;
+
+    document.getElementById('chat-back').onclick = () => this.closeChat();
+
+    const input = document.getElementById('chat-input');
+    input.value = draft;
+    // IME変換中のEnterで送信してしまわないよう isComposing を見る
+    // (アナウンスの自由入力欄と同じ扱い)
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.isComposing) this._sendChatMessage();
+    });
+    document.getElementById('chat-send').onclick = () => this._sendChatMessage();
 
     const stopBtn = document.getElementById('btn-stop-speech');
     if (stopBtn) {
-      stopBtn.style.display = 'inline-block';
       stopBtn.onclick = () => {
         this.announcementQueue = [];
         this.isSpeakingAnnouncement = false;
-        if ('speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-        }
+        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
         UI.toast('音声読み上げキューをクリアしました', 'warning');
       };
     }
-    
-    el.innerHTML = this.announcementHistory.map(a => `
-      <div class="call-entry" style="font-size:11.5px; border-bottom:1px dashed #f1f5f9; padding:6px 0; display:flex; flex-direction:column; gap:2px; align-items:stretch; background:transparent;">
-        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-          <span style="font-weight:700; color:#1e293b;"><i class="fas fa-bullhorn" style="font-size:10px; color:#3b82f6; margin-right:4px;"></i>${UI.escapeHTML(a.fromName)}</span>
-          <span class="text-muted" style="font-size:9.5px;">${UI.formatTimeSmart(a.timestamp)}</span>
+
+    this._renderChatTimeline();
+  },
+
+  // メッセージ一覧だけを差し替える。5秒ポーリングからはこちらだけを呼び、
+  // 入力欄やフォーカスを壊さないようにする
+  _renderChatTimeline() {
+    const el = document.getElementById('chat-timeline');
+    if (!el) return;
+
+    if (this._chatMessages.length === 0) {
+      el.innerHTML = UI.emptyStateHtml('まだやりとりはありません', { icon: 'fas fa-comment-alt' });
+      return;
+    }
+
+    const myId = this.getMyId();
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+
+    el.innerHTML = this._chatMessages.map(m => {
+      const time = UI.formatTimeSmart(m.created_at);
+      // アナウンス送信履歴は会話の発言ではなく「この相手へ何を伝えたか」の記録なので、
+      // 左右の吹き出しではなく中央寄せのシステム行として区別できるようにする
+      if (m.kind === 'announce') {
+        return `
+          <div class="chat-msg chat-msg--announce">
+            <div class="chat-announce-body">
+              <i class="fas fa-bullhorn" aria-hidden="true"></i>
+              <span>${UI.escapeHTML(m.body)}</span>
+            </div>
+            <div class="chat-msg-meta">${UI.escapeHTML(m.from_name)} がアナウンス送信 / ${time}</div>
+          </div>
+        `;
+      }
+      const mine = String(m.from_id) === String(myId);
+      return `
+        <div class="chat-msg ${mine ? 'chat-msg--mine' : 'chat-msg--theirs'}">
+          <div class="chat-bubble">${UI.escapeHTML(m.body)}</div>
+          <div class="chat-msg-meta">${mine ? '自分' : UI.escapeHTML(m.from_name)} / ${time}</div>
         </div>
-        <div style="color:#475569; padding-left:14px; word-break:break-all; line-height:1.2; font-style:italic;">"${UI.escapeHTML(a.text)}"</div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
+
+    // 既に最下部を見ていたときだけ追従する(過去を読んでいる最中に
+    // 新着で勝手にスクロールしてしまわないように)
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  },
+
+  async _loadChatMessages() {
+    if (!this._chatPeerId) return;
+    const key = UI.conversationKey(this.getMyId(), this._chatPeerId);
+    if (!key) return;
+    try {
+      const list = await API.getChatMessages(key);
+      // 取得中に会話を閉じた/切り替えた場合は古い応答を捨てる
+      if (!this._chatPeerId || key !== UI.conversationKey(this.getMyId(), this._chatPeerId)) return;
+      this._chatMessages = list;
+      this._renderChatTimeline();
+    } catch (e) {
+      console.warn('[Chat] 履歴の取得に失敗しました:', e);
+    }
+  },
+
+  async _sendChatMessage() {
+    if (this._chatSending) return;
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+
+    const myId = this.getMyId();
+    if (!myId || !this._chatPeerId) {
+      UI.toast('送信元を特定できませんでした', 'warning');
+      return;
+    }
+
+    this._chatSending = true;
+    try {
+      await this.recordChatMessage({
+        fromId: myId,
+        toId: this._chatPeerId,
+        kind: 'chat',
+        body: text.slice(0, this.CHAT_MAX_LENGTH),
+      });
+      input.value = '';
+      await this._loadChatMessages();
+    } catch (e) {
+      console.error('[Chat] 送信に失敗しました:', e);
+      UI.toast('メッセージの送信に失敗しました', 'danger');
+    } finally {
+      this._chatSending = false;
+    }
+  },
+
+  // chat_messages への1件記録。チャット発言とアナウンス送信履歴の
+  // 両方がこの1関数を通る(会話キーの組み立てを1箇所に閉じ込めるため)
+  async recordChatMessage({ fromId, toId, kind, body }) {
+    const conversationKey = UI.conversationKey(fromId, toId);
+    if (!conversationKey) return null;
+    return API.create('chat_messages', {
+      id: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      conversation_key: conversationKey,
+      from_id: fromId,
+      to_id: toId,
+      from_name: this.getNameById(fromId),
+      kind,
+      body,
+      created_at: Date.now(),
+    });
+  },
+
+  // 受信したアナウンスの相手と会話を開いていれば、その場で履歴を取り直す
+  // (5秒のポーリングを待たずに反映する)
+  _refreshChatIfPeer(peerId) {
+    if (this._chatPeerId && String(this._chatPeerId) === String(peerId)) {
+      this._loadChatMessages();
+    }
   },
 
   // ── 病棟側から呼び出す（検査室画面用）──
@@ -834,6 +1010,15 @@ const CallPanel = {
       const speechText = prefixPatientName ? `${patientName}さん、${text.trim()}` : text.trim();
       try {
         await API.webrtcSend({ from: sourceId, to: targetId, type: 'speech', text: speechText });
+        // 読み上げ自体は上のシグナリング経路(即時)のまま。履歴として後から
+        // 追えるよう、同じ内容をチャットのタイムラインにも1件残す。
+        // ここが失敗しても読み上げは既に送信済みなので、送信自体は成功扱いにする
+        this.recordChatMessage({
+          fromId: sourceId,
+          toId: targetId,
+          kind: 'announce',
+          body: speechText,
+        }).catch(err => console.warn('[Chat] アナウンス履歴の記録に失敗しました:', err));
         UI.toast('音声アナウンスを送信しました', 'success');
         overlay.remove();
       } catch (e) {
@@ -1848,14 +2033,9 @@ const CallPanel = {
       automatic,
     };
 
-    // 履歴に追加 (上限50件)
-    this.announcementHistory.unshift(annObj);
-    if (this.announcementHistory.length > 50) {
-      this.announcementHistory.pop();
-    }
-
-    // 履歴パネルの再描画
-    this._renderAnnouncementHistory();
+    // 履歴は送信側がchat_messagesへ記録済みなので、ここでは保持しない。
+    // 送信元と会話を開いていれば、ポーリングを待たずに反映する
+    this._refreshChatIfPeer(fromId);
 
     // 画面にトースト表示
     UI.toast(`【音声通知】${fromName}: "${text}"`, 'info');

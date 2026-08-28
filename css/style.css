@@ -1551,7 +1551,9 @@ h1, h2, h3, h4,
   position: fixed;
   bottom: 86px;
   right: 24px;
-  width: 300px;
+  /* チャットの吹き出しが極端に折り返さない程度の幅を確保する */
+  width: 340px;
+  max-width: calc(100vw - 48px);
   background: var(--clr-surface);
   border: 1px solid var(--clr-border);
   border-radius: var(--radius-lg);
@@ -2086,6 +2088,125 @@ button.announcement-template-item:hover {
   background: #dbeafe;
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+/* ---------- 端末間チャット（通話パネル内） ---------- */
+/* 発信先1件の行: 左が従来の「連絡方法の選択」ボタン、右がチャットを開くボタン */
+.call-target-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.call-target-row .call-room-btn { flex: 1; min-width: 0; }
+.call-chat-btn {
+  flex: 0 0 auto;
+  width: 38px;
+  background: #f8fafc;
+  border: 1px solid var(--clr-border);
+  border-radius: 8px;
+  color: #475569;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.call-chat-btn:hover {
+  background: #eff6ff;
+  border-color: var(--clr-primary);
+  color: var(--clr-primary);
+}
+
+.chat-view-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--clr-border);
+}
+.chat-back-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #475569;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+.chat-back-btn:hover { color: var(--clr-primary); }
+.chat-peer-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-timeline {
+  height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+.chat-msg { display: flex; flex-direction: column; max-width: 85%; }
+.chat-msg--mine { align-self: flex-end; align-items: flex-end; }
+.chat-msg--theirs { align-self: flex-start; align-items: flex-start; }
+/* アナウンス送信履歴は会話の発言ではないので、中央寄せのシステム行として区別する */
+.chat-msg--announce { align-self: stretch; max-width: 100%; align-items: center; }
+.chat-bubble {
+  font-size: 12.5px;
+  line-height: 1.35;
+  padding: 6px 10px;
+  border-radius: 10px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.chat-msg--mine .chat-bubble {
+  background: #dbeafe;
+  color: #1e3a5f;
+  border-bottom-right-radius: 3px;
+}
+.chat-msg--theirs .chat-bubble {
+  background: #f1f5f9;
+  color: #1e293b;
+  border-bottom-left-radius: 3px;
+}
+.chat-announce-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  font-style: italic;
+  color: #9a3412;
+  background: #fff7ed;
+  border: 1px dashed #fdba74;
+  border-radius: 8px;
+  padding: 6px 10px;
+  width: 100%;
+  word-break: break-word;
+}
+.chat-msg-meta {
+  font-size: 9.5px;
+  color: var(--clr-text-muted);
+  margin-top: 2px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--clr-border);
+}
+.chat-input-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-family: inherit;
 }
 .phone-chip {
   display: inline-flex;

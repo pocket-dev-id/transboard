@@ -17,7 +17,7 @@ const source = fs.readFileSync(path.join(ROOT, 'js/call.js'), 'utf8');
 const realUiSource = fs.readFileSync(path.join(ROOT, 'js/ui.js'), 'utf8');
 const realUiSandbox = { console };
 vm.runInNewContext(`${realUiSource}\nthis.UI = UI;`, realUiSandbox);
-const { splitAnnouncementTemplate, fillAnnouncementTemplate } = realUiSandbox.UI;
+const { splitAnnouncementTemplate, fillAnnouncementTemplate, conversationKey } = realUiSandbox.UI;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -99,7 +99,10 @@ function createElementStub(tag) {
     },
     appendChild(child) { return child; },
     remove() { this._removed = true; },
-    addEventListener() {},
+    // parseHtmlToStubs側と同様にハンドラを記録し、テストから直接呼べるようにする
+    // (getElementById経由で取得した要素のイベントも検証できるようにするため)
+    _listeners: {},
+    addEventListener(type, handler) { (this._listeners[type] = this._listeners[type] || []).push(handler); },
     removeEventListener() {},
     setAttribute() {},
     _parsedCacheHtml: undefined,
@@ -121,9 +124,10 @@ function createElementStub(tag) {
 }
 
 const KNOWN_IDS = [
-  'announce-custom-text', 'announcement-history-list', 'btn-call-toggle',
-  'btn-clear-ann-history', 'btn-send-announce-custom', 'btn-stop-speech',
+  'announce-custom-text', 'btn-call-toggle',
+  'btn-send-announce-custom', 'btn-stop-speech',
   'call-panel', 'call-panel-body', 'call-panel-close', 'exam-room-select',
+  'chat-back', 'chat-input', 'chat-send', 'chat-timeline', 'chat-peer-name',
   'webrtc-btn-accept', 'webrtc-btn-cancel-selection', 'webrtc-btn-close-selection',
   'webrtc-btn-fullscreen', 'webrtc-btn-hangup', 'webrtc-btn-lower-quality',
   'webrtc-btn-mute', 'webrtc-btn-reject', 'webrtc-btn-start-video',
@@ -294,14 +298,31 @@ const UI = {
   _isAutomaticSpeechEnabled: () => true,
   splitAnnouncementTemplate,
   fillAnnouncementTemplate,
+  conversationKey,
+  emptyStateHtml(message) { return `<div class="empty-state">${String(message)}</div>`; },
 };
 
 // ── API モック（呼び出し履歴を配列に記録し、断言に使う）──
 const apiCalls = { create: [], patch: [], webrtcSend: [] };
+// chat_messagesは実際にストアへ溜め、getChatMessagesで読み戻す。書き込みと
+// 読み出しを往復させることで、会話キーの一致・並び順まで検証できるようにする
+const chatStore = [];
 const API = {
-  create(table, data) { apiCalls.create.push({ table, data }); return Promise.resolve({ success: true, ...data }); },
+  create(table, data) {
+    apiCalls.create.push({ table, data });
+    if (table === 'chat_messages') chatStore.push({ ...data });
+    return Promise.resolve({ success: true, ...data });
+  },
   patch(table, id, data) { apiCalls.patch.push({ table, id, data }); return Promise.resolve({ success: true }); },
   webrtcSend(msg) { apiCalls.webrtcSend.push(msg); return Promise.resolve({ success: true }); },
+  getChatMessages(conversationKey) {
+    if (!conversationKey) return Promise.resolve([]);
+    return Promise.resolve(
+      chatStore
+        .filter(m => m.conversation_key === conversationKey)
+        .sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
+    );
+  },
 };
 
 // ── AppState モック（ward-接頭辞を持たない病棟IDを1件含める）──
@@ -347,6 +368,9 @@ const CallPanel = vm.runInNewContext(`${source}\nCallPanel;`, sandbox);
 // モック側の記録・レジストリも初期化する
 async function resetAll() {
   await CallPanel.cleanupCall();
+  // 会話を開いたままだとポーリングタイマーが残り、次のシナリオへ状態が漏れる
+  CallPanel.closeChat();
+  chatStore.length = 0;
   apiCalls.create.length = 0;
   apiCalls.patch.length = 0;
   apiCalls.webrtcSend.length = 0;
@@ -913,6 +937,153 @@ async function main() {
   assert.strictEqual(panelEl.classList.contains('hidden'), false, 'togglePanel(): 非表示→表示に切り替わること');
   CallPanel.togglePanel();
   assert.strictEqual(panelEl.classList.contains('hidden'), true, 'togglePanel(): 表示→非表示に切り替わること');
+
+  // 25) チャット: 会話を開く/閉じる、送受信、統合タイムラインの描画
+  await resetAll();
+  const panelBody = documentMock.getElementById('call-panel-body');
+
+  // 一覧状態では発信先ごとにチャットボタンが出ること
+  CallPanel._renderCallPanel();
+  assert.ok(
+    panelBody.innerHTML.includes('call-chat-btn'),
+    '発信先の一覧に、チャットを開くボタンが表示されること'
+  );
+
+  // 会話を開くと会話状態(入力欄つき)になること
+  CallPanel.openChat('room-1');
+  assert.strictEqual(CallPanel._chatPeerId, 'room-1');
+  assert.ok(panelBody.innerHTML.includes('chat-timeline'), '会話状態ではタイムラインが描画されること');
+  assert.ok(panelBody.innerHTML.includes('chat-input'), '会話状態では入力欄が描画されること');
+
+  // メッセージを送るとchat_messagesへ会話キー付きで保存されること
+  const chatInput = documentMock.getElementById('chat-input');
+  chatInput.value = '患者の準備ができました';
+  await CallPanel._sendChatMessage();
+  const savedChat = apiCalls.create.filter(c => c.table === 'chat_messages');
+  assert.strictEqual(savedChat.length, 1, 'BUG: チャット送信でchat_messagesへ保存されること');
+  assert.strictEqual(savedChat[0].data.kind, 'chat');
+  assert.strictEqual(savedChat[0].data.body, '患者の準備ができました');
+  assert.strictEqual(
+    savedChat[0].data.conversation_key,
+    conversationKey('ward-1', 'room-1'),
+    'BUG: 双方向で一致する会話キーで保存されること'
+  );
+  assert.strictEqual(chatInput.value, '', '送信後は入力欄がクリアされること');
+
+  // 空文字は送らないこと
+  const beforeEmpty = apiCalls.create.length;
+  chatInput.value = '   ';
+  await CallPanel._sendChatMessage();
+  assert.strictEqual(apiCalls.create.length, beforeEmpty, '空白のみのメッセージは送信しないこと');
+
+  // 同じ会話にアナウンス履歴を混ぜ、タイムラインが両者を区別して描画すること
+  await CallPanel.recordChatMessage({
+    fromId: 'ward-1', toId: 'room-1', kind: 'announce', body: '検査が終了しました。',
+  });
+  await CallPanel._loadChatMessages();
+  const timelineHtml = documentMock.getElementById('chat-timeline').innerHTML;
+  assert.ok(timelineHtml.includes('患者の準備ができました'), 'チャット発言がタイムラインに出ること');
+  assert.ok(timelineHtml.includes('検査が終了しました。'), 'アナウンス履歴がタイムラインに出ること');
+  assert.ok(
+    timelineHtml.includes('chat-msg--announce'),
+    "BUG: アナウンス履歴はkind:'announce'として視覚的に区別されること"
+  );
+  assert.ok(
+    timelineHtml.includes('chat-msg--mine'),
+    '自分の発言は自分側の吹き出しとして描画されること'
+  );
+
+  // 会話を閉じると一覧状態へ戻り、ポーリングも止まること
+  CallPanel.closeChat();
+  assert.strictEqual(CallPanel._chatPeerId, null);
+  assert.strictEqual(CallPanel._chatPollTimer, null, '会話を閉じたらポーリングを止めること');
+  assert.ok(panelBody.innerHTML.includes('call-chat-btn'), '会話を閉じたら発信先の一覧へ戻ること');
+
+  // 26) 相手からの返信が同じ会話に並び、別の相手の会話は混ざらないこと
+  await resetAll();
+  await CallPanel.recordChatMessage({ fromId: 'ward-1', toId: 'room-1', kind: 'chat', body: 'CT宛のメモ' });
+  // 相手(room-1)から自分(ward-1)への返信。送信元と宛先が逆でも同じ会話に入らないと
+  // 「自分の発言しか見えない」片側だけの履歴になってしまう
+  await CallPanel.recordChatMessage({ fromId: 'room-1', toId: 'ward-1', kind: 'chat', body: '受け入れ可能です' });
+  await CallPanel.recordChatMessage({ fromId: 'ward-1', toId: 'east-7f', kind: 'chat', body: '東7階宛のメモ' });
+  CallPanel.openChat('room-1');
+  await CallPanel._loadChatMessages();
+  const isolatedHtml = documentMock.getElementById('chat-timeline').innerHTML;
+  assert.ok(isolatedHtml.includes('CT宛のメモ'), 'この会話のメッセージは表示されること');
+  assert.ok(
+    isolatedHtml.includes('受け入れ可能です'),
+    'BUG: 相手から自分への返信が同じ会話に並ぶこと(会話キーが双方向で一致していない)'
+  );
+  assert.ok(
+    isolatedHtml.includes('chat-msg--theirs'),
+    '相手の発言は相手側の吹き出しとして描画されること'
+  );
+  assert.ok(
+    !isolatedHtml.includes('東7階宛のメモ'),
+    'BUG: 別の相手との会話が混ざって表示されないこと'
+  );
+
+  // 27) アナウンス送信時に、読み上げ送信とは別に履歴が残ること
+  await resetAll();
+  CallPanel.showCallSelectionDialog('room-1', { fromId: 'ward-1' });
+  const announceInput = documentMock.getElementById('announce-custom-text');
+  announceInput.value = 'お迎えをお願いします';
+  documentMock.getElementById('btn-send-announce-custom')._listeners.click[0]();
+  await sleep(10);
+  assert.ok(
+    apiCalls.webrtcSend.some(m => m.type === 'speech' && m.text.includes('お迎えをお願いします')),
+    'アナウンスの即時読み上げ(シグナリング送信)は従来どおり行われること'
+  );
+  const announceRecords = apiCalls.create.filter(
+    c => c.table === 'chat_messages' && c.data.kind === 'announce'
+  );
+  assert.strictEqual(
+    announceRecords.length, 1,
+    "BUG: アナウンス送信時にkind:'announce'として履歴が残ること"
+  );
+  assert.ok(
+    announceRecords[0].data.body.includes('お迎えをお願いします'),
+    'アナウンス履歴には実際に読み上げた文面が残ること'
+  );
+  assert.strictEqual(
+    announceRecords[0].data.conversation_key,
+    conversationKey('ward-1', 'room-1'),
+    'アナウンス履歴も相手との会話キーで保存されること'
+  );
+
+  // 28) 会話画面を開いた状態で_renderCallPanel()が再度呼ばれても
+  //     (子機の30秒マスタ再同期・病棟切替等、チャットと無関係な箇所からの呼び出しを想定)
+  //     会話画面を丸ごと再構築しないこと。丸ごと再構築すると入力欄が新しいDOMノードに
+  //     置き換わり、実ブラウザでは入力中のフォーカスが失われてしまう。
+  //     このモックのgetElementByIdは固定レジストリ参照でノード同一性を表現できないため、
+  //     _renderChatView(丸ごと再構築)が再度呼ばれていないことをスパイで確認する
+  await resetAll();
+  CallPanel.openChat('room-1');
+  let rerenderCount = 0;
+  const originalRenderChatView = CallPanel._renderChatView;
+  CallPanel._renderChatView = function (...args) {
+    rerenderCount++;
+    return originalRenderChatView.apply(this, args);
+  };
+  try {
+    // 相手(検査室)の名称が変わった状態を模して、無関係な再描画をシミュレートする
+    const room = AppState.examRooms.find(r => r.id === 'room-1');
+    const originalName = room.name;
+    room.name = 'CT検査室(改名後)';
+    CallPanel._renderCallPanel();
+    assert.strictEqual(
+      rerenderCount, 0,
+      'BUG: 会話画面が既に開いているのに_renderCallPanel()の再呼び出しで丸ごと再構築されています。入力中のフォーカスが失われます'
+    );
+    assert.strictEqual(
+      documentMock.getElementById('chat-peer-name').textContent,
+      'CT検査室(改名後)',
+      '丸ごと再構築しない代わりに、相手の表示名(改名等)はその場で更新されること'
+    );
+    room.name = originalName;
+  } finally {
+    CallPanel._renderChatView = originalRenderChatView;
+  }
 
   await resetAll();
   console.log('Call panel checks passed.');

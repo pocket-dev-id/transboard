@@ -312,6 +312,15 @@ const API = {
     return list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   },
 
+  // 端末間チャット(1対1)。conversation_keyはUI.conversationKey()で組んだもの。
+  // 古い順(created_at昇順)に並べて返す＝タイムライン表示の順序そのまま
+  async getChatMessages(conversationKey) {
+    if (!conversationKey) return [];
+    const res = await this.getAll('chat_messages', { conversation_key: conversationKey });
+    const list = (res.data || []).filter(m => m.conversation_key === conversationKey);
+    return list.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  },
+
   async getOne(table, id) {
     return this._fetch(`tables/${table}/${id}`);
   },
