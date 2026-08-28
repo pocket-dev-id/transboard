@@ -4289,6 +4289,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           return { data: list.filter(note => String(note.ward_id) === String(wardId)) };
         }
       }
+      // チャットは開いている会話のメッセージだけを使うため、conversation_key指定時は
+      // サーバー側で絞る(handover_notesと同じ理由。5秒ポーリングごとの転送量にも効く)
+      if (table === 'chat_messages') {
+        const conversationKey = searchParams.get('conversation_key');
+        if (conversationKey) {
+          return { data: list.filter(m => m.conversation_key === conversationKey) };
+        }
+      }
       // スケジュール項目は日次表示のたびに当日分しか使わないため、範囲指定時は
       // サーバー側で絞る（5秒ポーリングごとの全件転送・全件クローンを避ける）
       if (table === 'schedule_items' && searchParams.has('start_ms') && searchParams.has('end_ms')) {

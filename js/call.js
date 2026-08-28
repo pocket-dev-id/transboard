@@ -143,10 +143,18 @@ const CallPanel = {
 
   // ── メインパネルHTML描画 ──
   // パネルは「発信先の一覧」と「1対1の会話」の2状態を持つ。_renderCallPanel()は
-  // マスタ再読み込みや病棟切り替えなど複数箇所から呼ばれるため、会話を開いている
-  // 間はそちらを描き直す(一覧へ戻して入力中のテキストを消してしまわないように)
+  // 子機の30秒ごとのマスタ再同期・病棟切り替え・マスタ保存後など、チャットの
+  // 状態とは無関係な箇所からも繰り返し呼ばれる。会話画面を丸ごと再構築すると
+  // 入力欄が新しいDOMノードに置き換わり、入力中のフォーカスが失われてしまうため、
+  // 既に会話画面が表示されている間は再構築せず、相手の表示名(改名等)だけを
+  // その場で更新する
   _renderCallPanel() {
     if (this._chatPeerId) {
+      const peerNameEl = document.getElementById('chat-peer-name');
+      if (peerNameEl) {
+        peerNameEl.textContent = this.getNameById(this._chatPeerId);
+        return;
+      }
       this._renderChatView();
       return;
     }
@@ -248,7 +256,7 @@ const CallPanel = {
         <button class="chat-back-btn" id="chat-back" aria-label="発信先の一覧へ戻る">
           <i class="fas fa-chevron-left" aria-hidden="true"></i>
         </button>
-        <span class="chat-peer-name">${UI.escapeHTML(peerName)}</span>
+        <span class="chat-peer-name" id="chat-peer-name">${UI.escapeHTML(peerName)}</span>
         <button class="btn btn-sm btn-outline" id="btn-stop-speech"
           style="font-size:10px; padding:2px 6px; min-width:auto; height:auto; border-color:#ef4444; color:#ef4444; font-weight:normal; border-radius:3px;">音声停止</button>
       </div>

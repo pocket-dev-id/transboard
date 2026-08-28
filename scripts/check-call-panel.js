@@ -127,7 +127,7 @@ const KNOWN_IDS = [
   'announce-custom-text', 'btn-call-toggle',
   'btn-send-announce-custom', 'btn-stop-speech',
   'call-panel', 'call-panel-body', 'call-panel-close', 'exam-room-select',
-  'chat-back', 'chat-input', 'chat-send', 'chat-timeline',
+  'chat-back', 'chat-input', 'chat-send', 'chat-timeline', 'chat-peer-name',
   'webrtc-btn-accept', 'webrtc-btn-cancel-selection', 'webrtc-btn-close-selection',
   'webrtc-btn-fullscreen', 'webrtc-btn-hangup', 'webrtc-btn-lower-quality',
   'webrtc-btn-mute', 'webrtc-btn-reject', 'webrtc-btn-start-video',
@@ -1050,6 +1050,40 @@ async function main() {
     conversationKey('ward-1', 'room-1'),
     'アナウンス履歴も相手との会話キーで保存されること'
   );
+
+  // 28) 会話画面を開いた状態で_renderCallPanel()が再度呼ばれても
+  //     (子機の30秒マスタ再同期・病棟切替等、チャットと無関係な箇所からの呼び出しを想定)
+  //     会話画面を丸ごと再構築しないこと。丸ごと再構築すると入力欄が新しいDOMノードに
+  //     置き換わり、実ブラウザでは入力中のフォーカスが失われてしまう。
+  //     このモックのgetElementByIdは固定レジストリ参照でノード同一性を表現できないため、
+  //     _renderChatView(丸ごと再構築)が再度呼ばれていないことをスパイで確認する
+  await resetAll();
+  CallPanel.openChat('room-1');
+  let rerenderCount = 0;
+  const originalRenderChatView = CallPanel._renderChatView;
+  CallPanel._renderChatView = function (...args) {
+    rerenderCount++;
+    return originalRenderChatView.apply(this, args);
+  };
+  try {
+    // 相手(検査室)の名称が変わった状態を模して、無関係な再描画をシミュレートする
+    const room = AppState.examRooms.find(r => r.id === 'room-1');
+    const originalName = room.name;
+    room.name = 'CT検査室(改名後)';
+    CallPanel._renderCallPanel();
+    assert.strictEqual(
+      rerenderCount, 0,
+      'BUG: 会話画面が既に開いているのに_renderCallPanel()の再呼び出しで丸ごと再構築されています。入力中のフォーカスが失われます'
+    );
+    assert.strictEqual(
+      documentMock.getElementById('chat-peer-name').textContent,
+      'CT検査室(改名後)',
+      '丸ごと再構築しない代わりに、相手の表示名(改名等)はその場で更新されること'
+    );
+    room.name = originalName;
+  } finally {
+    CallPanel._renderChatView = originalRenderChatView;
+  }
 
   await resetAll();
   console.log('Call panel checks passed.');
