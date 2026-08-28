@@ -44,6 +44,7 @@ const POWERSHELL_EXE = path.join(
   'powershell.exe'
 );
 const REG_EXE = path.join(WINDOWS_SYSTEM_ROOT, 'System32', 'reg.exe');
+const NET_EXE = path.join(WINDOWS_SYSTEM_ROOT, 'System32', 'net.exe');
 const EXPECTED_UPDATE_PUBLISHER = String(
   process.env.TRANSBOARD_UPDATE_PUBLISHER ||
   packageMetadata.transboard?.updatePublisherName ||
@@ -5036,9 +5037,28 @@ handleTrusted('parent-http-request', async (event, opts) => {
   return parentHttpRequest(opts);
 });
 
+// このプロセスがWindows管理者権限(昇格)で起動されているかどうか。
+// `net session`は管理者権限がある場合のみ正常終了し、無ければ
+// 「アクセスが拒否されました」等で失敗するため、これを利用する
+// (Node標準にWindows権限を判定するAPIが無いため)。結果は起動中に
+// 変化しないためプロセス内でキャッシュする。Windows以外(開発環境等)
+// では判定不能としてnullを返す
+let _cachedIsElevated = null;
+function checkIsElevated() {
+  if (_cachedIsElevated !== null) return Promise.resolve(_cachedIsElevated);
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  return new Promise(resolve => {
+    execFile(NET_EXE, ['session'], { timeout: 5000, windowsHide: true }, (error) => {
+      _cachedIsElevated = !error;
+      resolve(_cachedIsElevated);
+    });
+  });
+}
+
 // アプリバージョンを返す
 handleTrusted('get-app-version', () => app.getVersion());
 handleTrusted('get-hostname', () => os.hostname());
+handleTrusted('is-elevated', () => checkIsElevated());
 handleTrusted('get-passcode-status', () => getAdminPasscodeStatus());
 handleTrusted('verify-admin-passcode', (event, passcode) => (
   verifyAdminPasscodeAttempt(passcode, 'local-renderer')
@@ -6319,7 +6339,7 @@ const MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024; // 外部HTTP APIの最大リク
 const MAX_DEVICE_ID_LENGTH = 64;
 const MAX_HEARTBEAT_FIELD_LENGTH = 200;
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
-const HEARTBEAT_TEXT_FIELDS = ['name', 'hostname', 'wardId', 'mode', 'page', 'appVersion'];
+const HEARTBEAT_TEXT_FIELDS = ['name', 'hostname', 'wardId', 'mode', 'page', 'appVersion', 'isElevated'];
 
 function sanitizeHeartbeatText(value) {
   if (typeof value !== 'string') return undefined;

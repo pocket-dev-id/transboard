@@ -132,6 +132,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // PCのホスト名を取得する
   getHostname: () => ipcRenderer.invoke('get-hostname'),
 
+  // このプロセスがWindows管理者権限(昇格)で起動されているか(true/false)。
+  // Windows以外ではnull(判定不能)
+  isElevated: () => ipcRenderer.invoke('is-elevated'),
+
   // 診断用デバッグログ（接続テスト失敗時などの詳細をファイルへ記録・メモ帳等で開く）
   appendDebugLog: (line) => ipcRenderer.invoke('append-debug-log', line),
   openDebugLog: () => ipcRenderer.invoke('open-debug-log'),

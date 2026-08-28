@@ -1606,6 +1606,13 @@ const App = {
       window.electronAPI.getHostname().then(h => { _cachedHostname = h || null; }).catch(() => {});
     }
 
+    // Windows管理者権限(昇格)で起動されているか。起動中に変化しないため
+    // 1回だけ取得してキャッシュする。true/false/null(判定不能)
+    let _cachedIsElevated = null;
+    if (window.electronAPI?.isElevated) {
+      window.electronAPI.isElevated().then(v => { _cachedIsElevated = v; }).catch(() => {});
+    }
+
     const sendHeartbeat = async () => {
       if (this._heartbeatInFlight) return;
       this._heartbeatInFlight = true;
@@ -1620,7 +1627,8 @@ const App = {
           wardId,
           mode: localStorage.getItem('cfg_share_mode') || 'client',
           appVersion: AppState.appVersion || '',
-          page: document.querySelector('.tab-btn.active')?.dataset.page || ''
+          page: document.querySelector('.tab-btn.active')?.dataset.page || '',
+          isElevated: _cachedIsElevated === null ? undefined : String(_cachedIsElevated)
         });
         const ok = res !== null && res?.unauthorized !== true && res?.success !== false;
         this._setConnectionStatus(ok, res?.unauthorized ? 'unauthorized' : undefined);

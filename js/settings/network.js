@@ -567,7 +567,7 @@ Object.assign(Settings, {
 
         area.innerHTML = `
           <table class="settings-table" style="margin-top:0; background:#fff;">
-            <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>バージョン</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
+            <thead><tr><th>端末名</th><th>IP</th><th>ホスト名</th><th>病棟</th><th>バージョン</th><th>起動権限</th><th>画面</th><th>最終応答</th><th style="width:100px;">操作</th></tr></thead>
             <tbody>
               ${devices.map(d => {
                 const esc = value => UI.escapeHTML(String(value ?? ''));
@@ -589,6 +589,14 @@ Object.assign(Settings, {
                 const displayHostname = esc(d.hostname || d.hostName || '-');
                 const displayWard = esc(wardName || d.wardId || '-');
                 const displayPage = esc(d.page || '-');
+                // isElevatedはWindows管理者権限(昇格)で起動されているかどうか。
+                // 'true'/'false'の文字列で届く。判定不能(Windows以外・未対応の
+                // 旧バージョン端末等)の場合は値自体が無い
+                const elevatedHtml = d.isElevated === 'true'
+                  ? '<span style="color:#b45309; font-weight:700;" title="管理者権限で起動されています"><i class="fas fa-shield-alt"></i> 管理者</span>'
+                  : d.isElevated === 'false'
+                    ? '<span style="color:#4a5568;">通常</span>'
+                    : '<span class="text-muted">不明</span>';
                 return `
                   <tr style="opacity:${stale ? '.62' : '1'};">
                     <td><strong>${displayName}</strong>${stale ? ' <span style="color:#dc2626; font-size:10px; font-weight:800;">応答なし</span>' : ''}<div style="font-size:10px; color:#94a3b8;"><code>${id || '-'}</code></div></td>
@@ -596,6 +604,7 @@ Object.assign(Settings, {
                     <td style="font-size:11px; color:#4a5568;">${displayHostname}</td>
                     <td>${displayWard}</td>
                     <td style="font-size:11px;">${versionHtml}</td>
+                    <td style="font-size:11px;">${elevatedHtml}</td>
                     <td>${displayPage}</td>
                     <td>${seconds === null ? '-' : `${seconds}秒前`}</td>
                     <td><button class="btn btn-danger btn-sm btn-disconnect-device" data-id="${id || ''}" ${id ? '' : 'disabled'}>切断</button></td>
