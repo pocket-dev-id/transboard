@@ -2023,8 +2023,18 @@ const App = {
           5000
         );
       }
-      // 動的表示設定（フォント・ズーム・カードサイズ）を即時反映
-      await this.applySystemVisualSettings();
+      // 動的表示設定（フォント・ズーム・カードサイズ等）は、取得した
+      // systemSettingsが前回適用時から変化している場合だけ再適用する。
+      // ここは5秒ごとのポーリングからも呼ばれるため、変化が無くても毎回
+      // 無条件に適用すると、院内の全端末でzoom書き換え・classList操作・
+      // CSS変数書き換えが永久に走り続けてしまう。設定画面(status-customize.js/
+      // terminal-access.js)からの直接呼び出しはこのガードを経由しないため、
+      // ローカルのズーム・フォント変更等は従来どおり即座に反映される
+      const systemSettingsSignature = JSON.stringify(systemSettings);
+      if (systemSettingsSignature !== this._lastAppliedSystemSettingsSignature) {
+        await this.applySystemVisualSettings();
+        this._lastAppliedSystemSettingsSignature = systemSettingsSignature;
+      }
       return true;
     } catch (e) {
       console.error('[App] データ更新失敗:', e);
