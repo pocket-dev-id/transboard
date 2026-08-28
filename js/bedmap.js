@@ -305,17 +305,10 @@ const BedMap = {
       }
     }
 
-    // 備考表示モードの読み込み
-    const remarksSelect = document.getElementById('sel-remarks-mode');
-    const remarksMode = remarksSelect ? remarksSelect.value : 'icon';
-
+    // 備考バッジ(アイコン表示のみ。全文はホバー時のtitle属性で確認する)
     let remarksHtml = '';
-    if (event && event.note && CONFIG.DEPART_STATUSES.includes(status) && remarksMode !== 'hide') {
-      if (remarksMode === 'text') {
-        remarksHtml = `<div class="bed-note-badge" style="background:#fffbeb; color:#d97706; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #fde68a; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:80px;" title="${UI.escapeHTML(event.note)}"><i class="fas fa-sticky-note"></i> ${UI.escapeHTML(event.note)}</div>`;
-      } else {
-        remarksHtml = `<div class="bed-note-badge" style="background:#fffbeb; color:#d97706; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #fde68a; margin-bottom:2px;" title="${UI.escapeHTML(event.note)}"><i class="fas fa-sticky-note"></i> 備考</div>`;
-      }
+    if (event && event.note && CONFIG.DEPART_STATUSES.includes(status)) {
+      remarksHtml = `<div class="bed-note-badge" style="background:#fffbeb; color:#d97706; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #fde68a; margin-bottom:2px;" title="${UI.escapeHTML(event.note)}"><i class="fas fa-sticky-note"></i> 備考</div>`;
     }
 
     const scheduleBadgeHtml = this._renderTodayScheduleBadges(bed);

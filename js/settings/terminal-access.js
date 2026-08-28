@@ -33,7 +33,7 @@ Object.assign(Settings, {
         <div style="display:flex; flex-direction:column; gap:10px;">
           <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
             <input type="radio" name="terminal-role" value="ward" ${terminalRole === 'ward' ? 'checked' : ''} style="margin-top:3px;">
-            <span><strong>病棟端末</strong><br><span style="font-size:11px; color:#718096;">病棟を選択して、病床・通知・申し送りを操作します。</span></span>
+            <span><strong>病棟端末</strong><br><span style="font-size:11px; color:#718096;">病棟を選択して、病床・通知を操作します。</span></span>
           </label>
           <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
             <input type="radio" name="terminal-role" value="exam" ${terminalRole === 'exam' ? 'checked' : ''} style="margin-top:3px;">
