@@ -501,6 +501,14 @@ const HANDOVER_NOTE_MAX_ENTRIES = 1000;
 // 無いため、単純に新しい順でN件だけ残す(trimTable)。1対1の会話履歴として
 // 十分遡れる件数を確保しつつ、DBファイルの肥大化を防ぐ安全弁
 const CHAT_MESSAGE_MAX_ENTRIES = 2000;
+// POSTボディは全体をクライアントが組み立てて送ってくるため、種別だけは
+// サーバー側でallow-list検証する。chatは通常のチャット発言、announceは
+// 音声アナウンス送信の履歴(call.js の recordChatMessage 呼び出し元はこの2種類のみ)
+const CHAT_MESSAGE_KINDS = new Set(['chat', 'announce']);
+// 本文の上限。チャット入力欄側の上限(js/call.js CHAT_MAX_LENGTH)と揃える。
+// アナウンス文言はクライアント側に文字数上限が無いため、サーバー側でも
+// 上限を掛けてDBの肥大化を防ぐ(超過分は拒否せず切り詰める)
+const CHAT_MESSAGE_BODY_MAX_LENGTH = 500;
 
 // 上限件数を超えたテーブルを古い順に間引く共通ヘルパー。単純な「新しいN件だけ残す」
 // テーブル(audit_logs/import_logs/calls等)で共有する。
@@ -3123,6 +3131,17 @@ function applyMasterRevision(table, existing, payload) {
   return null;
 }
 
+// UI.conversationKey(js/ui.js)と同じ組み立て規則をサーバー側でも独立に持つ。
+// POST時にクライアント入力のconversation_keyを信用せず、検証済みのfrom_id/to_id
+// から再計算して上書きするために使う。UI.conversationKeyの規則を変更する場合は
+// 実装がズレて片方の端末にしか履歴が見えなくなるため、必ずこちらも揃えて直すこと
+function chatConversationKey(idA, idB) {
+  const a = String(idA || '').trim();
+  const b = String(idB || '').trim();
+  if (!a || !b) return '';
+  return [a, b].sort().join('|');
+}
+
 function validateMasterReferences(db, table, existing, payload) {
   if (table !== 'beds' || !payload || typeof payload !== 'object') return null;
   delete payload.bed_type;
@@ -4034,6 +4053,13 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     return { success: false, message: 'transfer_status_logs is server-managed' };
   }
 
+  // 端末間チャット/アナウンス履歴は追記専用の証跡として扱う。PATCH/PUT/DELETEを
+  // 汎用テーブルAPIで許すと、共有APIトークンを持つ任意端末が過去の会話や
+  // アナウンス送信履歴を書き換え・削除できてしまう(audit_logs等と同じ理由)
+  if (table === 'chat_messages' && method !== 'GET' && method !== 'POST') {
+    return { success: false, message: 'chat_messages is append-only and cannot be modified or deleted' };
+  }
+
   // 管理者パスコードは専用IPCでのみ扱う。汎用DB APIからハッシュを取得・更新できると、
   // renderer上のXSSがオフライン解析やロックの無効化に悪用できるため、ローカルでも拒否する。
   if (table === 'system_settings') {
@@ -4354,6 +4380,35 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         data.to_status = 'MOVING';
         data.note = data.note || '旧端末の出棟登録ログを移動中へ統合';
       }
+    }
+    // chat_messages(端末間チャット/アナウンス履歴)はボディ全体をクライアントが
+    // 組み立てて送ってくる。append-onlyガードでPATCH/PUT/DELETEは防いだが、POSTは
+    // 通す必要があるため、ここで最低限の妥当性を検証し、会話キー・ID・作成時刻は
+    // クライアント入力を信用せずサーバー側で確定させる。idを必ず新規発行にする
+    // ことで、下のindex検索が常に-1(新規作成)になり、既存メッセージへの
+    // 上書きが構造的に起こらなくなる
+    if (table === 'chat_messages') {
+      if (!CHAT_MESSAGE_KINDS.has(data.kind)) {
+        return { success: false, message: `Invalid chat_messages kind: ${data.kind}` };
+      }
+      const body = typeof data.body === 'string' ? data.body.trim() : '';
+      if (!body) {
+        return { success: false, message: 'chat_messages body must be a non-empty string' };
+      }
+      data.body = body.slice(0, CHAT_MESSAGE_BODY_MAX_LENGTH);
+      const fromExists = (db.wards || []).some(w => String(w.id) === String(data.from_id))
+        || (db.exam_rooms || []).some(r => String(r.id) === String(data.from_id));
+      if (!fromExists) {
+        return { success: false, message: `Unknown chat_messages from_id: ${data.from_id}` };
+      }
+      const toExists = (db.wards || []).some(w => String(w.id) === String(data.to_id))
+        || (db.exam_rooms || []).some(r => String(r.id) === String(data.to_id));
+      if (!toExists) {
+        return { success: false, message: `Unknown chat_messages to_id: ${data.to_id}` };
+      }
+      data.conversation_key = chatConversationKey(data.from_id, data.to_id);
+      delete data.id;
+      data.created_at = Date.now();
     }
     if (!data.id) {
       data.id = `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

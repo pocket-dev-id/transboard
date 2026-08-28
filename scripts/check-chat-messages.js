@@ -58,6 +58,34 @@ assert(typeof UI.conversationKey === 'function', 'UI.conversationKeyを取り出
   assert.strictEqual(UI.conversationKey(null, undefined), '');
 }
 
+// ── main.js: chatConversationKey (会話キーのサーバー側再計算) ──
+// POST時にクライアント入力のconversation_keyを信用せず、検証済みのfrom_id/to_idから
+// サーバー側で独立に再計算する関数。UI.conversationKeyと同じ規則で実装されている
+// ことを直接実行して確認する(規則がズレると片方の端末にしか履歴が見えなくなる)
+const chatConversationKeySrc = extract(mainSource, 'function chatConversationKey(idA, idB) {', '\n}');
+const chatConversationKey = new Function(`${chatConversationKeySrc}\nreturn chatConversationKey;`)();
+assert(typeof chatConversationKey === 'function', 'main.jsからchatConversationKeyを取り出せませんでした');
+
+{
+  assert.strictEqual(
+    chatConversationKey('ward-1', 'room-3'),
+    chatConversationKey('room-3', 'ward-1'),
+    'BUG: A→BとB→Aで同じ会話キーにならないと、送信側と受信側で会話が分裂する'
+  );
+  assert.strictEqual(chatConversationKey('ward-1', 'room-3'), 'room-3|ward-1');
+  assert.strictEqual(chatConversationKey('  ward-1 ', 'room-3'), 'room-3|ward-1');
+  assert.strictEqual(chatConversationKey('ward-1', ''), '');
+  assert.strictEqual(chatConversationKey('', 'room-3'), '');
+  assert.strictEqual(chatConversationKey(null, undefined), '');
+  // js/ui.js の UI.conversationKey とサーバー側実装が食い違うと、クライアントが
+  // 期待するキーとサーバーが上書きするキーがズレて履歴が見えなくなる
+  assert.strictEqual(
+    chatConversationKey('ward-1', 'room-3'),
+    UI.conversationKey('ward-1', 'room-3'),
+    'SECURITY/BUG: main.jsのchatConversationKeyとjs/ui.jsのUI.conversationKeyの規則が一致していません'
+  );
+}
+
 // ── main.js: trimTable による chat_messages の上限管理 ──
 const trimTableSrc = extract(mainSource, 'function trimTable(list, max, label) {', '\n}');
 const maxEntriesMatch = mainSource.match(/const CHAT_MESSAGE_MAX_ENTRIES = (\d+);/);
@@ -119,6 +147,67 @@ assert(CHAT_MESSAGE_MAX_ENTRIES > 0, 'CHAT_MESSAGE_MAX_ENTRIESは正の数であ
   assert(
     /if \(table === 'chat_messages'\) \{\s*const conversationKey = searchParams\.get\('conversation_key'\);\s*if \(conversationKey\) \{\s*return \{ data: list\.filter\(m => m\.conversation_key === conversationKey\) \};/.test(mainSource),
     "PERF: chat_messagesのGETでconversation_key指定時にサーバー側で絞っていません。院内の全会話が5秒ポーリングごとに転送されてしまいます(handover_notesのward_id絞り込みと同じパターンで実装すること)"
+  );
+}
+
+// ── main.js: chat_messagesの追記専用ガード・POST検証(セキュリティ) ──
+{
+  // PATCH/PUT/DELETEはapp-onlyガードで拒否し、POSTだけ通すこと
+  assert(
+    /if \(table === 'chat_messages' && method !== 'GET' && method !== 'POST'\) \{\s*return \{ success: false, message: 'chat_messages is append-only and cannot be modified or deleted' \};\s*\}/.test(mainSource),
+    'SECURITY: chat_messagesへのPATCH/PUT/DELETEを拒否する追記専用ガードがありません。共有APIトークンを持つ任意端末が過去の会話・アナウンス履歴を書き換え・削除できてしまいます'
+  );
+
+  // kindの許可リスト
+  assert(
+    /const CHAT_MESSAGE_KINDS = new Set\(\['chat', 'announce'\]\);/.test(mainSource),
+    'main.jsにCHAT_MESSAGE_KINDSの許可リストが定義されていません'
+  );
+  assert(
+    /if \(!CHAT_MESSAGE_KINDS\.has\(data\.kind\)\) \{\s*return \{ success: false, message: `Invalid chat_messages kind: \$\{data\.kind\}` \};\s*\}/.test(mainSource),
+    'SECURITY: chat_messagesのPOSTでkindの許可リスト検証がされていません'
+  );
+
+  // bodyの上限文字数への切り詰め
+  const bodyMaxMatch = mainSource.match(/const CHAT_MESSAGE_BODY_MAX_LENGTH = (\d+);/);
+  assert(bodyMaxMatch, 'main.jsにCHAT_MESSAGE_BODY_MAX_LENGTHが定義されていません');
+  assert(Number(bodyMaxMatch[1]) > 0, 'CHAT_MESSAGE_BODY_MAX_LENGTHは正の数であること');
+  assert(
+    /data\.body = body\.slice\(0, CHAT_MESSAGE_BODY_MAX_LENGTH\);/.test(mainSource),
+    'SECURITY: chat_messagesのbodyがサーバー側で上限文字数に切り詰められていません(アナウンス文言はクライアント側に文字数上限が無いためDBが無制限に肥大化します)'
+  );
+
+  // from_id/to_idの実在確認(病棟または検査室であること)
+  assert(
+    /const fromExists = \(db\.wards \|\| \[\]\)\.some\(w => String\(w\.id\) === String\(data\.from_id\)\)\s*\|\|\s*\(db\.exam_rooms \|\| \[\]\)\.some\(r => String\(r\.id\) === String\(data\.from_id\)\);/.test(mainSource),
+    'SECURITY: chat_messagesのfrom_idが実在するward/exam_roomかサーバー側で検証されていません'
+  );
+  assert(
+    /const toExists = \(db\.wards \|\| \[\]\)\.some\(w => String\(w\.id\) === String\(data\.to_id\)\)\s*\|\|\s*\(db\.exam_rooms \|\| \[\]\)\.some\(r => String\(r\.id\) === String\(data\.to_id\)\);/.test(mainSource),
+    'SECURITY: chat_messagesのto_idが実在するward/exam_roomかサーバー側で検証されていません'
+  );
+
+  // conversation_key/id/created_atをクライアント入力のまま信用しないこと
+  const postHandlerSrc = extract(mainSource, "if (method === 'POST') {", "\n  if (method === 'PUT' || method === 'PATCH') {");
+  assert(
+    postHandlerSrc.includes('data.conversation_key = chatConversationKey(data.from_id, data.to_id);'),
+    'SECURITY: chat_messagesのconversation_keyがクライアント入力のまま保存されています(検証済みfrom_id/to_idから再計算して上書きすること)'
+  );
+  assert(
+    postHandlerSrc.includes('delete data.id;') && postHandlerSrc.includes('data.created_at = Date.now();'),
+    'SECURITY: chat_messagesのid/created_atがクライアント入力のまま保存されています。POSTのidを使い回すと既存メッセージを上書きできてしまうため、常にサーバー側で新規id・作成時刻を発行すること'
+  );
+
+  // このブロックはid自動発行(if (!data.id) {...})より前に実行されること。
+  // 後ろにあると delete data.id が効かず、クライアント指定idのままindexが
+  // 見つかって「上書き」経路に入ってしまう
+  const chatBlockPos = postHandlerSrc.indexOf("if (table === 'chat_messages') {");
+  const idGenPos = postHandlerSrc.indexOf('if (!data.id) {');
+  assert(chatBlockPos >= 0, "POSTハンドラ内にif (table === 'chat_messages') {...}の検証ブロックが見つかりません");
+  assert(idGenPos >= 0, 'POSTハンドラ内にid自動発行ロジックが見つかりません');
+  assert(
+    chatBlockPos < idGenPos,
+    'SECURITY: chat_messagesの検証ブロックはid自動発行(if (!data.id))より前で実行すること。後ろだとdelete data.idが効かず、既存メッセージへの上書きを防げません'
   );
 }
 
