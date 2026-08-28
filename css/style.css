@@ -579,6 +579,19 @@ h1, h2, h3, h4,
 .priority-escort { font-size: 11px; color: var(--clr-text-muted); }
 .priority-escort--active { color: #1d4ed8; font-weight: 800; }
 .priority-escort--standby { color: var(--clr-text-muted); font-style: italic; }
+.priority-pickup-assist {
+  font-size: 11px;
+  font-weight: 700;
+  color: #9a3412;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
 .priority-time {
   font-size: 12px;
   font-weight: 700;

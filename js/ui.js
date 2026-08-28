@@ -132,6 +132,17 @@ const UI = {
     return t ? t.name : null;
   },
 
+  // pickupAssistanceLabelと対になるアイコン(faクラス名)。マスタ側で
+  // アイコン未設定の選択肢、および「その他」選択時はnull(アイコン無し、
+  // ラベルのみ表示)を返す
+  pickupAssistanceIcon(event) {
+    if (!event || !event.pickup_assistance_type_id) return null;
+    if (event.pickup_assistance_type_id === 'other') return null;
+    const all = AppState.allPickupAssistanceTypes || AppState.pickupAssistanceTypes || [];
+    const t = all.find(x => x.id === event.pickup_assistance_type_id);
+    return t?.icon || null;
+  },
+
   /* ---------- 時刻フォーマット ---------- */
   formatTime(ms) {
     if (!ms) return '--:--';

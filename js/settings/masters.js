@@ -1930,11 +1930,27 @@ Object.assign(Settings, {
     };
   },
 
+  // お迎え介助マスタで選べるアイコン(css/local-icons.cssにグリフが定義済みの
+  // faクラスのみ)。未定義クラスを選ぶとオフライン環境で空白表示になるため、
+  // ここに無い値は使わないこと
+  PICKUP_ASSISTANCE_ICON_OPTIONS: [
+    { value: '', label: 'アイコン無し' },
+    { value: 'fa-bed', label: 'ストレッチャー/ベッド' },
+    { value: 'fa-walking', label: '歩行介助' },
+    { value: 'fa-user-nurse', label: '付き添い・介助者' },
+    { value: 'fa-heartbeat', label: 'バイタル管理' },
+    { value: 'fa-vial', label: '点滴・薬剤' },
+    { value: 'fa-notes-medical', label: '特記事項' },
+    { value: 'fa-exclamation-triangle', label: '要注意' },
+    { value: 'fa-shield-alt', label: '安全確保' },
+    { value: 'fa-hospital-symbol', label: '医療全般' },
+  ],
+
   _renderPickupAssistanceTypes(body) {
     body.innerHTML = `
       <div class="settings-panel">
         <div class="settings-panel-header">
-          <h3><i class="fas fa-wheelchair"></i> お迎え介助マスタ</h3>
+          <h3><i class="fas fa-bed"></i> お迎え介助マスタ</h3>
           <div style="display:flex; gap:8px; align-items:center;">
             <label style="display:flex; align-items:center; gap:5px; font-size:12px; color:var(--clr-text-muted); cursor:pointer; user-select:none;">
               <input type="checkbox" id="chk-show-inactive-pickup-assistance-types" style="cursor:pointer;">
@@ -1947,11 +1963,11 @@ Object.assign(Settings, {
         </div>
         <p class="text-muted" style="font-size:12px; margin:0 0 10px;">
           終了登録（迎え要）の際に検査室側が選べる「お迎えに必要なもの」の選択肢です。
-          この一覧に加えて「その他（自由記入）」は常に選択可能です。
+          この一覧に加えて「その他（自由記入）」は常に選択可能です。アイコンは優先対応一覧にも表示されます。
         </p>
         <table class="settings-table">
           <thead>
-            <tr><th>名称</th><th>有効</th><th>操作</th></tr>
+            <tr><th>アイコン</th><th>名称</th><th>有効</th><th>操作</th></tr>
           </thead>
           <tbody id="pickup-assistance-types-tbody"></tbody>
         </table>
@@ -1966,6 +1982,7 @@ Object.assign(Settings, {
       if (!tbody) return;
       tbody.innerHTML = rows.map(t => `
         <tr class="${t.is_active === false ? 'row--inactive' : ''}">
+          <td>${t.icon ? `<i class="fas ${UI.escapeHTML(t.icon)}"></i>` : '<span class="text-muted">--</span>'}</td>
           <td class="font-bold">${UI.escapeHTML(t.name)}</td>
           <td>${t.is_active !== false ? '<i class="fas fa-check-circle" style="color:#16a34a"></i>' : '<i class="fas fa-times-circle" style="color:#94a3b8"></i>'}</td>
           <td>
@@ -1977,7 +1994,7 @@ Object.assign(Settings, {
             </button>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="3" class="text-muted" style="text-align:center;">選択肢が登録されていません</td></tr>';
+      `).join('') || '<tr><td colspan="4" class="text-muted" style="text-align:center;">選択肢が登録されていません</td></tr>';
 
       const chk = document.getElementById('chk-show-inactive-pickup-assistance-types');
       if (chk) chk.title = inactiveCount > 0 ? `無効の選択肢が ${inactiveCount} 件あります` : '無効の選択肢はありません';
@@ -2026,6 +2043,18 @@ Object.assign(Settings, {
             <label>名称 <span style="color:#dc2626">*</span></label>
             <input type="text" id="pat-name" value="${UI.escapeHTML(type?.name || '')}" placeholder="例: ストレッチャー">
           </div>
+          <div class="form-row">
+            <label>アイコン</label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span id="pat-icon-preview" style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border:1px solid #cbd5e0; border-radius:6px; background:#f8fafc; flex-shrink:0;">
+                ${type?.icon ? `<i class="fas ${UI.escapeHTML(type.icon)}"></i>` : '<span class="text-muted" style="font-size:11px;">--</span>'}
+              </span>
+              <select id="pat-icon" style="flex:1;">
+                ${this.PICKUP_ASSISTANCE_ICON_OPTIONS.map(opt => `<option value="${UI.escapeHTML(opt.value)}" ${(type?.icon || '') === opt.value ? 'selected' : ''}>${UI.escapeHTML(opt.label)}</option>`).join('')}
+              </select>
+            </div>
+            <div style="font-size:11px; color:#718096; margin-top:2px;">優先対応一覧・病床詳細でこの選択肢が選ばれたときに表示されます。</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-primary" id="pat-save">
@@ -2042,6 +2071,14 @@ Object.assign(Settings, {
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     this._addEscapeClose(overlay, close);
 
+    const iconSelect = document.getElementById('pat-icon');
+    const iconPreview = document.getElementById('pat-icon-preview');
+    iconSelect.onchange = () => {
+      iconPreview.innerHTML = iconSelect.value
+        ? `<i class="fas ${UI.escapeHTML(iconSelect.value)}"></i>`
+        : '<span class="text-muted" style="font-size:11px;">--</span>';
+    };
+
     setTimeout(() => {
       document.getElementById('pat-name')?.focus();
     }, 50);
@@ -2049,14 +2086,15 @@ Object.assign(Settings, {
     document.getElementById('pat-save').onclick = async () => {
       const name = document.getElementById('pat-name').value.trim();
       if (!name) { UI.toast('名称を入力してください', 'warning'); return; }
+      const icon = document.getElementById('pat-icon').value || null;
 
       try {
         if (isNew) {
           const newId = `pat-${Date.now()}`;
-          await API.create('pickup_assistance_types', { id: newId, name, is_active: true });
+          await API.create('pickup_assistance_types', { id: newId, name, icon, is_active: true });
           UI.toast(`${name}を追加しました`, 'success');
         } else {
-          await API.patch('pickup_assistance_types', type.id, { name });
+          await API.patch('pickup_assistance_types', type.id, { name, icon });
           UI.toast(`${name}を更新しました`, 'success');
         }
         close();

@@ -138,6 +138,18 @@ const Priority = {
       icHtml = `<span style="background:#e0f2fe; color:#0369a1; padding:2px 5px; border-radius:4px; font-size:9px; font-weight:800; display:inline-flex; align-items:center; gap:2px; border: 1px solid #bae6fd; margin-right:4px;" title="ICカードID: ${UI.escapeHTML(event.patient_ic_tag_id)}"><i class="fas fa-id-card"></i> IC</span>`;
     }
 
+    // 終了登録(迎え要)時に選ばれた「お迎えに必要なもの」。マスタでアイコンが
+    // 設定されていなければ汎用アイコン(fa-hand-paper)にフォールバックする
+    let pickupAssistHtml = '';
+    const pickupAssistLabel = UI.pickupAssistanceLabel(event);
+    if (pickupAssistLabel) {
+      const pickupAssistIcon = UI.pickupAssistanceIcon(event) || 'fa-hand-paper';
+      pickupAssistHtml = `
+        <div class="priority-pickup-assist">
+          <i class="fas ${UI.escapeHTML(pickupAssistIcon)}"></i> ${UI.escapeHTML(pickupAssistLabel)}
+        </div>`;
+    }
+
     return `
       <div class="priority-item ${itemClass}" data-bed-id="${bed ? UI.escapeHTML(bed.id) : ''}" style="cursor:pointer;">
         <div class="priority-item-header">
@@ -152,6 +164,7 @@ const Priority = {
           ${event.departed_at ? ' | ' + UI.formatTimeSmart(event.departed_at) + '出棟' : ''}
         </div>
         ${timeHtml}
+        ${pickupAssistHtml}
         ${(() => {
           if (!event.escort_staff_id) return '';
           const staffName = AppState.getStaffById(event.escort_staff_id)?.name || '--';
