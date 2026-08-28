@@ -606,16 +606,17 @@ const CallPanel = {
     const isWebRtcEnabled = !webrtcSetting || webrtcSetting.value !== 'false';
 
     const voiceBtnHtml = isWebRtcEnabled ? `
-          <!-- 音声通話を開始するボタン -->
-          <button class="btn btn-success" id="webrtc-btn-start-voice" style="padding: 12px; font-size: 14px; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: var(--shadow-sm); margin-bottom: 8px;">
-            <i class="fas fa-phone-alt" style="font-size: 15px;"></i>
-            <span>音声通話を開始</span>
-          </button>
-          <!-- ビデオ通話を開始するボタン -->
-          <button class="btn btn-primary" id="webrtc-btn-start-video" style="padding: 12px; font-size: 14px; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: var(--shadow-sm);">
-            <i class="fas fa-video" style="font-size: 15px;"></i>
-            <span>ビデオ通話を開始</span>
-          </button>
+          <!-- 音声通話・ビデオ通話を開始するボタン(横並びでコンパクトに) -->
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-success" id="webrtc-btn-start-voice" style="flex:1; padding: 10px 6px; font-size: 13px; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: var(--shadow-sm);">
+              <i class="fas fa-phone-alt" style="font-size: 14px;"></i>
+              <span>音声通話</span>
+            </button>
+            <button class="btn btn-primary" id="webrtc-btn-start-video" style="flex:1; padding: 10px 6px; font-size: 13px; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: var(--shadow-sm);">
+              <i class="fas fa-video" style="font-size: 14px;"></i>
+              <span>ビデオ通話</span>
+            </button>
+          </div>
           <!-- マイク/カメラが利用できない場合の警告(非同期のデバイス確認後に表示) -->
           <div id="webrtc-media-warning" style="display:none; font-size:11px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:6px 9px; margin-top:6px;"></div>
     ` : `
