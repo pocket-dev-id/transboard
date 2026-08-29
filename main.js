@@ -1978,6 +1978,13 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
 // 混在するため、いずれも許容する（例: 13:05:30 / 13：05 / 13.05.30 / 13.05）
 const SCHEDULE_TIME_RE_SRC = '(\\d{1,2})[：:.](\\d{2})(?:[：:.](\\d{2}))?';
 
+// 日付部分の正規表現は呼び出しのたびに再構築せず、モジュールスコープで1度だけ
+// コンパイルしておく(CSV取り込みは行ごとにparseScheduleDatetimeMsを呼ぶため)
+const SCHEDULE_DATE_YMD_RE = new RegExp(`^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})(?:[\\s　T]+${SCHEDULE_TIME_RE_SRC})?`);
+// MM/DD/YYYY・DD/MM/YYYYはどちらも数値列の形状が同じで、月日どちらの意味に
+// 取るかは呼び出し側(tryParseScheduleDatetimeMdy/Dmy)が決める
+const SCHEDULE_DATE_SLASH_RE = new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`);
+
 // 年月日時分秒からDateを生成する。JavaScriptのDateコンストラクタは範囲外の値
 // (2月31日→3月3日前後、13月→翌年1月、25時→翌日1時等)を拒否せず自動的に
 // 繰り上げてしまうため、CSVの入力ミスがエラーにならず全く別の日時の予定として
@@ -2003,28 +2010,33 @@ function buildValidatedScheduleDateMs(y, mo, dy, h, mi, se) {
 // YYYY-MM-DD / YYYY/MM/DD HH:mm[:ss] (日付区切りは - / のいずれも可、
 // ISO 8601のT区切りを含む。時刻区切りは : ： . のいずれも可)
 function tryParseScheduleDatetimeYmd(combined) {
-  const m = combined.match(new RegExp(`^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})(?:[\\s　T]+${SCHEDULE_TIME_RE_SRC})?`));
+  const m = combined.match(SCHEDULE_DATE_YMD_RE);
   if (!m) return null;
   const [, y, mo, dy, h = '0', mi = '0', se = '0'] = m;
   return buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
 }
 
-// MM/DD/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
-function tryParseScheduleDatetimeMdy(combined) {
-  const m = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
+// MM/DD/YYYY・DD/MM/YYYYはどちらも「数値/数値/YYYY」で形状が同じで、月日の
+// どちらの意味に取るかが違うだけのため、共通ロジックに集約する
+// (時刻区切りは : ： . のいずれも可)
+function tryParseScheduleDatetimeSlash(combined, swapDayMonth) {
+  const m = combined.match(SCHEDULE_DATE_SLASH_RE);
   if (!m) return null;
-  const [, mo, dy, y, h = '0', mi = '0', se = '0'] = m;
+  const [, g1, g2, y, h = '0', mi = '0', se = '0'] = m;
+  const mo = swapDayMonth ? g2 : g1;
+  const dy = swapDayMonth ? g1 : g2;
   return buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
 }
 
-// DD/MM/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)。mdyと同じ形状の
-// 数値列を、月日の順を入れ替えて解釈する。自動判定のフォールバック対象には
-// 含めない(mdyとの曖昧さがあるため、明示的にformat指定された場合のみ使う)
+// MM/DD/YYYY HH:mm[:ss]
+function tryParseScheduleDatetimeMdy(combined) {
+  return tryParseScheduleDatetimeSlash(combined, false);
+}
+
+// DD/MM/YYYY HH:mm[:ss]。自動判定のフォールバック対象には含めない
+// (mdyとの曖昧さがあるため、明示的にformat指定された場合のみ使う)
 function tryParseScheduleDatetimeDmy(combined) {
-  const m = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
-  if (!m) return null;
-  const [, dy, mo, y, h = '0', mi = '0', se = '0'] = m;
-  return buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+  return tryParseScheduleDatetimeSlash(combined, true);
 }
 
 // formatは'auto'|'ymd'|'mdy'|'dmy'|未指定。明示的に指定された場合は該当の
