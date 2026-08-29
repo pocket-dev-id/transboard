@@ -1018,7 +1018,10 @@ const CallPanel = {
           toId: targetId,
           kind: 'announce',
           body: speechText,
-        }).catch(err => console.warn('[Chat] アナウンス履歴の記録に失敗しました:', err));
+        }).catch(err => {
+          console.warn('[Chat] アナウンス履歴の記録に失敗しました:', err);
+          UI.toast('アナウンス履歴の記録に失敗しました', 'warning');
+        });
         UI.toast('音声アナウンスを送信しました', 'success');
         overlay.remove();
       } catch (e) {
