@@ -16,7 +16,6 @@ const WardDashboard = {
     Priority.renderPriorityList();
     if (typeof StaffStatus !== 'undefined') StaffStatus.render();
     if (typeof NotificationHistory !== 'undefined') NotificationHistory.render();
-    if (typeof Handover !== 'undefined') Handover.render();
   },
 
   // ポーリングtick専用: 取得データが前回描画時と同一なら、重い全体再描画
@@ -376,7 +375,7 @@ const ParentServerMonitor = {
       if (res.ok) {
         const recovered = this._wasUnavailable;
         if (recovered) {
-          const mastersRefreshed = await App.loadMasters({ silent: true, loadHandover: false });
+          const mastersRefreshed = await App.loadMasters({ silent: true });
           const refreshed = await App.refreshData({ force: true });
           if (!mastersRefreshed || !refreshed) {
             this._wasUnavailable = true;
@@ -705,14 +704,6 @@ const App = {
       });
     }
 
-    // 備考表示モードの切り替えイベント
-    const remarksSelect = document.getElementById('sel-remarks-mode');
-    if (remarksSelect) {
-      remarksSelect.addEventListener('change', () => {
-        BedMap.render();
-      });
-    }
-
     // 病棟セレクト変更
     document.getElementById('ward-select').addEventListener('change', async (e) => {
       if (this.isExamTerminal()) return;
@@ -856,7 +847,7 @@ const App = {
 
         // 子機から親機の連携設定を変更した直後でも、親機rendererの古いキャッシュを
         // 使わないよう、取り込み開始時に設定・病床マスターを必ず読み直す。
-        const mastersLoaded = await App.loadMasters({ silent: true, loadHandover: false });
+        const mastersLoaded = await App.loadMasters({ silent: true });
         if (!mastersLoaded) {
           if (importId && window.electronAPI.completeDataImport) {
             await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
@@ -1848,7 +1839,7 @@ const App = {
     }
   },
 
-  async loadMasters({ silent = false, loadHandover = true } = {}) {
+  async loadMasters({ silent = false } = {}) {
     try {
       const [wards, beds, examRooms, examTypes, pickupAssistanceTypes, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
@@ -1890,13 +1881,6 @@ const App = {
       }
       AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: AppState.systemSettings.length });
-
-      // 申し送りメモを読み込む（現在病棟）
-      if (loadHandover && !this.isExamTerminal() && typeof Handover !== 'undefined') {
-        await Handover.load().catch(() => {});
-      } else if (this.isExamTerminal()) {
-        AppState.handoverNotes = [];
-      }
       return true;
 
     } catch (e) {
@@ -1919,7 +1903,7 @@ const App = {
       if (this._masterSyncInFlight || this._refreshPromise) return;
       this._masterSyncInFlight = true;
       try {
-        const refreshed = await this.loadMasters({ silent: true, loadHandover: false });
+        const refreshed = await this.loadMasters({ silent: true });
         if (refreshed) {
           this.syncWardSelect();
           if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {

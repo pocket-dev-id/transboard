@@ -305,13 +305,6 @@ const API = {
     return this._fetch(`tables/transfer_events/ward-status?${qs}`);
   },
 
-  // 申し送りメモ（指定病棟、新しい順）。親機/子機ともAPI経由で取得する
-  async getHandoverNotes(wardId) {
-    const res = await this.getAll('handover_notes', { ward_id: wardId || '' });
-    const list = (res.data || []).filter(n => !wardId || n.ward_id === wardId);
-    return list.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  },
-
   // 端末間チャット(1対1)。conversation_keyはUI.conversationKey()で組んだもの。
   // 古い順(created_at昇順)に並べて返す＝タイムライン表示の順序そのまま
   async getChatMessages(conversationKey) {

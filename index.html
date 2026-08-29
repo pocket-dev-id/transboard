@@ -142,15 +142,7 @@
             <button class="btn btn-outline btn-sm filter-btn" data-filter="pickup">お迎え要</button>
             <button class="btn btn-outline btn-sm filter-btn" data-filter="empty">空床</button>
             <button class="btn btn-outline btn-sm filter-btn" data-filter="absent">不在</button>
-            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: #475569; margin-left: auto; cursor: pointer; user-select: none; margin-right: 8px;">
-              <span>備考表示:</span>
-              <select id="sel-remarks-mode" style="padding: 2px 4px; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 11px; font-weight: bold; background: white; cursor: pointer; outline: none;">
-                <option value="icon" selected>ありなし（アイコン）</option>
-                <option value="text">テキストを表示</option>
-                <option value="hide">非表示</option>
-              </select>
-            </label>
-            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: #475569; cursor: pointer; user-select: none; margin-right: 4px;">
+            <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; color: #475569; margin-left: auto; cursor: pointer; user-select: none; margin-right: 4px;">
               <input type="checkbox" id="chk-show-patient-names" style="cursor: pointer; transform: scale(1.1);">
               <span>患者名を表示</span>
             </label>
@@ -192,29 +184,6 @@
             </div>
           </div>
           <div id="notification-history-list"></div>
-        </div>
-
-        <!-- 右下: 申し送りメモ板（シフト引き継ぎ・病棟単位で共有） -->
-        <div id="handover-area">
-          <div class="panel-header">
-            <h2><i class="fas fa-clipboard-list"></i> 申し送り<span id="handover-open-count" class="handover-badge"></span></h2>
-            <button class="btn btn-outline btn-sm" id="btn-handover-add" style="font-size:11px;padding:3px 10px;">
-              <i class="fas fa-plus"></i> 追加
-            </button>
-          </div>
-          <div id="handover-editor" class="handover-editor" style="display:none;">
-            <textarea id="handover-input" rows="2" placeholder="申し送り内容を入力（例: 302号 15時に点滴交換）"></textarea>
-            <div class="handover-editor-row">
-              <input id="handover-author" list="handover-author-list" placeholder="担当者（任意）">
-              <datalist id="handover-author-list"></datalist>
-              <label class="handover-imp"><input type="checkbox" id="handover-important"> 重要</label>
-              <span style="flex:1"></span>
-              <button class="btn btn-outline btn-sm" id="btn-handover-cancel">キャンセル</button>
-              <button class="btn btn-primary btn-sm" id="btn-handover-save">保存</button>
-            </div>
-          </div>
-          <div id="handover-list"></div>
-          <button id="handover-resolved-toggle" class="handover-resolved-toggle" style="display:none;"></button>
         </div>
       </div>
 
@@ -432,7 +401,6 @@
 
   <script src="js/wizard.js"></script>
   <script src="js/priority.js"></script>
-  <script src="js/handover.js"></script>
   <script src="js/carryover.js"></script>
   <script src="js/timeline.js"></script>
   <script src="js/history.js"></script>

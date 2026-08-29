@@ -142,11 +142,10 @@ assert(CHAT_MESSAGE_MAX_ENTRIES > 0, 'CHAT_MESSAGE_MAX_ENTRIESは正の数であ
   );
   // conversation_key指定時にサーバー側で絞らないと、5秒ポーリングのたびに院内の
   // 全会話分(最大CHAT_MESSAGE_MAX_ENTRIES件)を無駄に転送することになる。
-  // handover_notes(ward_id)/bed_occupancy_log(bed_id)/schedule_items(start_ms/end_ms)
-  // と同じ既存パターンに揃える
+  // bed_occupancy_log(bed_id)/schedule_items(start_ms/end_ms)と同じ既存パターンに揃える
   assert(
     /if \(table === 'chat_messages'\) \{\s*const conversationKey = searchParams\.get\('conversation_key'\);\s*if \(conversationKey\) \{\s*return \{ data: list\.filter\(m => m\.conversation_key === conversationKey\) \};/.test(mainSource),
-    "PERF: chat_messagesのGETでconversation_key指定時にサーバー側で絞っていません。院内の全会話が5秒ポーリングごとに転送されてしまいます(handover_notesのward_id絞り込みと同じパターンで実装すること)"
+    "PERF: chat_messagesのGETでconversation_key指定時にサーバー側で絞っていません。院内の全会話が5秒ポーリングごとに転送されてしまいます(bed_occupancy_logのbed_id絞り込みと同じパターンで実装すること)"
   );
 }
 

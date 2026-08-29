@@ -590,7 +590,7 @@ assert(
 assert(
   (() => {
     const idx = main.indexOf('function pruneTransferStatusLogs(');
-    const end = main.indexOf('\nfunction pruneHandoverNotes(');
+    const end = main.indexOf('\nfunction encryptSensitiveValue(');
     if (idx < 0 || end < 0 || end <= idx) return false;
     const body = main.slice(idx, end);
     return body.includes('ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
@@ -2583,7 +2583,7 @@ assert(
 // 各種運用設定が既定値へ戻って見えてしまう
 assert(
   (() => {
-    const idx = app.indexOf('async loadMasters({ silent = false, loadHandover = true } = {}) {');
+    const idx = app.indexOf('async loadMasters({ silent = false } = {}) {');
     const end = app.indexOf('\n  },', idx);
     if (idx < 0 || end < idx) return false;
     const body = app.slice(idx, end);
@@ -2746,4 +2746,23 @@ assert(
 assert(
   /table === 'chat_messages'\s*\)\s*\{\s*trimTable\(list, CHAT_MESSAGE_MAX_ENTRIES/.test(main),
   'chat_messagesの書き込み経路でtrimTable(CHAT_MESSAGE_MAX_ENTRIES)が呼ばれていません。追記専用テーブルのためDBが無制限に肥大化します'
+);
+
+// ── 申し送り(handover)機能は削除済みで、復活していないこと ──
+
+// js/handover.jsやhandover_notesテーブルが部分的に復活すると、削除されたはずの
+// UIパネル・APIエンドポイント・DBテーブルだけが宙に浮いた状態になり、
+// 参照エラーやデータの整合性崩れにつながる
+assert(!fs.existsSync(path.join(root, 'js/handover.js')), 'js/handover.jsが復活しています。申し送り機能は削除済みのはずです');
+assert(!/js\/handover\.js/.test(indexHtml), 'index.htmlがjs/handover.jsを読み込んでいます。申し送り機能は削除済みのはずです');
+assert(!/handover_notes/.test(main), 'main.jsにhandover_notesへの参照が残っています。申し送り機能(DBテーブル・API)は削除済みのはずです');
+assert(!/Handover\b/.test(app), 'js/app.jsにHandoverオブジェクトへの参照が残っています。申し送り機能は削除済みのはずです');
+
+// ── 病床マップの「備考表示」トグルは削除済みで、常時アイコン表示に固定されていること ──
+
+// トグル(sel-remarks-mode)が部分的に復活すると、選択肢のうち「非表示」モードが
+// 復活して備考が誤って隠れたままになる、あるいは参照するJS側だけ削除されて
+// 壊れたセレクタ参照が残る、といった不整合につながる
+assert(!/sel-remarks-mode/.test(indexHtml), 'index.htmlにsel-remarks-mode(備考表示トグル)が復活しています。備考は常時アイコン表示に固定されたはずです');
+assert(!/sel-remarks-mode|remarksMode/.test(bedmap), 'js/bedmap.jsにsel-remarks-mode/remarksModeへの参照が復活しています。備考は常時アイコン表示に固定されたはずです'
 );

@@ -19,9 +19,9 @@ const vm = require('vm');
 const ROOT = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
 
-const startMarker = 'async loadMasters({ silent = false, loadHandover = true } = {}) {';
+const startMarker = 'async loadMasters({ silent = false } = {}) {';
 const startIdx = source.indexOf(startMarker);
-assert(startIdx >= 0, 'loadMasters({ silent, loadHandover })が見つかりません(js/app.jsの構造が変わった可能性があります)');
+assert(startIdx >= 0, 'loadMasters({ silent })が見つかりません(js/app.jsの構造が変わった可能性があります)');
 const bodyStart = startIdx + startMarker.length;
 const endIdx = source.indexOf('\n  },', bodyStart);
 assert(endIdx > bodyStart, 'loadMastersの終端(\\n  },)が見つかりません');
@@ -39,7 +39,7 @@ function buildHarness(state) {
   const obj = vm.runInNewContext(`({
     isExamTerminal() { return false; },
     _checkParentIdentity(settings) { __state.checkParentIdentityCalls.push(settings); },
-    async loadMasters({ silent = false, loadHandover = true } = {}) {${methodBody}
+    async loadMasters({ silent = false } = {}) {${methodBody}
     },
   })`, Object.assign(sandbox, { __state: state }));
   return obj;
@@ -85,7 +85,7 @@ async function main() {
       }),
     };
     const harness = buildHarness(state);
-    const ok = await harness.loadMasters({ silent: true, loadHandover: false });
+    const ok = await harness.loadMasters({ silent: true });
     assert.strictEqual(ok, true, 'system_settings以外が成功していれば、loadMasters全体は成功として続行すること');
     assert.strictEqual(state.AppState.systemSettings.length, 1, 'BUG FIX: system_settingsの取得失敗時、既存の設定が空配列で上書きされないこと');
     assert.strictEqual(state.AppState.systemSettings[0].id, 'notify_volume', 'BUG FIX: 取得失敗時は前回値がそのまま保持されること');
@@ -104,7 +104,7 @@ async function main() {
       }),
     };
     const harness = buildHarness(state);
-    const ok = await harness.loadMasters({ silent: true, loadHandover: false });
+    const ok = await harness.loadMasters({ silent: true });
     assert.strictEqual(ok, true, '成功時はtrueを返すこと');
     assert.strictEqual(state.AppState.systemSettings.length, 2, '取得に成功していれば最新のsystem_settingsへ更新されること');
     assert.strictEqual(state.checkParentIdentityCalls.length, 1, '取得に成功していればparent identityチェックが行われること');
@@ -122,7 +122,7 @@ async function main() {
       }),
     };
     const harness = buildHarness(state);
-    const ok = await harness.loadMasters({ silent: true, loadHandover: false });
+    const ok = await harness.loadMasters({ silent: true });
     assert.strictEqual(ok, true, '初回ロードで前回値が無くてもloadMasters全体は成功として続行すること');
     assert.deepStrictEqual(Array.from(state.AppState.systemSettings), [], '前回値が無い場合は空配列にフォールバックすること(undefinedのままにならないこと)');
   }

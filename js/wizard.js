@@ -139,7 +139,7 @@ const Wizard = {
         <div class="wiz-radio-group" style="gap:8px;">
           ${this._radioCard('terminal_role', 'ward', this.config.terminal_role === 'ward',
             'fa-hospital', '病棟端末',
-            '病棟選択・病床・通知・申し送りを操作します。')}
+            '病棟選択・病床・通知を操作します。')}
           ${this._radioCard('terminal_role', 'exam', this.config.terminal_role === 'exam',
             'fa-x-ray', '検査室端末',
             '病棟選択を隠し、検査室の進捗管理を直接表示します。')}
