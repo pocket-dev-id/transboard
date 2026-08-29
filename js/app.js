@@ -1292,6 +1292,7 @@ const App = {
     if (window.electronAPI?.appendDebugLog) {
       const token = await API.getTerminalApiToken();
       const tokenSummary = token ? '設定あり' : '未設定';
+      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
       window.electronAPI.appendDebugLog(
         `[App起動] version=${AppState.appVersion || '?'} cfg_share_mode=${shareMode} ` +
         `cfg_parent_ip=${localStorage.getItem('cfg_parent_ip') || '(未設定)'} cfg_api_token=${tokenSummary}`
@@ -2577,6 +2578,6 @@ document.addEventListener('DOMContentLoaded', () => {
   ErrorHandler.init();
   App.init().catch(e => {
     console.error('[App] 起動エラー:', e);
-    UI.toast('アプリの起動に失敗しました', 'danger');
+    UI.toast(`アプリの起動に失敗しました: ${e.message || e}`, 'danger', 10000);
   });
 });
