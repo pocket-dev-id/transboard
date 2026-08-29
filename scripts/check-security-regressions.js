@@ -1015,7 +1015,7 @@ assert(
 // ため、この問題が構造的に起きない)
 assert(
   (() => {
-    const idx = timeline.indexOf('schedItems.forEach(item => {');
+    const idx = timeline.indexOf('timedItems.forEach(item => {');
     const end = timeline.indexOf('unlinkedSchedItems.push(item);', idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
     const body = timeline.slice(idx, end);
@@ -2862,4 +2862,62 @@ assert(
 assert(
   !/chat-msg--announce|chat-announce-body/.test(call),
   'BUG: js/call.jsにチャット側のアナウンス専用描画(chat-msg--announce/chat-announce-body)が復活しています。通知履歴パネル側だけに表示する設計のはずです'
+);
+
+// ── スケジュール取込CSVの「時刻未定」判定(has_time)が失われていないこと ──
+
+// has_timeが無いと、時刻列の無いCSV行(00:00デフォルト埋め)と実際に0:00の
+// 予定を区別できず、タイムラインの時間軸に「中身が空のラベル行」が
+// 再発する(以前の不具合)
+assert(
+  (() => {
+    const idx = main.indexOf('function parseScheduleFeedCsvFile(filePath, feed) {');
+    const end = main.indexOf('resolve({ success: true, items, rowCount: rows.length', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('new RegExp(SCHEDULE_TIME_RE_SRC).test(String(timeSource))') &&
+      body.includes('has_time: hasTime');
+  })(),
+  'BUG: main.jsのparseScheduleFeedCsvFileがhas_time(時刻表記が実際にあったか)をitemsに含めていません。時刻列の無いCSV行が「実際の0:00の予定」と区別できなくなります'
+);
+
+// ── タイムライン: 時刻未定のスケジュールは時間軸(帯グラフ)に乗せないこと ──
+
+// has_time===falseのアイテムがtimedItems側に混入すると、時間軸のウィンドウ外
+// (常に00:00相当)になり、ラベルだけの空の行が再発する
+assert(
+  timeline.includes("const timedItems = schedItems.filter(item => item.has_time !== false);") &&
+    timeline.includes("const untimedItems = schedItems.filter(item => item.has_time === false);"),
+  'BUG: js/timeline.jsがschedItemsをhas_timeで分割していません。時刻未定の予定が時間軸の帯グラフに紛れ込み、空に見える行が再発します'
+);
+assert(
+  /時間未定のスケジュール/.test(timeline) && timeline.includes('tl-untimed-chip'),
+  'BUG: js/timeline.jsに時刻未定スケジュール専用セクションの描画が見つかりません'
+);
+
+// ── 病床詳細モーダル: 取り込みスケジュール欄の配線 ──
+
+// AppState.scheduleItemsをpatient_idで絞り込んでいないと、無関係な患者の
+// スケジュールが病床詳細モーダルに表示されてしまう
+assert(
+  (() => {
+    const idx = modal.indexOf('_getImportedScheduleForBed(bed) {');
+    const end = modal.indexOf('\n  },', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = modal.slice(idx, end);
+    return body.includes("String(item?.identifier || '').trim() !== patientId");
+  })(),
+  'BUG: js/modal.jsの_getImportedScheduleForBedがAppState.scheduleItemsをpatient_id(identifier)で絞り込んでいません'
+);
+// 取り込みスケジュールが1件も無い病床では、2カラム化(has-imported-schedule)を
+// 発動しないこと(空パネル分だけモーダル幅が無駄に広がらないようにするため)
+assert(
+  (() => {
+    const idx = modal.indexOf("const importedSchedule = this._getImportedScheduleForBed(bed);");
+    const end = modal.indexOf('\n    if (event) {', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = modal.slice(idx, end);
+    return body.includes("modal.classList.toggle('has-imported-schedule', importedSchedule.length > 0)");
+  })(),
+  'BUG: js/modal.jsのopen()がhas-imported-scheduleクラスをimportedSchedule件数に応じて切り替えていません。スケジュールが無い病床でもモーダルが2カラムに広がってしまいます'
 );

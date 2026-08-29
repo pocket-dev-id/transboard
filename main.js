@@ -2143,6 +2143,12 @@ function parseScheduleFeedCsvFile(filePath, feed) {
             const title = mapping.col_title ? (row[mapping.col_title] || '') : '';
             const identifier = mapping.col_id ? (row[mapping.col_id] || '') : '';
             const durationMin = mapping.col_duration_min ? parseInt(row[mapping.col_duration_min]) || null : null;
+            // 時刻列が無い/空のCSV行はparseScheduleDatetimeMs内で00:00として
+            // デフォルト処理されるため、start_msだけでは「実際に0:00の予定」と
+            // 「時刻情報が無い」を区別できない。ここで元の文字列に実際に時刻表記
+            // (SCHEDULE_TIME_RE_SRC)が含まれていたかを見て、has_timeとして残す
+            const timeSource = dtVal || timeVal;
+            const hasTime = !!timeSource && new RegExp(SCHEDULE_TIME_RE_SRC).test(String(timeSource));
 
             // 複数ファイル分をまとめて挿入することがあるため、ファイル名も含めて
             // ID衝突を避ける(同じstart_msの行が別ファイルにもあり得るため)
@@ -2155,6 +2161,7 @@ function parseScheduleFeedCsvFile(filePath, feed) {
               title,
               identifier,
               start_ms: startMs,
+              has_time: hasTime,
               duration_min: durationMin,
               raw: row,
               imported_at: Date.now()
