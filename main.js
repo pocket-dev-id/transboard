@@ -2000,31 +2000,58 @@ function buildValidatedScheduleDateMs(y, mo, dy, h, mi, se) {
   return d.getTime();
 }
 
-function parseScheduleDatetimeMs(dateStr, timeStr) {
+// YYYY-MM-DD / YYYY/MM/DD HH:mm[:ss] (日付区切りは - / のいずれも可、
+// ISO 8601のT区切りを含む。時刻区切りは : ： . のいずれも可)
+function tryParseScheduleDatetimeYmd(combined) {
+  const m = combined.match(new RegExp(`^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})(?:[\\s　T]+${SCHEDULE_TIME_RE_SRC})?`));
+  if (!m) return null;
+  const [, y, mo, dy, h = '0', mi = '0', se = '0'] = m;
+  return buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+}
+
+// MM/DD/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
+function tryParseScheduleDatetimeMdy(combined) {
+  const m = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
+  if (!m) return null;
+  const [, mo, dy, y, h = '0', mi = '0', se = '0'] = m;
+  return buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+}
+
+// DD/MM/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)。mdyと同じ形状の
+// 数値列を、月日の順を入れ替えて解釈する。自動判定のフォールバック対象には
+// 含めない(mdyとの曖昧さがあるため、明示的にformat指定された場合のみ使う)
+function tryParseScheduleDatetimeDmy(combined) {
+  const m = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
+  if (!m) return null;
+  const [, dy, mo, y, h = '0', mi = '0', se = '0'] = m;
+  return buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+}
+
+// formatは'auto'|'ymd'|'mdy'|'dmy'|未指定。明示的に指定された場合は該当の
+// パターンを最優先で試し、それで解決しなければ(未指定/'auto'の場合も含めて)
+// 従来通りymd→mdyの順の自動判定へフォールバックする(dmyは自動判定の対象に
+// 含めない。これによりformat省略時の挙動を完全に後方互換に保つ)
+function parseScheduleDatetimeMs(dateStr, timeStr, format) {
   if (!dateStr) return null;
   const combined = timeStr ? `${dateStr.trim()} ${timeStr.trim()}` : dateStr.trim();
 
-  // YYYY-MM-DD / YYYY/MM/DD HH:mm[:ss] (日付区切りは - / のいずれも可、
-  // ISO 8601のT区切りを含む。時刻区切りは : ： . のいずれも可)
-  const m1 = combined.match(new RegExp(`^(\\d{4})[\\/\\-](\\d{1,2})[\\/\\-](\\d{1,2})(?:[\\s　T]+${SCHEDULE_TIME_RE_SRC})?`));
-  if (m1) {
-    const [, y, mo, dy, h = '0', mi = '0', se = '0'] = m1;
-    const ms = buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+  if (format === 'ymd') {
+    const ms = tryParseScheduleDatetimeYmd(combined);
     if (ms !== null) return ms;
-  }
-
-  // MM/DD/YYYY HH:mm[:ss] (時刻区切りは : ： . のいずれも可)
-  const m2 = combined.match(new RegExp(`^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:\\s+${SCHEDULE_TIME_RE_SRC})?`));
-  if (m2) {
-    const [, mo, dy, y, h = '0', mi = '0', se = '0'] = m2;
-    const ms = buildValidatedScheduleDateMs(Number(y), Number(mo), Number(dy), Number(h), Number(mi), Number(se));
+  } else if (format === 'mdy') {
+    const ms = tryParseScheduleDatetimeMdy(combined);
+    if (ms !== null) return ms;
+  } else if (format === 'dmy') {
+    const ms = tryParseScheduleDatetimeDmy(combined);
     if (ms !== null) return ms;
   }
 
   // どちらの形式にも一致しない場合、Dateコンストラクタへ丸投げして「解釈でき
   // てしまう」ことに賭けない(範囲外の値を無検証で繰り上げて別の日時として
   // 受理してしまう恐れがあるため)。この2形式が現場CSVの実質すべてをカバーする
-  return null;
+  const ymdMs = tryParseScheduleDatetimeYmd(combined);
+  if (ymdMs !== null) return ymdMs;
+  return tryParseScheduleDatetimeMdy(combined);
 }
 
 const MAX_CSV_FILE_BYTES = 20 * 1024 * 1024;
@@ -2123,13 +2150,13 @@ function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto', credenti
 // 既存のparseScheduleDatetimeMsをそのまま適用するだけの薄いラッパー。
 // dateColが未入力/sampleRowに無い場合は「まだ判定できない」であって
 // エラーではないため、ms: nullを返す(呼び出し元でプレビュー非表示に使う)
-function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol) {
+function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat) {
   if (!sampleRow || !dateCol || !Object.prototype.hasOwnProperty.call(sampleRow, dateCol)) {
     return { success: true, ms: null };
   }
   const dateVal = sampleRow[dateCol];
   const timeVal = mode === 'combined' ? null : (timeCol ? sampleRow[timeCol] : null);
-  const ms = parseScheduleDatetimeMs(dateVal, timeVal);
+  const ms = parseScheduleDatetimeMs(dateVal, timeVal, dateFormat);
   return { success: true, ms };
 }
 
@@ -2163,7 +2190,7 @@ function parseScheduleFeedCsvFile(filePath, feed) {
             const timeVal = mapping.col_time ? row[mapping.col_time] : null;
             const dtVal = mapping.col_datetime ? row[mapping.col_datetime] : null;
 
-            const startMs = parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal);
+            const startMs = parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal, mapping.date_format);
             if (!startMs) return;
 
             const title = mapping.col_title ? (row[mapping.col_title] || '') : '';
@@ -5084,8 +5111,8 @@ handleTrusted('read-csv-headers', async (event, request) => {
 // ファイル/SMBアクセスを伴わない純粋計算(sampleRowは呼び出し元がread-csv-headers
 // で既に取得済みのものを渡す)のため、read-csv-headersのような監査ログは残さない
 handleTrusted('preview-schedule-datetime', async (event, request) => {
-  const { sampleRow, mode, dateCol, timeCol } = request || {};
-  return previewScheduleDatetime(sampleRow, mode, dateCol, timeCol);
+  const { sampleRow, mode, dateCol, timeCol, dateFormat } = request || {};
+  return previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat);
 });
 
 // 開発/本番モード判定 (インフラ #4: 環境分離)
@@ -6576,7 +6603,7 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
     case 'schedule-feed-datetime-preview':
       // 入力のたびに高頻度で呼ばれる純粋計算(ファイルアクセス・副作用無し)のため、
       // schedule-feed-headers等と異なり監査ログ(appendParentActionAudit)は残さない
-      return previewScheduleDatetime(payload?.sampleRow, payload?.mode, payload?.dateCol, payload?.timeCol);
+      return previewScheduleDatetime(payload?.sampleRow, payload?.mode, payload?.dateCol, payload?.timeCol, payload?.dateFormat);
     case 'save-schedule-feed-smb-password': {
       // フィード個別のSMBパスワードはsystem_settingsのフィード専用IDへ入るため、
       // 子機からは通常の書き込み経路(isWriteBlocked)で拒否される。ここを唯一の

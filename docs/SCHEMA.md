@@ -275,7 +275,7 @@ key-valueペアで管理。重要なキー一覧:
 | `watch_dir` | string | 監視フォルダ。ローカルパスまたはUNCパス（`\\server\share`） |
 | `encoding` | string | `auto` / `utf-8` / `shift-jis` など |
 | `schedule` | object | `{ mode: 'realtime'\|'interval'\|'time', intervalMin?, times? }` |
-| `mapping` | object | CSV列の対応（`col_date` / `col_time` / `col_title` / `col_id` / `col_duration_min`） |
+| `mapping` | object | CSV列の対応と解釈設定（`col_date` / `col_time` / `col_datetime` / `col_title` / `col_id` / `col_duration_min` / `date_format`: `auto`\|`ymd`\|`mdy`\|`dmy`、既定は`auto`） |
 | `retention_policy` | object | `{ action }` 取り込み済みデータの扱い |
 | `show_on_bed_map` | boolean | 病床マップへ表示するか |
 | `bed_map_icon` / `bed_map_abbreviation` | string / string | 病床マップのバッジ表示 |

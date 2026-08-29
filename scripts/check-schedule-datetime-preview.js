@@ -78,4 +78,32 @@ assert(typeof previewScheduleDatetime === 'function', 'previewScheduleDatetime�
   assert.strictEqual(result.ms, null, '日付列の値が空文字の場合はms:nullを返すこと');
 }
 
+// ── dateFormat明示指定: 曖昧な値(01/02)がdateFormatによって異なる日付に
+//    解釈されること。previewScheduleDatetimeがdateFormatを実際に
+//    parseScheduleDatetimeMsへ伝播していることの確認 ──
+{
+  const sampleRow = { '日付': '01/02/2026' };
+  const mdyResult = previewScheduleDatetime(sampleRow, 'combined', '日付', null, 'mdy');
+  const dmyResult = previewScheduleDatetime(sampleRow, 'combined', '日付', null, 'dmy');
+  assert.strictEqual(mdyResult.ms, new Date(2026, 0, 2).getTime(), 'dateFormat:mdyでは01/02/2026が1月2日と解釈されること');
+  assert.strictEqual(dmyResult.ms, new Date(2026, 1, 1).getTime(), 'dateFormat:dmyでは01/02/2026が2月1日と解釈されること(mdyと異なる結果)');
+}
+
+// ── dateFormat:dmyを指定したが値が明らかにYMD形式の場合、自動判定へ
+//    フォールバックして正しく解釈されること ──
+{
+  const sampleRow = { '日付': '2026-08-26', '時刻': '13:05' };
+  const result = previewScheduleDatetime(sampleRow, 'separate', '日付', '時刻', 'dmy');
+  assert.strictEqual(result.ms, new Date(2026, 7, 26, 13, 5, 0).getTime(), 'dateFormat:dmy指定でもYMD形式の値は自動判定にフォールバックして解釈されること');
+}
+
+// ── dateFormat未指定時の挙動が変化していないこと(後方互換) ──
+{
+  const sampleRow = { '検査日': '2026/08/26', '検査時刻': '13:05' };
+  const withoutFormat = previewScheduleDatetime(sampleRow, 'separate', '検査日', '検査時刻');
+  const withAutoFormat = previewScheduleDatetime(sampleRow, 'separate', '検査日', '検査時刻', 'auto');
+  assert.strictEqual(withoutFormat.ms, withAutoFormat.ms, 'dateFormat未指定と\'auto\'指定は同じ結果を返すこと(後方互換)');
+  assert.notStrictEqual(withoutFormat.ms, null);
+}
+
 console.log('Schedule datetime preview checks passed.');
