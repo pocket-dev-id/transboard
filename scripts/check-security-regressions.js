@@ -2764,5 +2764,24 @@ assert(!/Handover\b/.test(app), 'js/app.jsにHandoverオブジェクトへの参
 // 復活して備考が誤って隠れたままになる、あるいは参照するJS側だけ削除されて
 // 壊れたセレクタ参照が残る、といった不整合につながる
 assert(!/sel-remarks-mode/.test(indexHtml), 'index.htmlにsel-remarks-mode(備考表示トグル)が復活しています。備考は常時アイコン表示に固定されたはずです');
-assert(!/sel-remarks-mode|remarksMode/.test(bedmap), 'js/bedmap.jsにsel-remarks-mode/remarksModeへの参照が復活しています。備考は常時アイコン表示に固定されたはずです'
+assert(!/sel-remarks-mode|remarksMode/.test(bedmap), 'js/bedmap.jsにsel-remarks-mode/remarksModeへの参照が復活しています。備考は常時アイコン表示に固定されたはずです');
+
+// ── App.init(): 起動時デバッグログのshareMode未宣言バグの回帰防止 ──
+
+// このブロックはcfg_share_modeをshareMode変数として埋め込むが、以前は
+// init()内でローカルconst宣言せずに参照しており、ReferenceErrorでinit()
+// 全体が失敗していた(更新チェック・端末在席監視・初期化完了ログが一切
+// 実行されないまま、「アプリの起動に失敗しました」という原因不明のトースト
+// だけが出る不具合になっていた)
+assert(
+  (() => {
+    const idx = app.indexOf('起動時の設定サマリを診断ログへ記録');
+    const end = app.indexOf('.catch(() => {});', idx);
+    if (idx < 0 || end < idx) return false;
+    const block = app.slice(idx, end);
+    const declIdx = block.indexOf("const shareMode = localStorage.getItem('cfg_share_mode')");
+    const useIdx = block.indexOf('cfg_share_mode=${shareMode}');
+    return declIdx >= 0 && useIdx >= 0 && declIdx < useIdx;
+  })(),
+  "BUG: js/app.jsのinit()内、起動時デバッグログブロックでshareMode変数がローカル宣言される前に使われています(またはローカル宣言が消えています)。ReferenceErrorでinit()全体が失敗し、原因不明の「アプリの起動に失敗しました」トーストだけが出る不具合に戻ります"
 );
