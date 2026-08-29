@@ -156,6 +156,15 @@ Object.assign(Settings, {
       : window.electronAPI?.readCsvHeaders?.(folderPath, encoding);
   },
 
+  // 列マッピング設定が実データの1行をどう解釈するかをプレビューする。
+  // sampleRowは_readParentScheduleFeedHeadersで既に取得済みのものを渡す
+  // (ファイルの再読み込みは行わない)
+  _previewScheduleDatetime(sampleRow, mode, dateCol, timeCol) {
+    return this._isChildTerminal()
+      ? this._parentAction('schedule-feed-datetime-preview', { sampleRow, mode, dateCol, timeCol }, { timeoutMs: 10000 })
+      : window.electronAPI?.previewScheduleDatetime?.({ sampleRow, mode, dateCol, timeCol });
+  },
+
   async _renderImportSettings(body) {
     // マスタから設定レコードを取得
     const dirSetting = AppState.systemSettings?.find(s => s.id === 'import_directory') || { value: '' };
@@ -2011,14 +2020,29 @@ Object.assign(Settings, {
                 <p style="font-size:10px;color:#718096;margin:0 0 4px;line-height:1.45;">自動判定はBOM付きUTF-8／UTF-16とUTF-8を判定し、それ以外はShift_JISとして読み込みます。EUC-JPは明示的に選択してください。</p>
               </div>
               <div id="sched-headers-hint" style="display:none;margin-bottom:8px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;color:#1e40af;"></div>
+
+              <div style="margin-bottom:10px;">
+                <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:5px;">日付・時刻の形式</label>
+                <div style="display:flex;gap:16px;">
+                  <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+                    <input type="radio" name="sched-datetime-mode" id="sched-datetime-mode-separate" value="separate" checked>
+                    日付と時刻が別々の列
+                  </label>
+                  <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+                    <input type="radio" name="sched-datetime-mode" id="sched-datetime-mode-combined" value="combined">
+                    日付と時刻が1つの列にまとまっている
+                  </label>
+                </div>
+              </div>
+
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
-                  <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">日付列（または日時一括列）</label>
-                  <input type="text" id="sched-map-date" class="form-input sched-map-input" placeholder="例: 日付 / 検査日時" list="sched-headers-list">
+                  <label id="sched-map-date-label" style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">日付列</label>
+                  <input type="text" id="sched-map-date" class="form-input sched-map-input" placeholder="例: 日付（値の例: 2026-08-26）" list="sched-headers-list">
                 </div>
-                <div>
+                <div id="sched-map-time-wrap">
                   <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">時刻列 <span style="color:#94a3b8;font-weight:400;">（任意）</span></label>
-                  <input type="text" id="sched-map-time" class="form-input sched-map-input" placeholder="例: 時刻 / 開始時間" list="sched-headers-list">
+                  <input type="text" id="sched-map-time" class="form-input sched-map-input" placeholder="例: 時刻（値の例: 13:05）" list="sched-headers-list">
                 </div>
                 <div>
                   <label style="font-size:11px;color:#374151;font-weight:700;display:block;margin-bottom:3px;">タイトル・内容列 <span style="color:#dc2626;">*</span></label>
@@ -2034,8 +2058,11 @@ Object.assign(Settings, {
                 </div>
               </div>
               <datalist id="sched-headers-list"></datalist>
+
+              <div id="sched-datetime-preview" style="display:none;margin-top:8px;padding:8px 12px;border-radius:6px;font-size:12px;"></div>
+
               <p style="font-size:11px;color:#718096;margin:8px 0 0;">
-                列名はCSVのヘッダ行と完全一致させてください。日時が1列の場合は「日付列」に入力し、時刻列は空欄にしてください。
+                列名はCSVのヘッダ行と完全一致させてください。対応する日付形式の例: 2026-08-26 / 2026/08/26 13:05 / 08/26/2026 13:05:30（時刻の区切りは : ： . のいずれも可）
               </p>
             </div>
 
@@ -2177,6 +2204,66 @@ Object.assign(Settings, {
       }
     });
 
+    // 日付/時刻マッピングの表示を「別々の列」/「1つの列」モードに応じて切り替える
+    const schedDateLabel = body.querySelector('#sched-map-date-label');
+    const schedDateInput = body.querySelector('#sched-map-date');
+    const schedTimeWrap = body.querySelector('#sched-map-time-wrap');
+    const schedTimeInput = body.querySelector('#sched-map-time');
+    const schedPreviewBox = body.querySelector('#sched-datetime-preview');
+    const updateDatetimeModeUI = () => {
+      const combined = body.querySelector('#sched-datetime-mode-combined').checked;
+      schedTimeWrap.style.display = combined ? 'none' : '';
+      schedDateLabel.textContent = combined ? '日付+時刻列' : '日付列';
+      schedDateInput.placeholder = combined
+        ? '例: 検査日時（値の例: 2026/08/26 13:05）'
+        : '例: 日付（値の例: 2026-08-26）';
+    };
+
+    // 実データ(ヘッダ読み込み時に取得したサンプル行)での解釈プレビュー。
+    // 入力のたびに呼ぶと過剰になるため軽くデバウンスする
+    let schedPreviewTimer = null;
+    const updateDatetimePreview = () => {
+      clearTimeout(schedPreviewTimer);
+      schedPreviewTimer = setTimeout(async () => {
+        const sampleRow = this._schedFormSampleRow;
+        const mode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';
+        const dateCol = schedDateInput.value.trim();
+        const timeCol = schedTimeInput.value.trim();
+        if (!sampleRow || !dateCol || !Object.prototype.hasOwnProperty.call(sampleRow, dateCol)) {
+          schedPreviewBox.style.display = 'none';
+          return;
+        }
+        const rawVal = mode === 'combined'
+          ? sampleRow[dateCol]
+          : [sampleRow[dateCol], timeCol && sampleRow[timeCol] != null ? sampleRow[timeCol] : ''].filter(Boolean).join(' ');
+        try {
+          const result = await this._previewScheduleDatetime(sampleRow, mode, dateCol, timeCol);
+          schedPreviewBox.style.display = 'block';
+          if (result?.ms) {
+            schedPreviewBox.className = 'is-ok';
+            schedPreviewBox.innerHTML = `<i class="fas fa-check-circle"></i> サンプル行「${UI.escapeHTML(String(rawVal))}」→ <strong>${UI.escapeHTML(UI.formatDateTime(result.ms))}</strong> と解釈されます`;
+          } else {
+            schedPreviewBox.className = 'is-error';
+            schedPreviewBox.innerHTML = `<i class="fas fa-exclamation-triangle"></i> サンプル行「${UI.escapeHTML(String(rawVal))}」を日付として解釈できませんでした。列の指定や形式をご確認ください`;
+          }
+        } catch (e) {
+          schedPreviewBox.style.display = 'none';
+        }
+      }, 350);
+    };
+
+    body.querySelectorAll('input[name="sched-datetime-mode"]').forEach(radio => {
+      radio.addEventListener('change', () => { updateDatetimeModeUI(); updateDatetimePreview(); });
+    });
+    [schedDateInput, schedTimeInput].forEach(input => {
+      input.addEventListener('input', updateDatetimePreview);
+    });
+    // ヘッダ列名チップをクリックした際、直前にフォーカスしていたマッピング
+    // 入力欄へ自動入力するために使う
+    body.querySelectorAll('.sched-map-input').forEach(input => {
+      input.addEventListener('focus', () => { this._schedLastFocusedMapField = input; });
+    });
+
     // CSVヘッダ読み込み
     body.querySelector('#sched-btn-load-headers').addEventListener('click', async () => {
       const dir = body.querySelector('#sched-form-dir').value.trim();
@@ -2195,12 +2282,25 @@ Object.assign(Settings, {
           UI.toast(msg, 'warning');
           return;
         }
+        this._schedFormSampleRow = result.sampleRow || null;
         const datalist = body.querySelector('#sched-headers-list');
         datalist.innerHTML = result.headers.map(h => `<option value="${UI.escapeHTML(h)}">`).join('');
         const hint = body.querySelector('#sched-headers-hint');
         hint.style.display = 'block';
         const detectedEncoding = encodingLabels[result.encoding] || result.encoding || encodingLabels.auto;
-        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${UI.escapeHTML(result.filename)}</strong> を ${UI.escapeHTML(detectedEncoding)} で読み込みました: ${result.headers.map(h => `<code>${UI.escapeHTML(h)}</code>`).join(' / ')}`;
+        hint.innerHTML = `<i class="fas fa-check-circle"></i> <strong>${UI.escapeHTML(result.filename)}</strong> を ${UI.escapeHTML(detectedEncoding)} で読み込みました。列名をクリックすると、選択中の入力欄に自動入力されます:<br>` +
+          result.headers.map(h => `<button type="button" class="sched-header-chip" data-header="${UI.escapeHTML(h)}">${UI.escapeHTML(h)}</button>`).join('');
+        hint.querySelectorAll('.sched-header-chip').forEach(chip => {
+          chip.addEventListener('click', () => {
+            const target = this._schedLastFocusedMapField && body.contains(this._schedLastFocusedMapField)
+              ? this._schedLastFocusedMapField
+              : schedDateInput;
+            target.value = chip.dataset.header;
+            target.dispatchEvent(new Event('input'));
+            target.focus();
+          });
+        });
+        updateDatetimePreview();
       } catch (e) {
         UI.toast('CSVの読み込みに失敗しました: ' + e.message, 'danger');
       } finally {
@@ -2253,15 +2353,26 @@ Object.assign(Settings, {
       body.querySelector('#sched-form-times').value = (sched.times || []).join(',');
       updateModeCards();
 
-      // ヘッダヒントをリセット
+      // ヘッダヒント・サンプル行・解釈プレビューをリセット(サンプル行が
+      // 無い間はプレビューを計算できないため、開き直すたびに読み込みが必要)
       const hint = body.querySelector('#sched-headers-hint');
       if (hint) { hint.style.display = 'none'; hint.innerHTML = ''; }
       const datalist = body.querySelector('#sched-headers-list');
       if (datalist) datalist.innerHTML = '';
+      this._schedFormSampleRow = null;
+      this._schedLastFocusedMapField = null;
+      schedPreviewBox.style.display = 'none';
 
+      // 既存フィードの編集時: col_datetimeがあれば「1つの列」モード、col_timeが
+      // あれば「別々の列」モード、どちらも無い場合(旧データがcol_dateだけに
+      // 日時をまとめて入れていた場合を含む)は「1つの列」モードとして復元する。
+      // 新規作成時は常に「別々の列」を既定にする
       const m = feed?.mapping || {};
-      body.querySelector('#sched-map-date').value = m.col_date || m.col_datetime || '';
-      body.querySelector('#sched-map-time').value = m.col_time || '';
+      const isCombinedMode = feed ? (!!m.col_datetime || !m.col_time) : false;
+      body.querySelector(isCombinedMode ? '#sched-datetime-mode-combined' : '#sched-datetime-mode-separate').checked = true;
+      schedDateInput.value = m.col_datetime || m.col_date || '';
+      schedTimeInput.value = m.col_time || '';
+      updateDatetimeModeUI();
       body.querySelector('#sched-map-title').value = m.col_title || '';
       body.querySelector('#sched-map-id').value = m.col_id || '';
       body.querySelector('#sched-map-duration').value = m.col_duration_min || '';
@@ -2312,11 +2423,12 @@ Object.assign(Settings, {
       if (mode === 'interval') schedule.intervalMin = body.querySelector('#sched-form-interval').value;
       if (mode === 'time') schedule.times = body.querySelector('#sched-form-times').value.split(',').map(s => s.trim()).filter(Boolean);
 
-      const dateCol = body.querySelector('#sched-map-date').value.trim();
+      const datetimeMode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';
+      const dateFieldVal = body.querySelector('#sched-map-date').value.trim();
       const mapping = {
-        col_date: dateCol,
-        col_datetime: '',
-        col_time: body.querySelector('#sched-map-time').value.trim(),
+        col_date: datetimeMode === 'combined' ? '' : dateFieldVal,
+        col_datetime: datetimeMode === 'combined' ? dateFieldVal : '',
+        col_time: datetimeMode === 'combined' ? '' : body.querySelector('#sched-map-time').value.trim(),
         col_title: titleCol,
         col_id: body.querySelector('#sched-map-id').value.trim(),
         col_duration_min: body.querySelector('#sched-map-duration').value.trim(),

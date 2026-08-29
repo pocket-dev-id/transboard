@@ -142,6 +142,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 指定フォルダ内の最初のCSVのヘッダ行を読み取る
   readCsvHeaders: (folderPath, encoding = 'auto') => ipcRenderer.invoke('read-csv-headers', { folderPath, encoding }),
 
+  // 列マッピング設定が実データの1行をどう解釈するかをプレビューする
+  previewScheduleDatetime: (args) => ipcRenderer.invoke('preview-schedule-datetime', args),
+
   // スクリーンセイバー・ディスプレイスリープの抑制
   setPowerSave: (prevent) => ipcRenderer.invoke('set-power-save', prevent),
 

@@ -2097,14 +2097,40 @@ function readScheduleCsvHeaders(folderPath, requestedEncoding = 'auto', credenti
     assertCsvFileSize(firstFile);
     const buffer = fs.readFileSync(firstFile);
     const { text, encoding } = decodeScheduleCsvBuffer(buffer, requestedEncoding);
-    const firstLine = text.split(/\r?\n/)[0] || '';
+    const lines = text.split(/\r?\n/);
+    const firstLine = lines[0] || '';
     // カンマ区切りとタブ区切りを自動判定
     const sep = firstLine.includes('\t') ? '\t' : ',';
     const headers = firstLine.split(sep).map(h => h.replace(/^["']|["']$/g, '').trim()).filter(Boolean);
-    return { success: true, ok: true, headers, filename: files[0], encoding };
+    // 列マッピング設定画面で「この設定だと実際どう解釈されるか」をプレビュー
+    // できるよう、先頭データ行も{ヘッダ名: 値}の形で1件だけ返す。ファイルを
+    // 読み込み直さずに済むよう、この呼び出し1回でヘッダとサンプルの両方を賄う
+    const secondLine = lines[1] || '';
+    let sampleRow = null;
+    if (secondLine.trim()) {
+      const cells = secondLine.split(sep).map(c => c.replace(/^["']|["']$/g, '').trim());
+      sampleRow = {};
+      headers.forEach((h, i) => { sampleRow[h] = cells[i] != null ? cells[i] : ''; });
+    }
+    return { success: true, ok: true, headers, filename: files[0], encoding, sampleRow };
   } catch (e) {
     return { success: false, ok: false, reason: e.message };
   }
+}
+
+// 列マッピング設定画面のプレビュー専用。ファイル/SMBアクセスは行わず、
+// 既に取得済みのsampleRow(readScheduleCsvHeadersが返す先頭データ行)に対して
+// 既存のparseScheduleDatetimeMsをそのまま適用するだけの薄いラッパー。
+// dateColが未入力/sampleRowに無い場合は「まだ判定できない」であって
+// エラーではないため、ms: nullを返す(呼び出し元でプレビュー非表示に使う)
+function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol) {
+  if (!sampleRow || !dateCol || !Object.prototype.hasOwnProperty.call(sampleRow, dateCol)) {
+    return { success: true, ms: null };
+  }
+  const dateVal = sampleRow[dateCol];
+  const timeVal = mode === 'combined' ? null : (timeCol ? sampleRow[timeCol] : null);
+  const ms = parseScheduleDatetimeMs(dateVal, timeVal);
+  return { success: true, ms };
 }
 
 // CSV1件を読み込み・パースし、アイテム配列を組み立てるだけの純粋な処理。
@@ -5054,6 +5080,14 @@ handleTrusted('read-csv-headers', async (event, request) => {
   return readScheduleCsvHeaders(folderPath, encoding, credentials);
 });
 
+// 列マッピング設定画面で、その設定だと実際にどう解釈されるかをプレビューする。
+// ファイル/SMBアクセスを伴わない純粋計算(sampleRowは呼び出し元がread-csv-headers
+// で既に取得済みのものを渡す)のため、read-csv-headersのような監査ログは残さない
+handleTrusted('preview-schedule-datetime', async (event, request) => {
+  const { sampleRow, mode, dateCol, timeCol } = request || {};
+  return previewScheduleDatetime(sampleRow, mode, dateCol, timeCol);
+});
+
 // 開発/本番モード判定 (インフラ #4: 環境分離)
 handleTrusted('is-dev-mode', () => !app.isPackaged || process.env.NODE_ENV === 'development');
 
@@ -6539,6 +6573,10 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
         : { success: false, ok: false, reason: 'not_configured', message: '子機では監視フォルダを保存してからヘッダを読み込んでください。' };
       return appendParentActionAudit(action, result, requestMeta);
     }
+    case 'schedule-feed-datetime-preview':
+      // 入力のたびに高頻度で呼ばれる純粋計算(ファイルアクセス・副作用無し)のため、
+      // schedule-feed-headers等と異なり監査ログ(appendParentActionAudit)は残さない
+      return previewScheduleDatetime(payload?.sampleRow, payload?.mode, payload?.dateCol, payload?.timeCol);
     case 'save-schedule-feed-smb-password': {
       // フィード個別のSMBパスワードはsystem_settingsのフィード専用IDへ入るため、
       // 子機からは通常の書き込み経路(isWriteBlocked)で拒否される。ここを唯一の

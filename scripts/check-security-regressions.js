@@ -2921,3 +2921,57 @@ assert(
   })(),
   'BUG: js/modal.jsのopen()がhas-imported-scheduleクラスをimportedSchedule件数に応じて切り替えていません。スケジュールが無い病床でもモーダルが2カラムに広がってしまいます'
 );
+
+// ── スケジュール取込CSVの日時プレビュー機能(previewScheduleDatetime)の配線 ──
+
+// readScheduleCsvHeadersがsampleRowを返さなくなると、設定画面のプレビュー欄が
+// 常に非表示のまま(判定不能)になってしまう
+assert(
+  (() => {
+    const idx = main.indexOf('function readScheduleCsvHeaders(');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('sampleRow') &&
+      /return\s*\{\s*success:\s*true,\s*ok:\s*true,\s*headers,\s*filename:\s*files\[0\],\s*encoding,\s*sampleRow\s*\}/.test(body);
+  })(),
+  'BUG: main.jsのreadScheduleCsvHeadersがsampleRowを返していません。設定画面の日時プレビューが常に「判定不能」のままになります'
+);
+// IPCハンドラと子機用アクション分岐の両方が存在すること
+assert(
+  main.includes("handleTrusted('preview-schedule-datetime', async (event, request) => {"),
+  'BUG: main.jsにpreview-schedule-datetimeのIPCハンドラが見つかりません。親機での設定画面プレビューが機能しません'
+);
+assert(
+  main.includes("case 'schedule-feed-datetime-preview':"),
+  'BUG: main.jsに子機用アクション分岐schedule-feed-datetime-previewが見つかりません。子機での設定画面プレビューが機能しません'
+);
+// 高頻度呼び出し(入力のたびに走る純粋計算)のため、schedule-feed-headersとは
+// 異なりappendParentActionAuditを経由しない意図的な設計であることを確認する
+assert(
+  (() => {
+    const idx = main.indexOf("case 'schedule-feed-datetime-preview':");
+    const end = main.indexOf('case ', idx + 1);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('return previewScheduleDatetime(') && !body.includes('appendParentActionAudit(');
+  })(),
+  'BUG: main.jsのschedule-feed-datetime-previewがappendParentActionAuditを経由しています。高頻度の純粋計算のはずが、キー入力のたびに監査ログへ書き込んでしまいます'
+);
+
+// 保存ロジックがdatetimeModeに応じてcol_date/col_datetime/col_timeを正しく
+// 振り分けなくなると、「1つの列」モードで保存した設定が常にcol_dateへ入り、
+// 取り込み時にcol_datetimeを見るコード経路(main.jsのdtVal || dateVal)と
+// 噛み合わなくなる(実害は無いが、意図した列の使い分けが失われる)
+assert(
+  (() => {
+    const idx = importNotify.indexOf("const datetimeMode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';");
+    const end = importNotify.indexOf('};', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = importNotify.slice(idx, end);
+    return body.includes("col_date: datetimeMode === 'combined' ? '' : dateFieldVal") &&
+      body.includes("col_datetime: datetimeMode === 'combined' ? dateFieldVal : ''") &&
+      body.includes("col_time: datetimeMode === 'combined' ? '' : body.querySelector('#sched-map-time').value.trim()");
+  })(),
+  'BUG: js/settings/import-notify.jsの保存ロジックがdatetimeModeに応じてcol_date/col_datetime/col_timeを振り分けていません'
+);
