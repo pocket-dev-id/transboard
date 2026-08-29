@@ -453,6 +453,7 @@ const API = {
     return {
       events: requireDataArray(res, '検査室の進捗情報'),
       recentStatusLogs: Array.isArray(res?.recentStatusLogs) ? res.recentStatusLogs : [],
+      recentAnnouncements: Array.isArray(res?.recentAnnouncements) ? res.recentAnnouncements : [],
     };
   },
 

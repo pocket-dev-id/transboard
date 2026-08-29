@@ -976,17 +976,21 @@ async function main() {
   await CallPanel._sendChatMessage();
   assert.strictEqual(apiCalls.create.length, beforeEmpty, '空白のみのメッセージは送信しないこと');
 
-  // 同じ会話にアナウンス履歴を混ぜ、タイムラインが両者を区別して描画すること
+  // 同じ会話にアナウンス履歴を混ぜても、チャットのタイムラインには表示されないこと
+  // (アナウンス履歴は宛先の通知履歴パネル側に表示するため、チャット画面からは除外する)
   await CallPanel.recordChatMessage({
     fromId: 'ward-1', toId: 'room-1', kind: 'announce', body: '検査が終了しました。',
   });
   await CallPanel._loadChatMessages();
   const timelineHtml = documentMock.getElementById('chat-timeline').innerHTML;
-  assert.ok(timelineHtml.includes('患者の準備ができました'), 'チャット発言がタイムラインに出ること');
-  assert.ok(timelineHtml.includes('検査が終了しました。'), 'アナウンス履歴がタイムラインに出ること');
+  assert.ok(timelineHtml.includes('患者の準備ができました'), 'チャット発言はタイムラインに出ること');
   assert.ok(
-    timelineHtml.includes('chat-msg--announce'),
-    "BUG: アナウンス履歴はkind:'announce'として視覚的に区別されること"
+    !timelineHtml.includes('検査が終了しました。'),
+    'BUG: アナウンス履歴がチャットのタイムラインに表示されています(通知履歴パネル側だけに出すはずです)'
+  );
+  assert.ok(
+    !timelineHtml.includes('chat-msg--announce'),
+    'BUG: チャット側にアナウンス専用の描画が残っています(_loadChatMessagesでkind:announceを除外すること)'
   );
   assert.ok(
     timelineHtml.includes('chat-msg--mine'),

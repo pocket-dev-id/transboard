@@ -4141,7 +4141,17 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
             patient_name: event?.patient_name || null,
           };
         });
-      return { success: true, activeEvents, todayEvents, recentStatusLogs };
+      // この病棟宛に届いたアナウンス送信履歴(chat_messagesのkind:'announce')。
+      // 通知履歴パネルに状態変更ログと合わせて時系列表示するため、同じ形で用意する。
+      // 送信した分は「自分が言ったこと」であって通知ではないため、to_id一致(受信)のみ対象にする
+      const recentAnnouncements = wardId
+        ? (db.chat_messages || [])
+            .filter(m => m.kind === 'announce' && m.to_id === wardId &&
+              (!Number.isFinite(todayMs) || todayMs <= 0 || Number(m.created_at || 0) >= todayMs))
+            .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0))
+            .slice(0, 20)
+        : [];
+      return { success: true, activeEvents, todayEvents, recentStatusLogs, recentAnnouncements };
     }
 
     // 検査室一覧の件数集計専用。検査室は病棟横断で共有されるが、一覧表示に
@@ -4208,6 +4218,15 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
             patient_name: event?.patient_name || null,
           };
         });
+      // この検査室宛に届いたアナウンス送信履歴(chat_messagesのkind:'announce')。
+      // ward-statusと同じ考え方で、受信(to_id一致)分だけを通知履歴パネル向けに用意する
+      const recentAnnouncements = examRoomId
+        ? (db.chat_messages || [])
+            .filter(m => m.kind === 'announce' && m.to_id === examRoomId &&
+              (!Number.isFinite(todayMs) || todayMs <= 0 || Number(m.created_at || 0) >= todayMs))
+            .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0))
+            .slice(0, 20)
+        : [];
       return {
         success: true,
         data: activeEvents.map(event => ({
@@ -4215,6 +4234,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
           latest_status_log: latestLogByEventId.get(String(event.id)) || null,
         })),
         recentStatusLogs,
+        recentAnnouncements,
       };
     }
 

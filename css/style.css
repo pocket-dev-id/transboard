@@ -733,6 +733,10 @@ h1, h2, h3, h4,
 .notification-history-item.status-PICKUP_REQUIRED .notification-history-icon { color: #dc2626; }
 .notification-history-item.status-RETURNED { border-left-color: #16a34a; }
 .notification-history-item.status-RETURNED .notification-history-icon { color: #16a34a; }
+/* アナウンス受信履歴は病床の状態変更とは種類が違うため、色味で区別する */
+.notification-history-item--announce { border-left-color: #d97706; background: #fffbeb; }
+.notification-history-item--announce .notification-history-icon { color: #d97706; }
+.notification-history-item--announce .notification-history-status { background: #fde68a; color: #92400e; }
 
 .tl-row-patient--changed {
   color: #dc2626;
@@ -2050,8 +2054,6 @@ button.announcement-template-item:hover {
 .chat-msg { display: flex; flex-direction: column; max-width: 85%; }
 .chat-msg--mine { align-self: flex-end; align-items: flex-end; }
 .chat-msg--theirs { align-self: flex-start; align-items: flex-start; }
-/* アナウンス送信履歴は会話の発言ではないので、中央寄せのシステム行として区別する */
-.chat-msg--announce { align-self: stretch; max-width: 100%; align-items: center; }
 .chat-bubble {
   font-size: 12.5px;
   line-height: 1.35;
@@ -2069,20 +2071,6 @@ button.announcement-template-item:hover {
   background: #f1f5f9;
   color: #1e293b;
   border-bottom-left-radius: 3px;
-}
-.chat-announce-body {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  font-size: 12px;
-  font-style: italic;
-  color: #9a3412;
-  background: #fff7ed;
-  border: 1px dashed #fdba74;
-  border-radius: 8px;
-  padding: 6px 10px;
-  width: 100%;
-  word-break: break-word;
 }
 .chat-msg-meta {
   font-size: 9.5px;
