@@ -284,6 +284,14 @@ key-valueペアで管理。重要なキー一覧:
 | `smb_auth_mode` | string | `inherit`（既定・フィールド自体が無い場合も同じ） / `current` / `custom` |
 | `smb_username` | string | `smb_auth_mode` が `custom` のときのユーザー名（機密ではない） |
 
+**取り込まれる`schedule_items`の`has_time`**: CSV行に`mapping.col_time`（または`col_datetime`）の
+実際の時刻表記が無い場合、`start_ms`はその日の00:00として扱われるが、これは「実際に0:00の予定」
+なのか「時刻情報が無い」のかを区別できない。パース時に元の文字列へ実際に時刻表記が
+含まれていたかを判定し、`has_time`（boolean）としてitemに残す。`has_time === false`の
+アイテムはタイムラインの時間軸(帯グラフ)には乗せず、「時間未定のスケジュール」という
+専用セクションに一覧表示される。旧データ(このフィールドが無い)は`has_time !== false`として
+時刻ありと同じ扱いになる。
+
 **SMB認証情報の扱い**: UNCパスの監視フォルダに接続するための資格情報は、
 `smb_auth_mode` で「共通設定（`system_settings` の `smb_auth_mode` /
 `smb_username` / `smb_password`）を継承する」か「フィード個別に指定する」かを選ぶ。

@@ -345,7 +345,7 @@ const Timeline = {
   },
 
   _bindScheduleClickHandlers(container) {
-    container.querySelectorAll('.tl-sched-bar[data-sched-id]').forEach(bar => {
+    container.querySelectorAll('.tl-sched-bar[data-sched-id], .tl-untimed-chip[data-sched-id]').forEach(bar => {
       bar.addEventListener('click', evt => {
         evt.stopPropagation();
         TimelineContextMenu.hide();
@@ -473,11 +473,21 @@ const Timeline = {
     const toPercent = ms => Math.max(0, Math.min(100, (ms - winStart) / winMs * 100));
     const now = Date.now(), nowPct = toPercent(now);
 
+    // ── 時刻の有無で分割 ──
+    // CSV取込時に時刻列が無い/空だった予定(has_time===false)は「実際の予定時刻」
+    // ではなくデフォルト値の00:00でstart_msが埋まっているため、時間軸の帯グラフに
+    // 乗せると常にウィンドウ外(下記_schedBarHtml)になり、ラベルだけの空の行として
+    // 表示されてしまう。時間軸には時刻ありの予定だけを流し、時刻未定の予定は
+    // 専用セクション(後述)へ分離する。has_timeが無い(旧データ)場合は従来通り
+    // 時刻ありとして扱う
+    const timedItems = schedItems.filter(item => item.has_time !== false);
+    const untimedItems = schedItems.filter(item => item.has_time === false);
+
     // ── 患者ID連携: schedItems を病床行に紐付ける ──
     // bed.patient_id と item.identifier が一致するものを病床行に表示する
     const bedScheduleMap = {}; // bed_id → item[]
     const unlinkedSchedItems = [];
-    schedItems.forEach(item => {
+    timedItems.forEach(item => {
       if (item.identifier) {
         // 病床マップ(js/bedmap.js)は病床一覧自体が現在病棟で絞り込み済みのため、
         // 他病棟の患者に予定が紐付くことは構造的にあり得ない。ここも同様に
@@ -512,6 +522,11 @@ const Timeline = {
         ${width > 4 ? UI.escapeHTML(item.title.length > 14 ? item.title.slice(0,14)+'…' : item.title) : ''}
       </div>`;
     };
+    // 時刻ありの予定でも、実際の時刻が現在の表示ウィンドウの外(固定08-20時
+    // モードでの早朝/夜間の検査等)だと、_schedBarHtmlが1件も描画されず
+    // ラベルだけの空の行になってしまう。行を描画する前にこれを判定し、
+    // 該当行ごとスキップする(「よくわからない行」の再発防止)
+    const _hasVisibleItem = items => items.some(item => item.start_ms >= winStart && item.start_ms <= winEnd);
 
     // ── HTML構築 ──
     const nowBar = now >= winStart && now <= winEnd
@@ -552,7 +567,7 @@ const Timeline = {
           </div>
         </div>`;
         // 連携スケジュールを同行のサブトラックに表示
-        if (linkedItems.length > 0) {
+        if (linkedItems.length > 0 && _hasVisibleItem(linkedItems)) {
           html += `<div class="tl-row tl-row-sched-sub">
             <div class="tl-row-label" style="font-size:9px;color:#7c3aed;text-align:right;padding-right:4px;">📅</div>
             <div class="tl-row-track" style="position:relative;height:26px;background:rgba(124,58,237,0.04);border-top:none;">
@@ -565,7 +580,8 @@ const Timeline = {
 
     // 病床にスケジュールが紐付いているが移送イベントがない場合（在床中の予定）
     const transferBedIds = new Set(filtered.map(e => e.bed_id));
-    const bedOnlySchedBeds = Object.keys(bedScheduleMap).filter(bedId => !transferBedIds.has(bedId));
+    const bedOnlySchedBeds = Object.keys(bedScheduleMap)
+      .filter(bedId => !transferBedIds.has(bedId) && _hasVisibleItem(bedScheduleMap[bedId]));
     if (bedOnlySchedBeds.length > 0) {
       html += `<div class="tl-section-label"><div class="tl-row-label" style="font-size:10px;font-weight:700;color:#7c3aed;text-align:right;">在床スケジュール</div><div class="tl-row-track" style="background:transparent;"></div></div>`;
       bedOnlySchedBeds.forEach(bedId => {
@@ -581,21 +597,57 @@ const Timeline = {
     }
 
     // 患者ID未一致のスケジュール行（フィード別グループ）
+    let hasVisibleUnlinkedGroup = false;
     if (unlinkedSchedItems.length > 0) {
-      if (filtered.length > 0 || bedOnlySchedBeds.length > 0) html += `<div style="height:6px;min-width:900px;"></div>`;
       const feedGroups = {};
       unlinkedSchedItems.forEach(item => {
         const k = item.feed_id || 'unknown';
         if (!feedGroups[k]) feedGroups[k] = { name: item.feed_name || k, color: item.color || '#7c3aed', items: [] };
         feedGroups[k].items.push(item);
       });
-      Object.values(feedGroups).forEach(g => {
+      const visibleGroups = Object.values(feedGroups).filter(g => _hasVisibleItem(g.items));
+      hasVisibleUnlinkedGroup = visibleGroups.length > 0;
+      if (hasVisibleUnlinkedGroup && (filtered.length > 0 || bedOnlySchedBeds.length > 0)) {
+        html += `<div style="height:6px;min-width:900px;"></div>`;
+      }
+      visibleGroups.forEach(g => {
         html += `<div class="tl-section-label"><div class="tl-row-label" style="font-size:10px;font-weight:700;color:${UI.escapeHTML(g.color)};text-align:right;">${UI.escapeHTML(g.name)}</div><div class="tl-row-track" style="background:transparent;"></div></div>
         <div class="tl-row">
           <div class="tl-row-label"></div>
           <div class="tl-row-track" style="position:relative;height:30px;">`;
         g.items.forEach(item => {
           html += _schedBarHtml(item, g.color);
+        });
+        html += `</div></div>`;
+      });
+    }
+
+    // 時刻未定のスケジュール（時間軸には乗せず、専用セクションにチップとして
+    // 一覧表示する。患者IDが在室中の病床と一致する場合はその病床名も添える）
+    if (untimedItems.length > 0) {
+      if (filtered.length > 0 || bedOnlySchedBeds.length > 0 || hasVisibleUnlinkedGroup) {
+        html += `<div style="height:6px;min-width:900px;"></div>`;
+      }
+      const untimedGroups = {};
+      untimedItems.forEach(item => {
+        const k = item.feed_id || 'unknown';
+        if (!untimedGroups[k]) untimedGroups[k] = { name: item.feed_name || k, color: item.color || '#7c3aed', items: [] };
+        untimedGroups[k].items.push(item);
+      });
+      html += `<div class="tl-section-label"><div class="tl-row-label" style="font-size:10px;font-weight:700;color:#94a3b8;text-align:right;">時間未定のスケジュール</div><div class="tl-row-track" style="background:transparent;"></div></div>`;
+      Object.values(untimedGroups).forEach(g => {
+        html += `<div class="tl-row tl-row-untimed">
+          <div class="tl-row-label" style="font-size:10px;font-weight:700;color:${UI.escapeHTML(g.color)};text-align:right;">${UI.escapeHTML(g.name)}</div>
+          <div class="tl-row-track tl-untimed-track">`;
+        g.items.forEach(item => {
+          const matchBed = item.identifier ? AppState.beds.find(b =>
+            b.ward_id === AppState.currentWardId && b.patient_id && b.patient_id.trim() === item.identifier.trim()
+          ) : null;
+          const bedLabel = matchBed ? `${UI.formatBedNamePlain(matchBed)}号床 ` : '';
+          html += `<div class="tl-untimed-chip" data-sched-id="${UI.escapeHTML(item.id)}" style="border-color:${UI.escapeHTML(g.color)};color:${UI.escapeHTML(g.color)};"
+            title="${UI.escapeHTML(item.title)}${item.identifier ? ' [' + UI.escapeHTML(item.identifier) + ']' : ''}">
+            ${bedLabel ? `<strong>${UI.escapeHTML(bedLabel)}</strong>` : ''}${UI.escapeHTML(item.title)}
+          </div>`;
         });
         html += `</div></div>`;
       });

@@ -73,6 +73,13 @@ const BedModal = {
     const allowsManualAdmission = admMode === 'hybrid';
 
     const modal = document.getElementById('bed-modal');
+    const schedulePanel = document.getElementById('bed-modal-schedule-panel');
+    const importedSchedule = this._getImportedScheduleForBed(bed);
+    modal.classList.toggle('has-imported-schedule', importedSchedule.length > 0);
+    if (schedulePanel) {
+      schedulePanel.hidden = importedSchedule.length === 0;
+      schedulePanel.innerHTML = this._renderSchedulePanel(importedSchedule);
+    }
     if (event) {
       body.innerHTML = this._renderEventDetail(bed, event) + this._renderBedHistorySection(bedId);
       footer.innerHTML = this._renderActionButtons(event, allowsManualAdmission);
@@ -1288,6 +1295,62 @@ const BedModal = {
         }
       });
     });
+  },
+
+  // この病床の患者に紐づく取り込みスケジュールを全件返す(病床マップの
+  // BedMap._getTodaySchedulesForBed()と同じ一致条件だが、あちらはカード表示
+  // 用に「フィードごとに1件」へ絞り込むのに対し、こちらは詳細確認用に全件
+  // 返す。show_on_bed_mapは病床マップカードの表示可否専用の設定なのでここでは見ない)
+  _getImportedScheduleForBed(bed) {
+    const patientId = String(bed?.patient_id || '').trim();
+    if (!patientId) return [];
+
+    const wardId = AppState.currentWardId;
+    const feedsById = new Map(
+      (AppState.scheduleFeeds || []).map(feed => [String(feed.id), feed])
+    );
+
+    return (AppState.scheduleItems || []).filter(item => {
+      if (String(item?.identifier || '').trim() !== patientId) return false;
+      const feedId = item?.feed_id == null ? '' : String(item.feed_id);
+      const feed = feedId ? feedsById.get(feedId) : null;
+      if (feedId && !feed) return false;
+      if (feed?.is_active === false) return false;
+      const wardIds = Array.isArray(feed?.ward_ids)
+        ? feed.ward_ids
+        : (Array.isArray(item?.ward_ids) ? item.ward_ids : []);
+      if (wardIds.length > 0 && wardId && !wardIds.includes(wardId)) return false;
+      return true;
+    }).sort((a, b) => {
+      // 時刻ありを先に開始時刻の昇順で、時刻未定は末尾にまとめる
+      const aHasTime = a.has_time !== false;
+      const bHasTime = b.has_time !== false;
+      if (aHasTime !== bHasTime) return aHasTime ? -1 : 1;
+      return Number(a.start_ms || 0) - Number(b.start_ms || 0);
+    });
+  },
+
+  _renderSchedulePanel(items) {
+    if (items.length === 0) return '';
+    return `
+      <div class="bed-modal-schedule-header"><i class="fas fa-calendar-alt"></i> 取り込みスケジュール</div>
+      <div class="bed-modal-schedule-list">
+        ${items.map(item => this._renderScheduleItem(item)).join('')}
+      </div>`;
+  },
+
+  _renderScheduleItem(item) {
+    const hasTime = item.has_time !== false;
+    const timeLabel = hasTime ? UI.formatTime(item.start_ms) : '時間未定';
+    const color = /^#[0-9a-f]{6}$/i.test(String(item?.color || '')) ? item.color : '#7c3aed';
+    return `
+      <div class="bed-modal-schedule-item" style="border-left-color:${UI.escapeHTML(color)};">
+        <div class="bed-modal-schedule-time${hasTime ? '' : ' bed-modal-schedule-time--unset'}">${UI.escapeHTML(timeLabel)}</div>
+        <div class="bed-modal-schedule-body">
+          <div class="bed-modal-schedule-title">${UI.escapeHTML(item.title || '（タイトルなし）')}</div>
+          <div class="bed-modal-schedule-feed" style="color:${UI.escapeHTML(color)};">${UI.escapeHTML(item.feed_name || '')}</div>
+        </div>
+      </div>`;
   },
 };
 

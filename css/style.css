@@ -1008,6 +1008,35 @@ h1, h2, h3, h4,
   border-radius: 0 0 4px 4px;
 }
 
+/* 時刻未定のスケジュール(実際の予定時刻が無いCSV取込アイテム)。時間軸には
+   乗せず、チップを折り返し表示するだけの行にする */
+.tl-row-untimed { align-items: flex-start; }
+.tl-untimed-track {
+  height: auto;
+  min-height: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.tl-untimed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 3px 8px;
+  border: 1px solid;
+  border-radius: 12px;
+  background: var(--clr-surface);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
 /* セクションラベル行 */
 .tl-section-label {
   display: flex;
@@ -1296,6 +1325,91 @@ h1, h2, h3, h4,
 }
 .modal-close-btn:hover { background: #f1f5f9; color: var(--clr-text); }
 .modal-body { padding: 20px; }
+
+/* 病床詳細モーダル: 取り込みスケジュールがある患者だけ、右側に一覧パネルを
+   追加した2カラムレイアウトに拡張する(通常時は従来どおり単一カラム)。
+   ヘッダ/フッタは全幅のまま固定し、本体2カラムだけがそれぞれ独立スクロールする */
+#bed-modal.has-imported-schedule {
+  width: 900px;
+  max-width: 96vw;
+  height: min(88vh, 760px);
+  max-height: none;
+  display: grid;
+  grid-template-columns: 560px minmax(260px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+#bed-modal.has-imported-schedule .modal-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  position: static;
+}
+#bed-modal.has-imported-schedule .modal-body {
+  grid-column: 1;
+  grid-row: 2;
+  overflow-y: auto;
+  min-height: 0;
+}
+#bed-modal.has-imported-schedule .modal-footer {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  position: static;
+}
+.bed-modal-schedule-panel {
+  grid-column: 2;
+  grid-row: 2;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 20px;
+  border-left: 1px solid var(--clr-border);
+  background: #f8fafc;
+}
+.bed-modal-schedule-panel[hidden] { display: none; }
+.bed-modal-schedule-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--clr-text);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bed-modal-schedule-header i { color: var(--clr-primary); }
+.bed-modal-schedule-list { display: flex; flex-direction: column; gap: 8px; }
+.bed-modal-schedule-item {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-left: 3px solid #7c3aed;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.bed-modal-schedule-time {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--clr-text);
+}
+.bed-modal-schedule-time--unset { color: var(--clr-text-muted); font-weight: 700; }
+.bed-modal-schedule-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-top: 2px;
+  word-break: break-word;
+}
+.bed-modal-schedule-feed { font-size: 10.5px; font-weight: 700; margin-top: 2px; }
+@media (max-width: 900px) {
+  /* 画面幅が狭い場合は2カラムを維持せず、スケジュール欄を本体の下に縦積みする */
+  #bed-modal.has-imported-schedule {
+    width: 560px;
+    height: auto;
+    max-height: 90vh;
+    overflow-y: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  #bed-modal.has-imported-schedule .modal-body { grid-column: 1; overflow-y: visible; }
+  .bed-modal-schedule-panel { grid-column: 1; border-left: none; border-top: 1px solid var(--clr-border); overflow-y: visible; }
+}
 
 /* ---------- 確認ダイアログ（デザイン#5） ---------- */
 /* 確認ダイアログは常に一時的な最前面要素。phone-dialog(500)より上、パスコード(9999)より下 */
