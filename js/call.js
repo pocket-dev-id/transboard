@@ -309,19 +309,6 @@ const CallPanel = {
 
     el.innerHTML = this._chatMessages.map(m => {
       const time = UI.formatTimeSmart(m.created_at);
-      // アナウンス送信履歴は会話の発言ではなく「この相手へ何を伝えたか」の記録なので、
-      // 左右の吹き出しではなく中央寄せのシステム行として区別できるようにする
-      if (m.kind === 'announce') {
-        return `
-          <div class="chat-msg chat-msg--announce">
-            <div class="chat-announce-body">
-              <i class="fas fa-bullhorn" aria-hidden="true"></i>
-              <span>${UI.escapeHTML(m.body)}</span>
-            </div>
-            <div class="chat-msg-meta">${UI.escapeHTML(m.from_name)} がアナウンス送信 / ${time}</div>
-          </div>
-        `;
-      }
       const mine = String(m.from_id) === String(myId);
       return `
         <div class="chat-msg ${mine ? 'chat-msg--mine' : 'chat-msg--theirs'}">
@@ -344,7 +331,9 @@ const CallPanel = {
       const list = await API.getChatMessages(key);
       // 取得中に会話を閉じた/切り替えた場合は古い応答を捨てる
       if (!this._chatPeerId || key !== UI.conversationKey(this.getMyId(), this._chatPeerId)) return;
-      this._chatMessages = list;
+      // アナウンス送信履歴(kind:'announce')は通知履歴パネル側に表示するため、
+      // チャットのタイムラインには表示しない(記録自体はchat_messagesに残したままにする)
+      this._chatMessages = list.filter(m => m.kind !== 'announce');
       this._renderChatTimeline();
     } catch (e) {
       console.warn('[Chat] 履歴の取得に失敗しました:', e);

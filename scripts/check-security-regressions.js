@@ -257,7 +257,7 @@ assert(
   app.includes("localStorage.getItem('cfg_terminal_role') === 'exam'") &&
   app.includes("document.body.classList.toggle('exam-terminal-mode', exam)") &&
   app.includes("API.getWardStatusEvents(wardId, todayMs)") &&
-  app.includes("Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [] })") &&
+  app.includes("Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [], recentAnnouncements: [] })") &&
   api.includes("'X-Terminal-Role': terminalRole") &&
   terminalAccess.includes("name=\"terminal-role\"") &&
   wizard.includes("name=\"terminal_role\"") &&
@@ -2784,4 +2784,82 @@ assert(
     return declIdx >= 0 && useIdx >= 0 && declIdx < useIdx;
   })(),
   "BUG: js/app.jsのinit()内、起動時デバッグログブロックでshareMode変数がローカル宣言される前に使われています(またはローカル宣言が消えています)。ReferenceErrorでinit()全体が失敗し、原因不明の「アプリの起動に失敗しました」トーストだけが出る不具合に戻ります"
+);
+
+// ── アナウンス受信履歴は通知履歴パネル側に表示し、チャット画面には表示しないこと ──
+
+// ward-status/exam-room-statusがrecentAnnouncementsを返さなくなると、通知履歴
+// パネルに何もアナウンスが出なくなる。to_id一致(受信)だけを対象にすることも保証する
+assert(
+  (() => {
+    const idx = main.indexOf("id === 'ward-status'");
+    const end = main.indexOf("\n    }", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes("m.kind === 'announce' && m.to_id === wardId") &&
+      body.includes('recentAnnouncements');
+  })(),
+  'BUG: ward-statusエンドポイントがrecentAnnouncements(この病棟宛のアナウンス受信履歴)を返していません。通知履歴パネルにアナウンスが表示されなくなります'
+);
+assert(
+  (() => {
+    const idx = main.indexOf("id === 'exam-room-status'");
+    const end = main.indexOf("\n    }", idx);
+    if (idx < 0 || end < idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes("m.kind === 'announce' && m.to_id === examRoomId") &&
+      body.includes('recentAnnouncements');
+  })(),
+  'BUG: exam-room-statusエンドポイントがrecentAnnouncements(この検査室宛のアナウンス受信履歴)を返していません。通知履歴パネルにアナウンスが表示されなくなります'
+);
+
+// クライアント側の受け皿(AppState)が無いと、サーバーが返してもどこにも保存されず
+// NotificationHistory.render()から参照できない
+assert(
+  /recentAnnouncements:\s*\[\]/.test(fs.readFileSync(path.join(root, 'js/state.js'), 'utf8')),
+  'js/state.jsにAppState.recentAnnouncementsの初期値がありません'
+);
+assert(
+  app.includes('AppState.recentAnnouncements = eventStatus.recentAnnouncements || [];'),
+  'BUG: js/app.jsがeventStatus.recentAnnouncementsをAppState.recentAnnouncementsへ反映していません'
+);
+assert(
+  (() => {
+    const idx = app.indexOf('_dashboardDataSignature() {');
+    const end = app.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    return app.slice(idx, end).includes('AppState.recentAnnouncements');
+  })(),
+  '_dashboardDataSignatureにAppState.recentAnnouncementsが含まれていません。アナウンス受信だけが増えても通知履歴パネルが再描画されない可能性があります'
+);
+
+// 病棟ダッシュボードの通知履歴パネル(js/priority.js)がアナウンスを状態変更通知と
+// 統合表示すること。マージ処理・専用の描画関数のどちらかが失われても検知する
+assert(
+  priority.includes('AppState.recentAnnouncements') &&
+    priority.includes('_renderAnnounceItem') &&
+    priority.includes('notification-history-item--announce'),
+  'BUG: js/priority.jsのNotificationHistoryがAppState.recentAnnouncementsを通知履歴パネルに描画していません'
+);
+
+// 検査室端末側の通知履歴パネル(js/examroom.js)にも同様の統合表示が必要
+assert(
+  (() => {
+    const examroom = fs.readFileSync(path.join(root, 'js/examroom.js'), 'utf8');
+    return examroom.includes('(this._notificationHistoryAnnouncements || [])') &&
+      examroom.includes('_renderAnnounceHistoryItem') &&
+      examroom.includes('notification-history-item--announce');
+  })(),
+  'BUG: js/examroom.jsの検査室側通知履歴パネルがアナウンス受信履歴を描画していません'
+);
+
+// チャットのタイムラインからアナウンス履歴を除外すること(通知履歴パネル側だけに
+// 表示する設計のため、_loadChatMessagesで確実にフィルタしておく)
+assert(
+  call.includes("this._chatMessages = list.filter(m => m.kind !== 'announce');"),
+  "BUG: js/call.jsの_loadChatMessagesがkind:'announce'をチャットのタイムラインから除外していません。アナウンス履歴が通知履歴パネルとチャット画面の両方に二重表示されます"
+);
+assert(
+  !/chat-msg--announce|chat-announce-body/.test(call),
+  'BUG: js/call.jsにチャット側のアナウンス専用描画(chat-msg--announce/chat-announce-body)が復活しています。通知履歴パネル側だけに表示する設計のはずです'
 );

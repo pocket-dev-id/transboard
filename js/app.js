@@ -1961,7 +1961,7 @@ const App = {
       const isExamTerminal = this.isExamTerminal();
       const [eventResult, settingsResult, feedsResult, itemsResult] = await Promise.allSettled([
         isExamTerminal
-          ? Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [] })
+          ? Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [], recentAnnouncements: [] })
           : API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data),
         API.getScheduleFeeds(),
@@ -1994,6 +1994,7 @@ const App = {
       AppState.activeEvents = eventStatus.activeEvents || [];
       AppState.todayEvents = eventStatus.todayEvents || [];
       AppState.recentStatusLogs = eventStatus.recentStatusLogs || [];
+      AppState.recentAnnouncements = eventStatus.recentAnnouncements || [];
       AppState.systemSettings = systemSettings;
       AppState.scheduleFeeds = scheduleFeeds || [];
       AppState.scheduleItems = scheduleItems || [];
@@ -2082,6 +2083,7 @@ const App = {
         AppState.activeEvents,
         AppState.todayEvents,
         AppState.recentStatusLogs,
+        AppState.recentAnnouncements,
         AppState.systemSettings,
         AppState.scheduleItems,
       ]);

@@ -39,6 +39,9 @@ const AppState = {
   // 病棟ダッシュボードの通知履歴（当日分＋継続中イベントの直近分）
   recentStatusLogs: [],
 
+  // 通知履歴に混ぜて表示する、この病棟が受信したアナウンス送信履歴
+  recentAnnouncements: [],
+
   // 通話状態
   callState: {
     active: false,
