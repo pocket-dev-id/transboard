@@ -827,7 +827,7 @@ assert(
 // 秒も任意で拾えることを保証する(hh.mm.ss形式のみ通せなくなる退行を防ぐ)
 assert(
   (() => {
-    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr) {');
+    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr, format) {');
     if (idx < 0) return false;
     const constIdx = main.indexOf('const SCHEDULE_TIME_RE_SRC');
     if (constIdx < 0 || constIdx > idx) return false;
@@ -861,14 +861,19 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr) {');
+    // parseScheduleDatetimeMs自体は3つのtry*ヘルパー(tryParseScheduleDatetimeYmd/
+    // Mdy/Dmy)を呼ぶだけの薄い関数になったため、buildValidatedScheduleDateMsは
+    // ヘルパー側で呼ばれる。ヘルパー定義(tryParseScheduleDatetimeYmdの開始)から
+    // parseScheduleDatetimeMs自身の終端まで広く見て、経路全体を検証する
+    const startIdx = main.indexOf('function tryParseScheduleDatetimeYmd(combined) {');
+    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr, format) {');
     const end = main.indexOf('\n}', idx);
-    if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    if (startIdx < 0 || idx < 0 || end < idx) return false;
+    const body = main.slice(startIdx, end);
     return !body.includes('new Date(combined)') &&
       body.includes('buildValidatedScheduleDateMs(');
   })(),
-  'parseScheduleDatetimeMs must not trust a bare `new Date(combined)` parse of the raw CSV string (V8 silently rolls a day-of-month overflow like "2026-02-31" into a valid-looking "2026-03-03"); it must route every match through buildValidatedScheduleDateMs instead'
+  'parseScheduleDatetimeMs (and its tryParseScheduleDatetimeYmd/Mdy/Dmy helpers) must not trust a bare `new Date(combined)` parse of the raw CSV string (V8 silently rolls a day-of-month overflow like "2026-02-31" into a valid-looking "2026-03-03"); every match must route through buildValidatedScheduleDateMs instead'
 );
 
 // インストーラをspawnした直後に固定時間(setTimeout)でapp.quit()すると、
@@ -2920,4 +2925,112 @@ assert(
     return body.includes("modal.classList.toggle('has-imported-schedule', importedSchedule.length > 0)");
   })(),
   'BUG: js/modal.jsのopen()がhas-imported-scheduleクラスをimportedSchedule件数に応じて切り替えていません。スケジュールが無い病床でもモーダルが2カラムに広がってしまいます'
+);
+
+// ── スケジュール取込CSVの日時プレビュー機能(previewScheduleDatetime)の配線 ──
+
+// readScheduleCsvHeadersがsampleRowを返さなくなると、設定画面のプレビュー欄が
+// 常に非表示のまま(判定不能)になってしまう
+assert(
+  (() => {
+    const idx = main.indexOf('function readScheduleCsvHeaders(');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('sampleRow') &&
+      /return\s*\{\s*success:\s*true,\s*ok:\s*true,\s*headers,\s*filename:\s*files\[0\],\s*encoding,\s*sampleRow\s*\}/.test(body);
+  })(),
+  'BUG: main.jsのreadScheduleCsvHeadersがsampleRowを返していません。設定画面の日時プレビューが常に「判定不能」のままになります'
+);
+// IPCハンドラと子機用アクション分岐の両方が存在すること
+assert(
+  main.includes("handleTrusted('preview-schedule-datetime', async (event, request) => {"),
+  'BUG: main.jsにpreview-schedule-datetimeのIPCハンドラが見つかりません。親機での設定画面プレビューが機能しません'
+);
+assert(
+  main.includes("case 'schedule-feed-datetime-preview':"),
+  'BUG: main.jsに子機用アクション分岐schedule-feed-datetime-previewが見つかりません。子機での設定画面プレビューが機能しません'
+);
+// 高頻度呼び出し(入力のたびに走る純粋計算)のため、schedule-feed-headersとは
+// 異なりappendParentActionAuditを経由しない意図的な設計であることを確認する
+assert(
+  (() => {
+    const idx = main.indexOf("case 'schedule-feed-datetime-preview':");
+    const end = main.indexOf('case ', idx + 1);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('return previewScheduleDatetime(') && !body.includes('appendParentActionAudit(');
+  })(),
+  'BUG: main.jsのschedule-feed-datetime-previewがappendParentActionAuditを経由しています。高頻度の純粋計算のはずが、キー入力のたびに監査ログへ書き込んでしまいます'
+);
+
+// 保存ロジックがdatetimeModeに応じてcol_date/col_datetime/col_timeを正しく
+// 振り分けなくなると、「1つの列」モードで保存した設定が常にcol_dateへ入り、
+// 取り込み時にcol_datetimeを見るコード経路(main.jsのdtVal || dateVal)と
+// 噛み合わなくなる(実害は無いが、意図した列の使い分けが失われる)
+assert(
+  (() => {
+    const idx = importNotify.indexOf("const datetimeMode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';");
+    const end = importNotify.indexOf('};', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = importNotify.slice(idx, end);
+    return body.includes("col_date: datetimeMode === 'combined' ? '' : dateFieldVal") &&
+      body.includes("col_datetime: datetimeMode === 'combined' ? dateFieldVal : ''") &&
+      body.includes("col_time: datetimeMode === 'combined' ? '' : body.querySelector('#sched-map-time').value.trim()");
+  })(),
+  'BUG: js/settings/import-notify.jsの保存ロジックがdatetimeModeに応じてcol_date/col_datetime/col_timeを振り分けていません'
+);
+
+// ── 日付フォーマットの明示指定(date_format)機能の配線 ──
+
+// previewScheduleDatetimeがdateFormatを受け取ってparseScheduleDatetimeMsへ
+// 伝播しなくなると、設定画面で「日付の値の形式」を明示指定してもプレビューに
+// 反映されず、実際の取り込み結果と食い違って見える
+assert(
+  (() => {
+    const idx = main.indexOf('function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat) {');
+    const end = main.indexOf('\n}', idx);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('parseScheduleDatetimeMs(dateVal, timeVal, dateFormat)');
+  })(),
+  'BUG: main.jsのpreviewScheduleDatetimeがdateFormatをparseScheduleDatetimeMsへ渡していません'
+);
+
+// parseScheduleFeedCsvFile(実際の取り込み処理)がfeed.mapping.date_formatを
+// 見なくなると、設定画面でフォーマットを明示指定しても実取り込み時には
+// 無視され、自動判定のみで処理されてしまう(プレビューとの結果不一致)
+assert(
+  (() => {
+    const idx = main.indexOf('function parseScheduleFeedCsvFile(filePath, feed) {');
+    const end = main.indexOf('function ', idx + 1);
+    if (idx < 0 || end < 0 || end <= idx) return false;
+    const body = main.slice(idx, end);
+    return body.includes('parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal, mapping.date_format)');
+  })(),
+  'BUG: main.jsのparseScheduleFeedCsvFileがfeed.mapping.date_formatをparseScheduleDatetimeMsへ渡していません'
+);
+
+// IPCハンドラ・子機用アクション分岐の両方がdateFormatを転送していること
+assert(
+  main.includes('const { sampleRow, mode, dateCol, timeCol, dateFormat } = request || {};') &&
+    main.includes('return previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat);'),
+  'BUG: main.jsのpreview-schedule-datetime IPCハンドラがdateFormatを転送していません'
+);
+assert(
+  main.includes('return previewScheduleDatetime(payload?.sampleRow, payload?.mode, payload?.dateCol, payload?.timeCol, payload?.dateFormat);'),
+  'BUG: main.jsのschedule-feed-datetime-preview子機アクション分岐がdateFormatを転送していません'
+);
+
+// 保存ロジックがmapping.date_formatを書き込まなくなると、設定画面で選んだ
+// 明示フォーマットが保存されず、次に開いたときに常に「自動判定」に戻ってしまう
+assert(
+  importNotify.includes("date_format: body.querySelector('#sched-date-format').value,"),
+  'BUG: js/settings/import-notify.jsの保存ロジックがmapping.date_formatを書き込んでいません'
+);
+// openFormのプリフィルがmapping.date_formatを読み戻さない(auto既定を含む)と、
+// 既存フィードを編集し直したときに明示指定したフォーマットが表示上消えてしまう
+assert(
+  importNotify.includes("schedDateFormatSelect.value = m.date_format || 'auto';"),
+  'BUG: js/settings/import-notify.jsのopenFormプリフィルがmapping.date_formatを読み戻していません'
 );

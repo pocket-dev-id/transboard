@@ -71,4 +71,31 @@ assert.strictEqual(parseScheduleDatetimeMs('2026/01/00', '10:00'), null, '日0�
 assert.strictEqual(buildValidatedScheduleDateMs(2026, 2, 31, 0, 0, 0), null, 'range検証だけでなく構築後の値の突き合わせでも繰り上げを検出できること');
 assert.strictEqual(buildValidatedScheduleDateMs(2026, 8, 26, 13, 5, 30), new Date(2026, 7, 26, 13, 5, 30).getTime(), '正常な値はそのまま採用されること');
 
+// ── format引数(明示的な日付形式指定)の検証 ──
+
+// dmy明示指定: 「日/月/年」として解釈されること(自動判定には無い形式)
+assert.strictEqual(isoOf(parseScheduleDatetimeMs('26/08/2026', '13:05', 'dmy')), '2026-08-26T13:05:00.000Z', 'format:dmyで「日/月/年」として正しく解釈されること');
+
+// 曖昧な値(01/02/2026)がformat指定によって異なる日付として解釈されること
+// (mdyでは1月2日、dmyでは2月1日と、指定が実際に解釈を左右することを確認する)
+assert.strictEqual(isoOf(parseScheduleDatetimeMs('01/02/2026', null, 'mdy')), '2026-01-02T00:00:00.000Z', 'format:mdyでは01/02/2026が1月2日と解釈されること');
+assert.strictEqual(isoOf(parseScheduleDatetimeMs('01/02/2026', null, 'dmy')), '2026-02-01T00:00:00.000Z', 'format:dmyでは01/02/2026が2月1日と解釈されること(mdyと異なる結果になることを確認)');
+
+// format:dmyを指定したが実際の値が明らかにYMD形式の場合、自動判定
+// (ymd→mdyの順)へフォールバックして正しく解釈できること
+assert.strictEqual(isoOf(parseScheduleDatetimeMs('2026-08-26', '13:05', 'dmy')), '2026-08-26T13:05:00.000Z', 'format:dmy指定でもYMD形式の値は自動判定にフォールバックして解釈されること');
+assert.strictEqual(isoOf(parseScheduleDatetimeMs('2026/08/26', null, 'mdy')), '2026-08-26T00:00:00.000Z', 'format:mdy指定でもYMD形式の値は自動判定にフォールバックして解釈されること');
+
+// format:ymdを指定したが実際の値がMM/DD/YYYY形式の場合も、自動判定へ
+// フォールバックして解釈できること
+assert.strictEqual(isoOf(parseScheduleDatetimeMs('08/26/2026', '13:05', 'ymd')), '2026-08-26T13:05:00.000Z', 'format:ymd指定でもMDY形式の値は自動判定にフォールバックして解釈されること');
+
+// どの形式指定でも解釈不能な値(月・日とも13以上)はnullのままであること
+assert.strictEqual(parseScheduleDatetimeMs('13/13/2026', '10:00', 'dmy'), null, 'format:dmy指定でも月日とも13以上の値は解釈不能としてnullを返すこと(フォールバックしても解決できない)');
+assert.strictEqual(parseScheduleDatetimeMs('13/13/2026', '10:00', 'mdy'), null, 'format:mdy指定でも月日とも13以上の値は解釈不能としてnullを返すこと');
+
+// format未指定時と'auto'指定時が同じ結果を返すこと(後方互換の直接確認)
+assert.strictEqual(parseScheduleDatetimeMs('2026/08/26', '13:05', 'auto'), parseScheduleDatetimeMs('2026/08/26', '13:05'), "format:'auto'と未指定は同じ結果を返すこと");
+assert.strictEqual(parseScheduleDatetimeMs('08/26/2026', '13:05'), parseScheduleDatetimeMs('08/26/2026', '13:05', undefined), 'format省略時の挙動が変化していないこと(後方互換)');
+
 console.log('Schedule date validation checks passed.');
