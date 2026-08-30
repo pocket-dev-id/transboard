@@ -1782,6 +1782,36 @@ Object.assign(Settings, {
   //  汎用スケジュール取り込み設定
   // ──────────────────────────────────
   async _renderScheduleFeeds(body) {
+    const { feeds, COLORS, schedModeLabel, bedMapIconOptions, encodingLabels } = await this._fetchScheduleFeedsData();
+    const listHtml = this._renderScheduleFeedListHtml(feeds, schedModeLabel, bedMapIconOptions, encodingLabels);
+    body.innerHTML = this._buildScheduleFeedFormHtml(listHtml, COLORS, bedMapIconOptions);
+
+    const refs = this._queryScheduleFeedFormRefs(body);
+
+    this._bindScheduleFeedSmbHint(refs);
+    this._bindScheduleFeedBedMapPreview(refs, bedMapIconOptions);
+    this._bindScheduleFeedColorChips(body, refs, bedMapIconOptions);
+    this._bindScheduleFeedModeCards(body);
+    this._bindScheduleFeedFolderDialog(body);
+    this._bindScheduleFeedDatetimeWiring(body, refs);
+    this._bindScheduleFeedMapInputFocusTracking(body);
+    this._bindScheduleFeedHeaderLoad(body, refs, encodingLabels);
+
+    const closeForm = this._bindScheduleFeedFormClose(body, refs);
+
+    const openForm = (feed = null) => this._openScheduleFeedForm(body, feed, refs, bedMapIconOptions);
+    body.querySelector('#sched-feed-add-btn').addEventListener('click', () => openForm());
+    body.querySelector('#sched-feed-form-cancel').addEventListener('click', closeForm);
+    body.querySelector('#sched-feed-form-save').addEventListener('click', () => this._saveScheduleFeed(body, refs, bedMapIconOptions, closeForm));
+
+    this._bindScheduleFeedListClicks(body, feeds, openForm);
+  },
+
+  // ── スケジュール取り込み設定フォーム: データ取得・HTML生成 ──
+  // (巨大だった_renderScheduleFeedsを、独立度の高いフェーズごとにメソッドへ
+  // 分割したもの。挙動は分割前と同一。DOM構造・イベント発火順序は変更していない)
+
+  async _fetchScheduleFeedsData() {
     let feeds = [];
     try {
       feeds = await API.getScheduleFeeds();
@@ -1811,7 +1841,11 @@ Object.assign(Settings, {
       'euc-jp': 'EUC-JP',
     };
 
-    const listHtml = feeds.length === 0
+    return { feeds, COLORS, schedModeLabel, bedMapIconOptions, encodingLabels };
+  },
+
+  _renderScheduleFeedListHtml(feeds, schedModeLabel, bedMapIconOptions, encodingLabels) {
+    return feeds.length === 0
       ? '<p style="color:#718096;font-size:13px;">スケジュール取り込み設定がありません。「追加」から作成してください。</p>'
       : feeds.map(f => {
           const mode = schedModeLabel[f.schedule?.mode] || 'リアルタイム監視';
@@ -1888,8 +1922,10 @@ Object.assign(Settings, {
             </div>
           </div>`;
         }).join('');
+  },
 
-    body.innerHTML = `
+  _buildScheduleFeedFormHtml(listHtml, COLORS, bedMapIconOptions) {
+    return `
       <div class="settings-section">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <h3 style="margin:0;font-size:15px;">汎用スケジュール取り込み</h3>
@@ -2137,19 +2173,105 @@ Object.assign(Settings, {
         </div>
       </div>
     `;
+  },
 
-    const overlay = body.querySelector('#sched-feed-form-overlay');
-    const colorInput = body.querySelector('#sched-form-color');
-    const bedMapIconInput = body.querySelector('#sched-form-bed-map-icon');
-    const bedMapAbbreviationInput = body.querySelector('#sched-form-bed-map-abbreviation');
-    const bedMapEnabledInput = body.querySelector('#sched-form-bed-map');
-    const bedMapPreview = body.querySelector('#sched-form-bed-map-preview');
-    const smbModeInput = body.querySelector('#sched-form-smb-auth-mode');
-    const smbUsernameInput = body.querySelector('#sched-form-smb-username');
-    const smbPasswordInput = body.querySelector('#sched-form-smb-password');
-    const smbCredentialsBox = body.querySelector('#sched-form-smb-credentials');
-    const smbInheritHint = body.querySelector('#sched-form-smb-inherit-hint');
+  // ── スケジュール取り込み設定フォーム: DOM参照の一括取得 ──
+  // (フォームHTML生成直後に1度だけ問い合わせ、以降の各メソッドへ明示的に渡す)
 
+  _queryScheduleFeedFormRefs(body) {
+    return {
+      overlay: body.querySelector('#sched-feed-form-overlay'),
+      colorInput: body.querySelector('#sched-form-color'),
+      bedMapIconInput: body.querySelector('#sched-form-bed-map-icon'),
+      bedMapAbbreviationInput: body.querySelector('#sched-form-bed-map-abbreviation'),
+      bedMapEnabledInput: body.querySelector('#sched-form-bed-map'),
+      bedMapPreview: body.querySelector('#sched-form-bed-map-preview'),
+      smbModeInput: body.querySelector('#sched-form-smb-auth-mode'),
+      smbUsernameInput: body.querySelector('#sched-form-smb-username'),
+      smbPasswordInput: body.querySelector('#sched-form-smb-password'),
+      smbCredentialsBox: body.querySelector('#sched-form-smb-credentials'),
+      smbInheritHint: body.querySelector('#sched-form-smb-inherit-hint'),
+      schedDateLabel: body.querySelector('#sched-map-date-label'),
+      schedDateInput: body.querySelector('#sched-map-date'),
+      schedTimeWrap: body.querySelector('#sched-map-time-wrap'),
+      schedTimeInput: body.querySelector('#sched-map-time'),
+      schedPreviewBox: body.querySelector('#sched-datetime-preview'),
+      schedDateFormatSelect: body.querySelector('#sched-date-format'),
+    };
+  },
+
+  // ── スケジュール取り込み設定フォーム: 単発の更新用ヘルパー ──
+  // (複数のイベントリスナーから呼ばれるため、独立したメソッドとして切り出す)
+
+  _updateScheduleFeedBedMapPreview(refs, bedMapIconOptions) {
+    const selectedIcon = bedMapIconOptions.some(option => option.value === refs.bedMapIconInput.value)
+      ? refs.bedMapIconInput.value
+      : 'calendar-check';
+    const abbreviation = refs.bedMapAbbreviationInput.value.trim().slice(0, 10) || '略称';
+    if (!refs.bedMapEnabledInput.checked) {
+      refs.bedMapPreview.textContent = '病床マップには表示されません';
+      return;
+    }
+    refs.bedMapPreview.innerHTML = `表示例: <span style="display:inline-flex;align-items:center;gap:2px;padding:2px 5px;border:1px solid ${refs.colorInput.value};border-radius:4px;color:${refs.colorInput.value};font-weight:600;"><i class="fas fa-${selectedIcon}"></i>${UI.escapeHTML(abbreviation)}</span>`;
+  },
+
+  _updateScheduleFeedModeCards(body) {
+    const m = body.querySelector('input[name="sched-form-mode"]:checked')?.value || 'realtime';
+    body.querySelectorAll('.sched-mode-card').forEach(card => {
+      const active = card.dataset.val === m;
+      card.style.borderColor = active ? '#3b82f6' : '#e2e8f0';
+      card.style.background  = active ? '#eff6ff' : '#fafafa';
+    });
+    body.querySelector('#sched-form-interval-row').style.display = m === 'interval' ? 'block' : 'none';
+    body.querySelector('#sched-form-times-row').style.display    = m === 'time'     ? 'block' : 'none';
+  },
+
+  _updateScheduleFeedDatetimeModeUI(body, refs) {
+    const combined = body.querySelector('#sched-datetime-mode-combined').checked;
+    refs.schedTimeWrap.style.display = combined ? 'none' : '';
+    refs.schedDateLabel.textContent = combined ? '日付+時刻列' : '日付列';
+    refs.schedDateInput.placeholder = combined
+      ? '例: 検査日時（値の例: 2026/08/26 13:05）'
+      : '例: 日付（値の例: 2026-08-26）';
+  },
+
+  // 実データ(ヘッダ読み込み時に取得したサンプル行)での解釈プレビュー。
+  // 入力のたびに呼ぶと過剰になるため軽くデバウンスする(タイマーIDは
+  // インスタンスプロパティ this._schedPreviewTimer で保持する)
+  _updateScheduleFeedDatetimePreview(body, refs) {
+    clearTimeout(this._schedPreviewTimer);
+    this._schedPreviewTimer = setTimeout(async () => {
+      const sampleRow = this._schedFormSampleRow;
+      const mode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';
+      const dateCol = refs.schedDateInput.value.trim();
+      const timeCol = refs.schedTimeInput.value.trim();
+      const dateFormat = refs.schedDateFormatSelect.value;
+      if (!sampleRow || !dateCol || !Object.prototype.hasOwnProperty.call(sampleRow, dateCol)) {
+        refs.schedPreviewBox.style.display = 'none';
+        return;
+      }
+      const rawVal = mode === 'combined'
+        ? sampleRow[dateCol]
+        : [sampleRow[dateCol], timeCol && sampleRow[timeCol] != null ? sampleRow[timeCol] : ''].filter(Boolean).join(' ');
+      try {
+        const result = await this._previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat);
+        refs.schedPreviewBox.style.display = 'block';
+        if (result?.ms) {
+          refs.schedPreviewBox.className = 'is-ok';
+          refs.schedPreviewBox.innerHTML = `<i class="fas fa-check-circle"></i> サンプル行「${UI.escapeHTML(String(rawVal))}」→ <strong>${UI.escapeHTML(UI.formatDateTime(result.ms))}</strong> と解釈されます`;
+        } else {
+          refs.schedPreviewBox.className = 'is-error';
+          refs.schedPreviewBox.innerHTML = `<i class="fas fa-exclamation-triangle"></i> サンプル行「${UI.escapeHTML(String(rawVal))}」を日付として解釈できませんでした。列の指定や形式をご確認ください`;
+        }
+      } catch (e) {
+        refs.schedPreviewBox.style.display = 'none';
+      }
+    }, 350);
+  },
+
+  // ── スケジュール取り込み設定フォーム: イベント配線 ──
+
+  _bindScheduleFeedSmbHint(refs) {
     // 共通設定(system_settings)の現在値を、継承時のヒントとして見せる
     const describeGlobalSmb = () => {
       const mode = AppState.systemSettings?.find(s => s.id === 'smb_auth_mode')?.value;
@@ -2158,58 +2280,43 @@ Object.assign(Settings, {
       const user = AppState.systemSettings?.find(s => s.id === 'smb_username')?.value || '';
       return `共通設定: 別のユーザー権限${user ? `（${user}）` : ''}`;
     };
-    smbModeInput.addEventListener('change', () => {
-      smbCredentialsBox.style.display = smbModeInput.value === 'custom' ? 'flex' : 'none';
-      smbInheritHint.style.display = smbModeInput.value === 'inherit' ? 'block' : 'none';
-      smbInheritHint.textContent = describeGlobalSmb();
+    refs.smbModeInput.addEventListener('change', () => {
+      refs.smbCredentialsBox.style.display = refs.smbModeInput.value === 'custom' ? 'flex' : 'none';
+      refs.smbInheritHint.style.display = refs.smbModeInput.value === 'inherit' ? 'block' : 'none';
+      refs.smbInheritHint.textContent = describeGlobalSmb();
     });
+  },
 
-    const updateBedMapPreview = () => {
-      const selectedIcon = bedMapIconOptions.some(option => option.value === bedMapIconInput.value)
-        ? bedMapIconInput.value
-        : 'calendar-check';
-      const abbreviation = bedMapAbbreviationInput.value.trim().slice(0, 10) || '略称';
-      if (!bedMapEnabledInput.checked) {
-        bedMapPreview.textContent = '病床マップには表示されません';
-        return;
-      }
-      bedMapPreview.innerHTML = `表示例: <span style="display:inline-flex;align-items:center;gap:2px;padding:2px 5px;border:1px solid ${colorInput.value};border-radius:4px;color:${colorInput.value};font-weight:600;"><i class="fas fa-${selectedIcon}"></i>${UI.escapeHTML(abbreviation)}</span>`;
-    };
-    [bedMapIconInput, bedMapAbbreviationInput, bedMapEnabledInput, colorInput]
-      .forEach(input => input.addEventListener('input', updateBedMapPreview));
-    bedMapIconInput.addEventListener('change', updateBedMapPreview);
-    bedMapEnabledInput.addEventListener('change', updateBedMapPreview);
+  _bindScheduleFeedBedMapPreview(refs, bedMapIconOptions) {
+    const update = () => this._updateScheduleFeedBedMapPreview(refs, bedMapIconOptions);
+    [refs.bedMapIconInput, refs.bedMapAbbreviationInput, refs.bedMapEnabledInput, refs.colorInput]
+      .forEach(input => input.addEventListener('input', update));
+    refs.bedMapIconInput.addEventListener('change', update);
+    refs.bedMapEnabledInput.addEventListener('change', update);
+  },
 
-    // カラーチップ選択
+  _bindScheduleFeedColorChips(body, refs, bedMapIconOptions) {
     body.querySelectorAll('.sched-color-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         body.querySelectorAll('.sched-color-chip').forEach(c => { c.style.border = '2px solid transparent'; c.style.transform = ''; });
         chip.style.border = '2px solid #1a202c';
         chip.style.transform = 'scale(1.25)';
-        colorInput.value = chip.dataset.color;
-        updateBedMapPreview();
+        refs.colorInput.value = chip.dataset.color;
+        this._updateScheduleFeedBedMapPreview(refs, bedMapIconOptions);
       });
     });
+  },
 
-    // スケジュールモードカード切り替え
-    const updateModeCards = () => {
-      const m = body.querySelector('input[name="sched-form-mode"]:checked')?.value || 'realtime';
-      body.querySelectorAll('.sched-mode-card').forEach(card => {
-        const active = card.dataset.val === m;
-        card.style.borderColor = active ? '#3b82f6' : '#e2e8f0';
-        card.style.background  = active ? '#eff6ff' : '#fafafa';
-      });
-      body.querySelector('#sched-form-interval-row').style.display = m === 'interval' ? 'block' : 'none';
-      body.querySelector('#sched-form-times-row').style.display    = m === 'time'     ? 'block' : 'none';
-    };
+  _bindScheduleFeedModeCards(body) {
     body.querySelectorAll('.sched-mode-card').forEach(card => {
       card.addEventListener('click', () => {
         const radio = card.querySelector('input[type="radio"]');
-        if (radio) { radio.checked = true; updateModeCards(); }
+        if (radio) { radio.checked = true; this._updateScheduleFeedModeCards(body); }
       });
     });
+  },
 
-    // フォルダ選択ダイアログ
+  _bindScheduleFeedFolderDialog(body) {
     body.querySelector('#sched-btn-select-folder').addEventListener('click', async () => {
       if (!window.electronAPI?.selectFolder) { UI.toast('フォルダ選択はElectron環境でのみ利用できます', 'warning'); return; }
       const selected = await window.electronAPI.selectFolder();
@@ -2217,71 +2324,30 @@ Object.assign(Settings, {
         body.querySelector('#sched-form-dir').value = selected;
       }
     });
+  },
 
-    // 日付/時刻マッピングの表示を「別々の列」/「1つの列」モードに応じて切り替える
-    const schedDateLabel = body.querySelector('#sched-map-date-label');
-    const schedDateInput = body.querySelector('#sched-map-date');
-    const schedTimeWrap = body.querySelector('#sched-map-time-wrap');
-    const schedTimeInput = body.querySelector('#sched-map-time');
-    const schedPreviewBox = body.querySelector('#sched-datetime-preview');
-    const schedDateFormatSelect = body.querySelector('#sched-date-format');
-    const updateDatetimeModeUI = () => {
-      const combined = body.querySelector('#sched-datetime-mode-combined').checked;
-      schedTimeWrap.style.display = combined ? 'none' : '';
-      schedDateLabel.textContent = combined ? '日付+時刻列' : '日付列';
-      schedDateInput.placeholder = combined
-        ? '例: 検査日時（値の例: 2026/08/26 13:05）'
-        : '例: 日付（値の例: 2026-08-26）';
-    };
-
-    // 実データ(ヘッダ読み込み時に取得したサンプル行)での解釈プレビュー。
-    // 入力のたびに呼ぶと過剰になるため軽くデバウンスする
-    let schedPreviewTimer = null;
-    const updateDatetimePreview = () => {
-      clearTimeout(schedPreviewTimer);
-      schedPreviewTimer = setTimeout(async () => {
-        const sampleRow = this._schedFormSampleRow;
-        const mode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';
-        const dateCol = schedDateInput.value.trim();
-        const timeCol = schedTimeInput.value.trim();
-        const dateFormat = schedDateFormatSelect.value;
-        if (!sampleRow || !dateCol || !Object.prototype.hasOwnProperty.call(sampleRow, dateCol)) {
-          schedPreviewBox.style.display = 'none';
-          return;
-        }
-        const rawVal = mode === 'combined'
-          ? sampleRow[dateCol]
-          : [sampleRow[dateCol], timeCol && sampleRow[timeCol] != null ? sampleRow[timeCol] : ''].filter(Boolean).join(' ');
-        try {
-          const result = await this._previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat);
-          schedPreviewBox.style.display = 'block';
-          if (result?.ms) {
-            schedPreviewBox.className = 'is-ok';
-            schedPreviewBox.innerHTML = `<i class="fas fa-check-circle"></i> サンプル行「${UI.escapeHTML(String(rawVal))}」→ <strong>${UI.escapeHTML(UI.formatDateTime(result.ms))}</strong> と解釈されます`;
-          } else {
-            schedPreviewBox.className = 'is-error';
-            schedPreviewBox.innerHTML = `<i class="fas fa-exclamation-triangle"></i> サンプル行「${UI.escapeHTML(String(rawVal))}」を日付として解釈できませんでした。列の指定や形式をご確認ください`;
-          }
-        } catch (e) {
-          schedPreviewBox.style.display = 'none';
-        }
-      }, 350);
-    };
-
+  _bindScheduleFeedDatetimeWiring(body, refs) {
     body.querySelectorAll('input[name="sched-datetime-mode"]').forEach(radio => {
-      radio.addEventListener('change', () => { updateDatetimeModeUI(); updateDatetimePreview(); });
+      radio.addEventListener('change', () => {
+        this._updateScheduleFeedDatetimeModeUI(body, refs);
+        this._updateScheduleFeedDatetimePreview(body, refs);
+      });
     });
-    [schedDateInput, schedTimeInput].forEach(input => {
-      input.addEventListener('input', updateDatetimePreview);
+    [refs.schedDateInput, refs.schedTimeInput].forEach(input => {
+      input.addEventListener('input', () => this._updateScheduleFeedDatetimePreview(body, refs));
     });
-    schedDateFormatSelect.addEventListener('change', updateDatetimePreview);
-    // ヘッダ列名チップをクリックした際、直前にフォーカスしていたマッピング
-    // 入力欄へ自動入力するために使う
+    refs.schedDateFormatSelect.addEventListener('change', () => this._updateScheduleFeedDatetimePreview(body, refs));
+  },
+
+  // ヘッダ列名チップをクリックした際、直前にフォーカスしていたマッピング
+  // 入力欄へ自動入力するために使う
+  _bindScheduleFeedMapInputFocusTracking(body) {
     body.querySelectorAll('.sched-map-input').forEach(input => {
       input.addEventListener('focus', () => { this._schedLastFocusedMapField = input; });
     });
+  },
 
-    // CSVヘッダ読み込み
+  _bindScheduleFeedHeaderLoad(body, refs, encodingLabels) {
     body.querySelector('#sched-btn-load-headers').addEventListener('click', async () => {
       const dir = body.querySelector('#sched-form-dir').value.trim();
       if (!dir) { UI.toast('先に監視フォルダを指定してください', 'warning'); return; }
@@ -2311,13 +2377,13 @@ Object.assign(Settings, {
           chip.addEventListener('click', () => {
             const target = this._schedLastFocusedMapField && body.contains(this._schedLastFocusedMapField)
               ? this._schedLastFocusedMapField
-              : schedDateInput;
+              : refs.schedDateInput;
             target.value = chip.dataset.header;
             target.dispatchEvent(new Event('input'));
             target.focus();
           });
         });
-        updateDatetimePreview();
+        this._updateScheduleFeedDatetimePreview(body, refs);
       } catch (e) {
         UI.toast('CSVの読み込みに失敗しました: ' + e.message, 'danger');
       } finally {
@@ -2325,186 +2391,185 @@ Object.assign(Settings, {
         btn.innerHTML = '<i class="fas fa-magic"></i> CSVからヘッダを読み込む';
       }
     });
+  },
 
-    // Escキー・背景クリックで閉じる
-    const closeForm = () => { overlay.style.display = 'none'; };
-    overlay.addEventListener('click', e => { if (e.target === overlay) closeForm(); });
-    this._addEscapeClose(overlay, closeForm);
+  // Escキー・背景クリックで閉じる。cancelボタン・保存成功時からも同じ関数が
+  // 呼べるよう、生成したclose関数を呼び出し元へ返す
+  _bindScheduleFeedFormClose(body, refs) {
+    const closeForm = () => { refs.overlay.style.display = 'none'; };
+    refs.overlay.addEventListener('click', e => { if (e.target === refs.overlay) closeForm(); });
+    this._addEscapeClose(refs.overlay, closeForm);
     body.querySelector('#sched-feed-form-close-x').addEventListener('click', closeForm);
+    return closeForm;
+  },
 
-    const openForm = (feed = null) => {
-      body.querySelector('#sched-feed-form-title').textContent = feed ? 'スケジュール取り込みの編集' : 'スケジュール取り込みの追加';
-      body.querySelector('#sched-form-id').value = feed?.id || '';
-      body.querySelector('#sched-form-name').value = feed?.name || '';
-      body.querySelector('#sched-form-dir').value = feed?.watch_dir || '';
-      body.querySelector('#sched-form-encoding').value = feed?.encoding || 'auto';
-      body.querySelector('#sched-form-bed-map').checked = feed ? (feed.show_on_bed_map !== false) : true;
-      body.querySelector('#sched-form-bed-map-icon').value = bedMapIconOptions.some(option => option.value === feed?.bed_map_icon)
-        ? feed.bed_map_icon
-        : 'calendar-check';
-      body.querySelector('#sched-form-bed-map-abbreviation').value = String(feed?.bed_map_abbreviation || '').trim().slice(0, 10);
-      body.querySelector('#sched-form-active').checked = feed ? (feed.is_active !== false) : true;
+  _openScheduleFeedForm(body, feed, refs, bedMapIconOptions) {
+    body.querySelector('#sched-feed-form-title').textContent = feed ? 'スケジュール取り込みの編集' : 'スケジュール取り込みの追加';
+    body.querySelector('#sched-form-id').value = feed?.id || '';
+    body.querySelector('#sched-form-name').value = feed?.name || '';
+    body.querySelector('#sched-form-dir').value = feed?.watch_dir || '';
+    body.querySelector('#sched-form-encoding').value = feed?.encoding || 'auto';
+    body.querySelector('#sched-form-bed-map').checked = feed ? (feed.show_on_bed_map !== false) : true;
+    body.querySelector('#sched-form-bed-map-icon').value = bedMapIconOptions.some(option => option.value === feed?.bed_map_icon)
+      ? feed.bed_map_icon
+      : 'calendar-check';
+    body.querySelector('#sched-form-bed-map-abbreviation').value = String(feed?.bed_map_abbreviation || '').trim().slice(0, 10);
+    body.querySelector('#sched-form-active').checked = feed ? (feed.is_active !== false) : true;
 
-      // パスワードは意図的にprefillしない。子機はそもそも値を読めず（親機側で
-      // マスク・単体GET禁止）、親機でも平文をDOMへ置く必要がない。空欄のまま
-      // 保存＝現在の値を維持、という扱いにして「開いて保存しただけで消える」
-      // 事故を構造的に防ぐ。
-      smbModeInput.value = ['current', 'custom'].includes(feed?.smb_auth_mode)
-        ? feed.smb_auth_mode
-        : 'inherit';
-      smbUsernameInput.value = feed?.smb_username || '';
-      smbPasswordInput.value = '';
-      smbModeInput.dispatchEvent(new Event('change'));
+    // パスワードは意図的にprefillしない。子機はそもそも値を読めず（親機側で
+    // マスク・単体GET禁止）、親機でも平文をDOMへ置く必要がない。空欄のまま
+    // 保存＝現在の値を維持、という扱いにして「開いて保存しただけで消える」
+    // 事故を構造的に防ぐ。
+    refs.smbModeInput.value = ['current', 'custom'].includes(feed?.smb_auth_mode)
+      ? feed.smb_auth_mode
+      : 'inherit';
+    refs.smbUsernameInput.value = feed?.smb_username || '';
+    refs.smbPasswordInput.value = '';
+    refs.smbModeInput.dispatchEvent(new Event('change'));
 
-      const color = feed?.color || '#7c3aed';
-      colorInput.value = color;
-      body.querySelectorAll('.sched-color-chip').forEach(c => {
-        c.style.border = c.dataset.color === color ? '2px solid #1a202c' : '2px solid transparent';
-      });
-      updateBedMapPreview();
+    const color = feed?.color || '#7c3aed';
+    refs.colorInput.value = color;
+    body.querySelectorAll('.sched-color-chip').forEach(c => {
+      c.style.border = c.dataset.color === color ? '2px solid #1a202c' : '2px solid transparent';
+    });
+    this._updateScheduleFeedBedMapPreview(refs, bedMapIconOptions);
 
-      const sched = feed?.schedule || { mode: 'realtime' };
-      const modeRadio = body.querySelector(`input[name="sched-form-mode"][value="${sched.mode || 'realtime'}"]`);
-      if (modeRadio) modeRadio.checked = true;
-      body.querySelector('#sched-form-interval').value = sched.intervalMin || '30';
-      body.querySelector('#sched-form-times').value = (sched.times || []).join(',');
-      updateModeCards();
+    const sched = feed?.schedule || { mode: 'realtime' };
+    const modeRadio = body.querySelector(`input[name="sched-form-mode"][value="${sched.mode || 'realtime'}"]`);
+    if (modeRadio) modeRadio.checked = true;
+    body.querySelector('#sched-form-interval').value = sched.intervalMin || '30';
+    body.querySelector('#sched-form-times').value = (sched.times || []).join(',');
+    this._updateScheduleFeedModeCards(body);
 
-      // ヘッダヒント・サンプル行・解釈プレビューをリセット(サンプル行が
-      // 無い間はプレビューを計算できないため、開き直すたびに読み込みが必要)
-      const hint = body.querySelector('#sched-headers-hint');
-      if (hint) { hint.style.display = 'none'; hint.innerHTML = ''; }
-      const datalist = body.querySelector('#sched-headers-list');
-      if (datalist) datalist.innerHTML = '';
-      this._schedFormSampleRow = null;
-      this._schedLastFocusedMapField = null;
-      schedPreviewBox.style.display = 'none';
+    // ヘッダヒント・サンプル行・解釈プレビューをリセット(サンプル行が
+    // 無い間はプレビューを計算できないため、開き直すたびに読み込みが必要)
+    const hint = body.querySelector('#sched-headers-hint');
+    if (hint) { hint.style.display = 'none'; hint.innerHTML = ''; }
+    const datalist = body.querySelector('#sched-headers-list');
+    if (datalist) datalist.innerHTML = '';
+    this._schedFormSampleRow = null;
+    this._schedLastFocusedMapField = null;
+    refs.schedPreviewBox.style.display = 'none';
 
-      // 既存フィードの編集時: col_datetimeがあれば「1つの列」モード、col_timeが
-      // あれば「別々の列」モード、どちらも無い場合(旧データがcol_dateだけに
-      // 日時をまとめて入れていた場合を含む)は「1つの列」モードとして復元する。
-      // 新規作成時は常に「別々の列」を既定にする
-      const m = feed?.mapping || {};
-      const isCombinedMode = feed ? (!!m.col_datetime || !m.col_time) : false;
-      body.querySelector(isCombinedMode ? '#sched-datetime-mode-combined' : '#sched-datetime-mode-separate').checked = true;
-      schedDateInput.value = m.col_datetime || m.col_date || '';
-      schedTimeInput.value = m.col_time || '';
-      schedDateFormatSelect.value = m.date_format || 'auto';
-      updateDatetimeModeUI();
-      body.querySelector('#sched-map-title').value = m.col_title || '';
-      body.querySelector('#sched-map-id').value = m.col_id || '';
-      body.querySelector('#sched-map-duration').value = m.col_duration_min || '';
+    // 既存フィードの編集時: col_datetimeがあれば「1つの列」モード、col_timeが
+    // あれば「別々の列」モード、どちらも無い場合(旧データがcol_dateだけに
+    // 日時をまとめて入れていた場合を含む)は「1つの列」モードとして復元する。
+    // 新規作成時は常に「別々の列」を既定にする
+    const m = feed?.mapping || {};
+    const isCombinedMode = feed ? (!!m.col_datetime || !m.col_time) : false;
+    body.querySelector(isCombinedMode ? '#sched-datetime-mode-combined' : '#sched-datetime-mode-separate').checked = true;
+    refs.schedDateInput.value = m.col_datetime || m.col_date || '';
+    refs.schedTimeInput.value = m.col_time || '';
+    refs.schedDateFormatSelect.value = m.date_format || 'auto';
+    this._updateScheduleFeedDatetimeModeUI(body, refs);
+    body.querySelector('#sched-map-title').value = m.col_title || '';
+    body.querySelector('#sched-map-id').value = m.col_id || '';
+    body.querySelector('#sched-map-duration').value = m.col_duration_min || '';
 
-      const policy = (feed?.retention_policy?.action) || 'archive';
-      const policyRadio = body.querySelector(`input[name="sched-form-policy"][value="${policy}"]`);
-      if (policyRadio) policyRadio.checked = true;
+    const policy = (feed?.retention_policy?.action) || 'archive';
+    const policyRadio = body.querySelector(`input[name="sched-form-policy"][value="${policy}"]`);
+    if (policyRadio) policyRadio.checked = true;
 
-      // 対象病棟チェック設定
-      body.querySelectorAll('.sched-ward-chk').forEach(chk => {
-        chk.checked = feed?.ward_ids?.length > 0 ? feed.ward_ids.includes(chk.value) : false;
-      });
-
-      overlay.style.display = 'block';
-    };
-
-    // 追加ボタン
-    body.querySelector('#sched-feed-add-btn').addEventListener('click', () => openForm());
-
-    // キャンセル
-    body.querySelector('#sched-feed-form-cancel').addEventListener('click', closeForm);
-
-    // 保存
-    body.querySelector('#sched-feed-form-save').addEventListener('click', async () => {
-      const name = body.querySelector('#sched-form-name').value.trim();
-      const watchDir = body.querySelector('#sched-form-dir').value.trim();
-      const titleCol = body.querySelector('#sched-map-title').value.trim();
-      if (!name) { UI.toast('取り込み名を入力してください', 'warning'); return; }
-      if (!watchDir) { UI.toast('監視フォルダを入力してください', 'warning'); return; }
-      if (!titleCol) { UI.toast('タイトル列を入力してください', 'warning'); return; }
-
-      const smbMode = smbModeInput.value;
-      const smbUsername = smbUsernameInput.value.trim();
-      const smbPassword = smbPasswordInput.value;
-      const existingFeedId = body.querySelector('#sched-form-id').value;
-      if (smbMode === 'custom') {
-        if (!smbUsername) { UI.toast('個別指定の場合はユーザー名を入力してください', 'warning'); return; }
-        // 新規作成時は空欄＝維持すべき既存の値が無いため、必ず入力してもらう
-        if (!existingFeedId && !smbPassword) { UI.toast('個別指定の場合はパスワードを入力してください', 'warning'); return; }
-        if (smbPassword === '********') { UI.toast('このパスワードは使用できません', 'warning'); return; }
-        if (!watchDir.startsWith('\\\\')) {
-          UI.toast('SMB認証はネットワークパス(\\\\server\\share)のときだけ使用されます', 'warning');
-        }
-      }
-
-      const mode = body.querySelector('input[name="sched-form-mode"]:checked').value;
-      const schedule = { mode };
-      if (mode === 'interval') schedule.intervalMin = body.querySelector('#sched-form-interval').value;
-      if (mode === 'time') schedule.times = body.querySelector('#sched-form-times').value.split(',').map(s => s.trim()).filter(Boolean);
-
-      const datetimeMode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';
-      const dateFieldVal = body.querySelector('#sched-map-date').value.trim();
-      const mapping = {
-        col_date: datetimeMode === 'combined' ? '' : dateFieldVal,
-        col_datetime: datetimeMode === 'combined' ? dateFieldVal : '',
-        col_time: datetimeMode === 'combined' ? '' : body.querySelector('#sched-map-time').value.trim(),
-        col_title: titleCol,
-        col_id: body.querySelector('#sched-map-id').value.trim(),
-        col_duration_min: body.querySelector('#sched-map-duration').value.trim(),
-        date_format: body.querySelector('#sched-date-format').value,
-      };
-
-      const feedId = body.querySelector('#sched-form-id').value;
-      const wardIds = [...body.querySelectorAll('.sched-ward-chk:checked')].map(c => c.value);
-      const bedMapIcon = bedMapIconOptions.some(option => option.value === bedMapIconInput.value)
-        ? bedMapIconInput.value
-        : 'calendar-check';
-      const data = {
-        id: feedId || `feed-${Date.now()}`,
-        name,
-        color: colorInput.value,
-        watch_dir: watchDir,
-        encoding: body.querySelector('#sched-form-encoding').value,
-        schedule,
-        mapping,
-        retention_policy: { action: body.querySelector('input[name="sched-form-policy"]:checked').value },
-        show_on_bed_map: body.querySelector('#sched-form-bed-map').checked,
-        bed_map_icon: bedMapIcon,
-        bed_map_abbreviation: bedMapAbbreviationInput.value.trim().slice(0, 10),
-        is_active: body.querySelector('#sched-form-active').checked,
-        ward_ids: wardIds, // 空配列 = 全病棟
-        // パスワードはここには入れない（system_settingsのフィード専用IDへ別途保存）
-        smb_auth_mode: smbMode,
-        smb_username: smbMode === 'custom' ? smbUsername : '',
-      };
-
-      try {
-        if (feedId) {
-          await API.patch('schedule_feeds', feedId, data);
-        } else {
-          await API.create('schedule_feeds', data);
-        }
-        // 個別指定をやめたときは資格情報を残さない。個別指定のまま空欄の場合は
-        // 「変更なし」として現在のパスワードを維持する。
-        if (smbMode !== 'custom') {
-          await this._saveFeedSmbPassword(data.id, '');
-        } else if (smbPassword) {
-          await this._saveFeedSmbPassword(data.id, smbPassword);
-        }
-        const reload = await this._reloadParentScheduleFeedTriggers();
-        await App.refreshData({ force: true });
-        closeForm();
-        UI.toast('スケジュール取り込み設定を保存しました', 'success');
-        // SMBの資格情報競合（Windowsは1サーバー1資格情報）を通知する
-        if (reload?.warnings?.length) {
-          UI.toast(reload.warnings.map(w => w.message).join('\n'), 'warning', 12000);
-        }
-        this._renderScheduleFeeds(body);
-      } catch (e) {
-        UI.toast('保存に失敗しました: ' + e.message, 'danger');
-      }
+    // 対象病棟チェック設定
+    body.querySelectorAll('.sched-ward-chk').forEach(chk => {
+      chk.checked = feed?.ward_ids?.length > 0 ? feed.ward_ids.includes(chk.value) : false;
     });
 
-    // リスト操作（編集・削除・手動取り込み）
+    refs.overlay.style.display = 'block';
+  },
+
+  async _saveScheduleFeed(body, refs, bedMapIconOptions, closeForm) {
+    const name = body.querySelector('#sched-form-name').value.trim();
+    const watchDir = body.querySelector('#sched-form-dir').value.trim();
+    const titleCol = body.querySelector('#sched-map-title').value.trim();
+    if (!name) { UI.toast('取り込み名を入力してください', 'warning'); return; }
+    if (!watchDir) { UI.toast('監視フォルダを入力してください', 'warning'); return; }
+    if (!titleCol) { UI.toast('タイトル列を入力してください', 'warning'); return; }
+
+    const smbMode = refs.smbModeInput.value;
+    const smbUsername = refs.smbUsernameInput.value.trim();
+    const smbPassword = refs.smbPasswordInput.value;
+    const existingFeedId = body.querySelector('#sched-form-id').value;
+    if (smbMode === 'custom') {
+      if (!smbUsername) { UI.toast('個別指定の場合はユーザー名を入力してください', 'warning'); return; }
+      // 新規作成時は空欄＝維持すべき既存の値が無いため、必ず入力してもらう
+      if (!existingFeedId && !smbPassword) { UI.toast('個別指定の場合はパスワードを入力してください', 'warning'); return; }
+      if (smbPassword === '********') { UI.toast('このパスワードは使用できません', 'warning'); return; }
+      if (!watchDir.startsWith('\\\\')) {
+        UI.toast('SMB認証はネットワークパス(\\\\server\\share)のときだけ使用されます', 'warning');
+      }
+    }
+
+    const mode = body.querySelector('input[name="sched-form-mode"]:checked').value;
+    const schedule = { mode };
+    if (mode === 'interval') schedule.intervalMin = body.querySelector('#sched-form-interval').value;
+    if (mode === 'time') schedule.times = body.querySelector('#sched-form-times').value.split(',').map(s => s.trim()).filter(Boolean);
+
+    const datetimeMode = body.querySelector('#sched-datetime-mode-combined').checked ? 'combined' : 'separate';
+    const dateFieldVal = body.querySelector('#sched-map-date').value.trim();
+    const mapping = {
+      col_date: datetimeMode === 'combined' ? '' : dateFieldVal,
+      col_datetime: datetimeMode === 'combined' ? dateFieldVal : '',
+      col_time: datetimeMode === 'combined' ? '' : body.querySelector('#sched-map-time').value.trim(),
+      col_title: titleCol,
+      col_id: body.querySelector('#sched-map-id').value.trim(),
+      col_duration_min: body.querySelector('#sched-map-duration').value.trim(),
+      date_format: body.querySelector('#sched-date-format').value,
+    };
+
+    const feedId = body.querySelector('#sched-form-id').value;
+    const wardIds = [...body.querySelectorAll('.sched-ward-chk:checked')].map(c => c.value);
+    const bedMapIcon = bedMapIconOptions.some(option => option.value === refs.bedMapIconInput.value)
+      ? refs.bedMapIconInput.value
+      : 'calendar-check';
+    const data = {
+      id: feedId || `feed-${Date.now()}`,
+      name,
+      color: refs.colorInput.value,
+      watch_dir: watchDir,
+      encoding: body.querySelector('#sched-form-encoding').value,
+      schedule,
+      mapping,
+      retention_policy: { action: body.querySelector('input[name="sched-form-policy"]:checked').value },
+      show_on_bed_map: body.querySelector('#sched-form-bed-map').checked,
+      bed_map_icon: bedMapIcon,
+      bed_map_abbreviation: refs.bedMapAbbreviationInput.value.trim().slice(0, 10),
+      is_active: body.querySelector('#sched-form-active').checked,
+      ward_ids: wardIds, // 空配列 = 全病棟
+      // パスワードはここには入れない（system_settingsのフィード専用IDへ別途保存）
+      smb_auth_mode: smbMode,
+      smb_username: smbMode === 'custom' ? smbUsername : '',
+    };
+
+    try {
+      if (feedId) {
+        await API.patch('schedule_feeds', feedId, data);
+      } else {
+        await API.create('schedule_feeds', data);
+      }
+      // 個別指定をやめたときは資格情報を残さない。個別指定のまま空欄の場合は
+      // 「変更なし」として現在のパスワードを維持する。
+      if (smbMode !== 'custom') {
+        await this._saveFeedSmbPassword(data.id, '');
+      } else if (smbPassword) {
+        await this._saveFeedSmbPassword(data.id, smbPassword);
+      }
+      const reload = await this._reloadParentScheduleFeedTriggers();
+      await App.refreshData({ force: true });
+      closeForm();
+      UI.toast('スケジュール取り込み設定を保存しました', 'success');
+      // SMBの資格情報競合（Windowsは1サーバー1資格情報）を通知する
+      if (reload?.warnings?.length) {
+        UI.toast(reload.warnings.map(w => w.message).join('\n'), 'warning', 12000);
+      }
+      this._renderScheduleFeeds(body);
+    } catch (e) {
+      UI.toast('保存に失敗しました: ' + e.message, 'danger');
+    }
+  },
+
+  // リスト操作（編集・削除・手動取り込み）
+  _bindScheduleFeedListClicks(body, feeds, openForm) {
     body.addEventListener('click', async e => {
       const editBtn = e.target.closest('.sched-feed-edit-btn');
       const delBtn = e.target.closest('.sched-feed-del-btn');
