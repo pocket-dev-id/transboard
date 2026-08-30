@@ -133,15 +133,13 @@ function createSmbSessionRegistry() {
     return targetsToDelete;
   }
 
+  // main.js自体は使わないが、単体テスト(scripts/check-schedule-feed-smb.js)が
+  // 登録状態を直接検証するために使う。
   function servers() {
     return [...sessions.keys()];
   }
 
-  function reset() {
-    sessions.clear();
-  }
-
-  return { plan, commit, prune, servers, reset };
+  return { plan, commit, prune, servers };
 }
 
 module.exports = {

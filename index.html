@@ -42,10 +42,10 @@
       <div class="zoom-selector" style="display: flex; align-items: center; gap: 6px; font-size: 13px; margin-right: 4px;">
         <label><i class="fas fa-search-plus"></i> 表示倍率:</label>
         <select id="zoom-select" style="background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25); color: #fff; padding: 4px 6px; border-radius: 6px; font-size: 13px; cursor: pointer; outline: none;">
-          <option value="1.0" style="color: #1a202c;">100% (標準)</option>
-          <option value="1.2" style="color: #1a202c;">120% (中)</option>
-          <option value="1.5" style="color: #1a202c;">150% (大)</option>
-          <option value="2.0" style="color: #1a202c;">200% (極大)</option>
+          <option value="1.0">100% (標準)</option>
+          <option value="1.2">120% (中)</option>
+          <option value="1.5">150% (大)</option>
+          <option value="2.0">200% (極大)</option>
         </select>
       </div>
       <div class="ward-selector">
@@ -261,11 +261,11 @@
       <div class="page-header" style="flex-wrap: wrap; gap: 12px; align-items: center; width: 100%;">
         <h1><i class="fas fa-history"></i> 履歴・監査ログ</h1>
         <div class="history-filter-bar" style="display: flex; gap: 10px; align-items: center; margin-left: auto; flex-wrap: wrap;">
-          <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #4a5568;">
+          <div class="history-filter-label">
             <i class="fas fa-search"></i> 検索:
             <input type="text" id="history-search" placeholder="病床番号/患者名/担当者..." style="padding: 6px 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; width: 180px; outline: none;">
           </div>
-          <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #4a5568;">
+          <div class="history-filter-label">
             <i class="fas fa-filter"></i> 状態:
             <select id="history-status-filter" style="padding: 6px 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px; outline: none; cursor: pointer;">
               <option value="">-- 全て --</option>
@@ -289,13 +289,13 @@
           <h3 style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <i class="fas fa-stopwatch"></i> 検査時間実績
             <span style="display:flex; gap:8px; align-items:center; margin-left:auto; font-size:12px; font-weight:600;">
-              <select id="exam-stats-period" style="padding:4px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
+              <select id="exam-stats-period" class="exam-stats-toolbar-select">
                 <option value="7">直近7日</option>
                 <option value="30" selected>直近30日</option>
                 <option value="90">直近90日</option>
                 <option value="0">全期間</option>
               </select>
-              <select id="exam-stats-groupby" style="padding:4px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
+              <select id="exam-stats-groupby" class="exam-stats-toolbar-select">
                 <option value="examType" selected>検査種別ごと</option>
                 <option value="examRoom">検査室ごと</option>
               </select>
