@@ -88,10 +88,24 @@ const UI = {
 
 
   /* ---------- 患者名マスキング (データ #1) ---------- */
+  // 「患者名表示」設定の読み込み・保存・関連クラス反映。病棟ダッシュボード
+  // (app.js)側と検査室(examroom.js)側で個別に重複実装され、既に挙動が
+  // 乖離していたため一本化した。トグルの再描画自体は各画面固有のため
+  // ここでは行わない(呼び出し元がそれぞれ必要な再描画を行う)
+  PATIENT_NAME_LS_KEY: 'cfg_show_patient_names',
+  getShowPatientNames() {
+    return localStorage.getItem(this.PATIENT_NAME_LS_KEY) === 'true';
+  },
+  setShowPatientNames(show) {
+    localStorage.setItem(this.PATIENT_NAME_LS_KEY, show ? 'true' : 'false');
+    const grid = document.getElementById('bed-map-grid');
+    if (grid) grid.classList.toggle('hide-patient-names', !show);
+  },
+
   isPatientMaskEnabled() {
     const chk = document.getElementById('chk-show-patient-names');
     if (chk) return !chk.checked;
-    return localStorage.getItem('cfg_show_patient_names') !== 'true';
+    return !this.getShowPatientNames();
   },
 
   getPatientName(name) {

@@ -662,30 +662,18 @@ const App = {
     // 患者名表示トグルイベント
     const nameChk = document.getElementById('chk-show-patient-names');
     if (nameChk) {
-      const savedVal = localStorage.getItem('cfg_show_patient_names') === 'true';
+      const savedVal = UI.getShowPatientNames();
       nameChk.checked = savedVal;
-      const grid = document.getElementById('bed-map-grid');
-      if (grid) {
-        if (savedVal) {
-          grid.classList.remove('hide-patient-names');
-        } else {
-          grid.classList.add('hide-patient-names');
-        }
-      }
+      UI.setShowPatientNames(savedVal);
 
       nameChk.addEventListener('change', () => {
-        localStorage.setItem('cfg_show_patient_names', nameChk.checked ? 'true' : 'false');
+        UI.setShowPatientNames(nameChk.checked);
         const grid = document.getElementById('bed-map-grid');
         if (grid) {
-          if (nameChk.checked) {
-            grid.classList.remove('hide-patient-names');
-          } else {
-            grid.classList.add('hide-patient-names');
-          }
           BedMap.render();
           if (typeof NotificationHistory !== 'undefined') NotificationHistory.render();
         }
-        
+
         // 検査室のトグルとも連動させる
         const examChk = document.getElementById('chk-exam-show-patient-names');
         if (examChk) {
