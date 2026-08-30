@@ -5556,9 +5556,35 @@ Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden
   child.unref();
 }
 
+// v1.1.x以前は allowToChangeInstallationDirectory:true かつ perMachine未指定
+// という設定で配布されており、これはelectron-builder/NSISの既知の落とし穴で
+// 実質per-machineインストール(Program Files配下、HKLMにアンインストーラ登録)
+// になっていた(docs/manual.mdの「旧バージョン(Program Files版)からの移行」参照)。
+// 現行のper-userインストーラでこれを自動更新しようとすると、新インストーラが
+// 旧バージョンの自動アンインストール(HKLM登録分)を試みて管理者権限昇格を
+// 要求するが、その昇格はspawnInstallerAfterOwnExit後・app.quit()後に起こる
+// ため失敗してもアプリ側で検知できず、ユーザーには「なぜか更新できない」という
+// 不可解な失敗に見える。ダウンロード前に検出し、明確な案内を返す。
+function isPerMachineInstall() {
+  if (process.platform !== 'win32') return false;
+  const exePath = String(process.execPath || '').toLowerCase();
+  const programFilesRoots = [
+    process.env['ProgramFiles'],
+    process.env['ProgramFiles(x86)'],
+    process.env['ProgramW6432'],
+  ].filter(Boolean).map(p => p.toLowerCase());
+  return programFilesRoots.some(root => exePath.startsWith(root));
+}
+
 // 更新のダウンロード → sha512検証 → DB退避 → サイレントインストール起動
 handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
+    if (isPerMachineInstall()) {
+      return {
+        success: false,
+        message: 'このインストールは旧バージョン(Program Files配下)のため自動更新できません。管理者権限のあるユーザーで、現在のバージョンをアンインストールしてから新しいインストーラを手動で実行してください(一度だけの作業です。以後は自動更新が有効になります)。',
+      };
+    }
     const feedBase = buildUpdateFeedBase(parentIp);
     const isChildTerminal = isClientTerminal(readDB());
     const ymlText = await httpGetText(`${feedBase}/latest.yml`, {
