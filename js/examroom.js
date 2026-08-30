@@ -83,10 +83,13 @@ const ExamRoom = {
           examPage.dataset.focusTrapBound = 'true';
           examPage.addEventListener('click', (e) => {
             const targetTagName = e.target.tagName.toLowerCase();
-            if (!['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) {
-              if (document.getElementById('exam-room-select')?.value) {
-                icInput.focus();
-              }
+            if (['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) return;
+            // フォーカスが既にページ内の別フィールドにあるなら横取りしない。
+            // 本当にフォーカスが外れている(body等)ときだけスキャン欄へ戻す
+            const active = document.activeElement;
+            if (active && active !== document.body && examPage.contains(active)) return;
+            if (document.getElementById('exam-room-select')?.value) {
+              icInput.focus();
             }
           });
         }

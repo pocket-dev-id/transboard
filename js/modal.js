@@ -151,33 +151,10 @@ const BedModal = {
       });
     }
 
-    // Focus the first input field to prevent focus-stealing or uneditable state in Electron/Windows
-    if (!event) {
-      const newFormIcSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
-      const newFormIsBarcodeMode = newFormIcSetting?.value === 'true' &&
-        AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
-      setTimeout(() => {
-        const icTagInput = document.getElementById('f-ic-tag-id');
-        // 「患者IDをセット」チェックでスキャン欄自体が非表示の場合は対象外
-        if (newFormIsBarcodeMode && icTagInput && icTagInput.offsetParent !== null) {
-          // バーコードモードはキーボード入力型スキャナーのため、フォーカスが
-          // 当たっていないと読み取れない（PC/SC経由のICカードと異なりフォーカス
-          // 非依存で流し込む手段が無いため）
-          icTagInput.focus();
-        } else {
-          // 新規登録フォームは先頭の行き先検査室にフォーカス（IC入力はPC/SC経由で自動入力のため不要）
-          document.getElementById('f-exam-room')?.focus();
-        }
-      }, 50);
-    } else {
-      const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
-      const isIcEnabled = icSetting && icSetting.value === 'true';
-      if (isIcEnabled) {
-        setTimeout(() => {
-          document.getElementById('m-ic-tag-id')?.focus();
-        }, 50);
-      }
-    }
+    // Electron/Windowsで「モーダルを開いた直後は入力欄をクリックしても
+    // 打てない」既知バグの対策として、開いた直後に見えるフォーカス可能
+    // フィールドへ明示的にフォーカスし、入力フォーカスを確立する
+    this._focusInitialField(!!event);
 
     if (this._pendingFlash) {
       this._pendingFlash = false;
@@ -192,6 +169,40 @@ const BedModal = {
         }
       }, 100);
     }
+  },
+
+  // モーダルを開いた直後のフォーカス確立(Electron/Windowsの入力不能バグ対策)。
+  // 新規登録フォームはバーコードモード時のみIC入力へ(キーボード入力型
+  // スキャナーのためフォーカス必須)、編集モーダルはIC連携有効時のみ
+  // スキャン受けのIC入力へ。それ以外は最初の「見える」フォーカス可能
+  // フィールドへ当てる。画面外に隠したselect(.visually-hidden-select、
+  // カード選択UIの裏側にある実データ用select)はフォーカスしても入力
+  // フォーカス確立の効果が得られないため除外する。
+  _focusInitialField(hasEvent) {
+    setTimeout(() => {
+      const modalBody = document.getElementById('modal-body');
+      if (!modalBody) return;
+      if (!hasEvent) {
+        const icTagInput = document.getElementById('f-ic-tag-id');
+        const newFormIcSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
+        const newFormIsBarcodeMode = newFormIcSetting?.value === 'true' &&
+          AppState.systemSettings?.find(s => s.id === 'patient_id_scan_mode')?.value === 'barcode';
+        // 「患者IDをセット」チェックでスキャン欄自体が非表示の場合は対象外
+        if (newFormIsBarcodeMode && icTagInput && icTagInput.offsetParent !== null) {
+          icTagInput.focus();
+          return;
+        }
+      } else {
+        const icSetting = AppState.systemSettings?.find(s => s.id === 'enable_patient_ic_association');
+        const isIcEnabled = icSetting && icSetting.value === 'true';
+        const icInput = document.getElementById('m-ic-tag-id');
+        if (isIcEnabled && icInput) { icInput.focus(); return; }
+      }
+      const target = modalBody.querySelector(
+        '.option-card, input:not([type="hidden"]):not(.visually-hidden-select), textarea, select:not(.visually-hidden-select)'
+      );
+      if (target) target.focus();
+    }, 50);
   },
 
   close() {
@@ -755,9 +766,13 @@ const BedModal = {
         if (modalEl) {
           modalEl.onclick = (e) => {
             const targetTagName = e.target.tagName.toLowerCase();
-            if (!['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) {
-              editIcInput.focus();
-            }
+            if (['input', 'textarea', 'select', 'button', 'a', 'option', 'i'].includes(targetTagName)) return;
+            // フォーカスが既にモーダル内のフィールドにあるなら横取りしない
+            // (編集中の備考欄等の近くのラベルをクリックしても入力を妨げない)。
+            // 本当にフォーカスが外れている(body等)ときだけIC入力へ戻す
+            const active = document.activeElement;
+            if (active && active !== document.body && modalEl.contains(active)) return;
+            editIcInput.focus();
           };
         }
       }
