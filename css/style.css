@@ -121,8 +121,6 @@ body {
   font-variant-numeric: tabular-nums;
   transition: background 0.3s ease, color 0.3s ease;
 }
-/* 患者名・自由文など通常の日本語プロポーショナル表示に戻したい箇所用 */
-.pnum { font-variant-numeric: proportional-nums; }
 button { cursor: pointer; font-family: inherit; }
 select, input { font-family: inherit; }
 
@@ -131,7 +129,7 @@ select, input { font-family: inherit; }
 h1, h2, h3, h4,
 .page-header h1, .panel-header h2,
 .settings-panel-header h3, .settings-panel-header h4,
-.call-section-title, .call-history-title {
+.call-section-title {
   line-height: 1.25;
   letter-spacing: 0.01em;
 }
@@ -272,8 +270,8 @@ h1, h2, h3, h4,
   transition: var(--transition);
 }
 .summary-card:hover { border-color: #cfd4dc; }
-.summary-card.alert { border-color: #dc2626; background: #fff5f5; }
-.summary-card.warning { border-color: #d97706; background: #fffbeb; }
+.summary-card.alert { border-color: var(--clr-danger); background: #fff5f5; }
+.summary-card.warning { border-color: var(--clr-warning); background: #fffbeb; }
 .summary-card.danger { border-color: #b91c1c; background: #fee2e2; }
 .summary-icon {
   width: 28px; height: 28px;
@@ -284,11 +282,10 @@ h1, h2, h3, h4,
   color: var(--clr-primary);
   flex-shrink: 0;
 }
-.summary-card.alert .summary-icon { background: #fee2e2; color: #dc2626; }
-.summary-card.warning .summary-icon { background: #fef3c7; color: #d97706; }
+.summary-card.alert .summary-icon { background: #fee2e2; color: var(--clr-danger); }
+.summary-card.warning .summary-icon { background: #fef3c7; color: var(--clr-warning); }
 .summary-card.danger .summary-icon { background: #fecaca; color: #b91c1c; }
 .summary-value { font-size: 19px; font-weight: 800; line-height: 1; }
-.summary-value-sub { font-size: 10px; font-weight: 700; color: var(--clr-text-muted); margin-left: 3px; }
 .summary-label { font-size: 10.5px; color: var(--clr-text-muted); margin-top: 1px; }
 .summary-subtext {
   max-width: 100%;
@@ -465,24 +462,6 @@ h1, h2, h3, h4,
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-/* 迎え目安までの残り時間バー（出棟登録〜迎え目安までの経過割合を可視化） */
-.bed-timer-progress {
-  width: 100%;
-  height: 3px;
-  background: rgba(0, 0, 0, 0.08);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-top: 2px;
-}
-.bed-timer-progress-fill {
-  height: 100%;
-  background: var(--clr-primary);
-  border-radius: 2px;
-  transition: width 1s linear;
-}
-.bed-timer-progress-fill.soon { background: #d97706; }
-.bed-timer-progress-fill.urgent { background: #ea580c; }
-.bed-timer-progress-fill.overdue { background: #dc2626; }
 .bed-staff-badge {
   font-size: calc(var(--bed-card-info-sz) - 1px);
   color: var(--clr-text-muted);
@@ -496,14 +475,14 @@ h1, h2, h3, h4,
   right: 6px;
   width: 10px; height: 10px;
   border-radius: 50%;
-  background: #dc2626;
+  background: var(--clr-danger);
 }
 .bed-pulse-dot::after {
   content: '';
   position: absolute;
   top: -4px; left: -4px; right: -4px; bottom: -4px;
   border-radius: 50%;
-  border: 2px solid #dc2626;
+  border: 2px solid var(--clr-danger);
   animation: ring-pulse 1.5s cubic-bezier(0.24, 0, 0.38, 1) infinite;
   opacity: 0;
 }
@@ -549,31 +528,15 @@ h1, h2, h3, h4,
   background: var(--clr-surface);
 }
 .priority-item:hover { border-color: var(--clr-primary); }
-.priority-item.priority-pickup { border-color: #dc2626; background: #fff5f5; }
+.priority-item.priority-pickup { border-color: var(--clr-danger); background: #fff5f5; }
 .priority-item.priority-nearly { border-color: #ea580c; background: #fff7ed; }
-.priority-item.priority-soon { border-color: #d97706; background: #fffbeb; }
-/* 優先対応一覧: コンパクトな1行リスト表示（病床マップをより大きく見せるため） */
-.priority-item.priority-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  padding: 5px 10px;
-  min-height: 30px;
-}
+.priority-item.priority-soon { border-color: var(--clr-warning); background: #fffbeb; }
 .priority-item-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 .priority-bed-num { font-size: 13px; font-weight: 800; min-width: 42px; }
-.priority-status-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-.priority-patient-name { font-size: 12px; font-weight: 700; color: var(--clr-text); }
 .priority-exam-info { font-size: 11.5px; color: var(--clr-text-muted); }
 .priority-escort { font-size: 11px; color: var(--clr-text-muted); }
 .priority-escort--active { color: #1d4ed8; font-weight: 800; }
@@ -596,9 +559,9 @@ h1, h2, h3, h4,
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.priority-time.overdue, .bed-timer.overdue { color: #dc2626; }
+.priority-time.overdue, .bed-timer.overdue { color: var(--clr-danger); }
 .priority-time.urgent, .bed-timer.urgent { color: #ea580c; }
-.priority-time.soon, .bed-timer.soon { color: #d97706; }
+.priority-time.soon, .bed-timer.soon { color: var(--clr-warning); }
 
 /* ---------- スタッフ稼働状況（優先対応一覧から独立したパネル） ---------- */
 #staff-status-area {
@@ -729,17 +692,17 @@ h1, h2, h3, h4,
   background: #f0fdf4;
   border: 1px solid #86efac;
 }
-.notification-history-item.status-PICKUP_REQUIRED { border-left-color: #dc2626; }
-.notification-history-item.status-PICKUP_REQUIRED .notification-history-icon { color: #dc2626; }
-.notification-history-item.status-RETURNED { border-left-color: #16a34a; }
-.notification-history-item.status-RETURNED .notification-history-icon { color: #16a34a; }
+.notification-history-item.status-PICKUP_REQUIRED { border-left-color: var(--clr-danger); }
+.notification-history-item.status-PICKUP_REQUIRED .notification-history-icon { color: var(--clr-danger); }
+.notification-history-item.status-RETURNED { border-left-color: var(--clr-success); }
+.notification-history-item.status-RETURNED .notification-history-icon { color: var(--clr-success); }
 /* アナウンス受信履歴は病床の状態変更とは種類が違うため、色味で区別する */
-.notification-history-item--announce { border-left-color: #d97706; background: #fffbeb; }
-.notification-history-item--announce .notification-history-icon { color: #d97706; }
+.notification-history-item--announce { border-left-color: var(--clr-warning); background: #fffbeb; }
+.notification-history-item--announce .notification-history-icon { color: var(--clr-warning); }
 .notification-history-item--announce .notification-history-status { background: #fde68a; color: #92400e; }
 
 .tl-row-patient--changed {
-  color: #dc2626;
+  color: var(--clr-danger);
   font-weight: 800;
 }
 
@@ -832,12 +795,6 @@ h1, h2, h3, h4,
   padding: 2px 4px;
   font-size: 9px;
 }
-.exam-card-status {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 5px;
-}
 .exam-card-info { margin-bottom: 12px; }
 .exam-card-info-row {
   display: flex;
@@ -895,7 +852,7 @@ h1, h2, h3, h4,
 .eqr-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eqr-bed { font-weight: 800; font-size: 14px; }
 .eqr-status-cell { display: flex; flex-direction: column; align-items: flex-start; }
-.eqr-elapsed.text-danger { color: #dc2626; font-weight: 800; }
+.eqr-elapsed.text-danger { color: var(--clr-danger); font-weight: 800; }
 .eqr-actions { display: flex; gap: 4px; flex-wrap: wrap; overflow: visible; white-space: normal; }
 
 /* ---------- ボタン ---------- */
@@ -914,10 +871,10 @@ h1, h2, h3, h4,
 .btn:hover { filter: brightness(.92); transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
 .btn-primary { background: var(--clr-primary); color: #fff; }
-.btn-success { background: #16a34a; color: #fff; }
-.btn-warning { background: #d97706; color: #fff; }
-.btn-danger { background: #dc2626; color: #fff; }
-.btn-info { background: #0284c7; color: #fff; }
+.btn-success { background: var(--clr-success); color: #fff; }
+.btn-warning { background: var(--clr-warning); color: #fff; }
+.btn-danger { background: var(--clr-danger); color: #fff; }
+.btn-info { background: var(--clr-info); color: #fff; }
 .btn-orange { background: #ea580c; color: #fff; }
 .btn-secondary { background: #64748b; color: #fff; }
 .btn-outline { background: transparent; border: 1px solid #94a3b8; color: var(--clr-text); }
@@ -936,21 +893,8 @@ h1, h2, h3, h4,
   gap: 6px;
   flex-wrap: wrap;
 }
-.tl-filter-label { font-size: 11px; color: var(--clr-text-muted); }
-.tl-filter-chip {
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 5px;
-  border: 1px solid var(--clr-border);
-  background: var(--clr-surface);
-  color: var(--clr-text-muted);
-  cursor: pointer;
-  transition: all .15s;
-}
-.tl-filter-chip:hover { border-color: var(--clr-primary); color: var(--clr-primary); }
-.tl-filter-chip.active { background: var(--clr-primary); color: #fff; border-color: var(--clr-primary); }
 .tl-filter-count { font-size: 11px; color: var(--clr-text-muted); margin-left: 4px; }
-.tl-filter-warning { font-size: 11px; color: #dc2626; margin-left: 4px; }
+.tl-filter-warning { font-size: 11px; color: var(--clr-danger); margin-left: 4px; }
 
 /* A3: コンテキストメニュー */
 .tl-ctx-menu {
@@ -992,8 +936,8 @@ h1, h2, h3, h4,
 }
 .tl-ctx-item:hover { background: #f1f5f9; }
 .tl-ctx-item i { width: 14px; text-align: center; color: #64748b; }
-.tl-ctx-item--danger { color: #dc2626; }
-.tl-ctx-item--danger i { color: #dc2626; }
+.tl-ctx-item--danger { color: var(--clr-danger); }
+.tl-ctx-item--danger i { color: var(--clr-danger); }
 .tl-ctx-item--detail { color: var(--clr-primary); font-size: 12px; }
 .tl-ctx-item--detail i { color: var(--clr-primary); }
 .tl-ctx-divider { height: 1px; background: #e2e8f0; margin: 3px 0; }
@@ -1078,13 +1022,6 @@ h1, h2, h3, h4,
   box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
-.timeline-header {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
-  min-width: 900px;
-}
-.tl-label-col { width: 60px; flex-shrink: 0; }
 .tl-time-axis {
   flex: 1;
   position: relative;
@@ -1119,8 +1056,7 @@ h1, h2, h3, h4,
   flex-shrink: 0;
   padding-right: 8px;
 }
-.tl-row-bed,
-.tl-row-bed-num { font-size: 13px; font-weight: 700; }
+.tl-row-bed { font-size: 13px; font-weight: 700; }
 .tl-row-patient {
   font-size: 9px;
   font-weight: 600;
@@ -1132,7 +1068,7 @@ h1, h2, h3, h4,
 }
 /* 同一病床で患者が入れ替わった行を強調（見落とし防止） */
 .tl-row-label--changed .tl-row-patient {
-  color: #dc2626;
+  color: var(--clr-danger);
   font-weight: 800;
 }
 .tl-row-track {
@@ -1157,19 +1093,19 @@ h1, h2, h3, h4,
 }
 .tl-seg:hover { filter: brightness(1.1); }
 .tl-seg.seg-moving { background: var(--clr-primary); }
-.tl-seg.seg-arrived { background: #0284c7; }
+.tl-seg.seg-arrived { background: var(--clr-info); }
 .tl-seg.seg-in-exam { background: #ca8a04; }
 .tl-seg.seg-nearly-done { background: #ea580c; }
-.tl-seg.seg-pickup { background: #dc2626; }
-.tl-seg.seg-returned { background: #16a34a; }
+.tl-seg.seg-pickup { background: var(--clr-danger); }
+.tl-seg.seg-returned { background: var(--clr-success); }
 .tl-marker {
   position: absolute;
   top: 0;
   width: 2px;
   height: 100%;
-  background: #dc2626;
+  background: var(--clr-danger);
   z-index: 5;
-  box-shadow: 0 0 8px #dc2626, 0 0 15px rgba(220, 38, 38, 0.5);
+  box-shadow: 0 0 8px var(--clr-danger), 0 0 15px rgba(220, 38, 38, 0.5);
   animation: pulse-glowing-tl 2s infinite alternate;
 }
 .tl-marker::before {
@@ -1178,7 +1114,7 @@ h1, h2, h3, h4,
   top: -14px;
   left: -5px;
   font-size: 11px;
-  color: #dc2626;
+  color: var(--clr-danger);
 }
 /* タイムラインのカスタムマーカー */
 .timeline-pickup-marker {
@@ -1193,19 +1129,19 @@ h1, h2, h3, h4,
 }
 .timeline-pickup-marker.urgent { background: #ea580c; box-shadow: 0 0 6px #ea580c; }
 .timeline-pickup-marker.overdue {
-  background: #dc2626;
-  box-shadow: 0 0 8px #dc2626, 0 0 15px rgba(220, 38, 38, 0.5);
+  background: var(--clr-danger);
+  box-shadow: 0 0 8px var(--clr-danger), 0 0 15px rgba(220, 38, 38, 0.5);
   animation: pulse-glowing-tl 2s infinite alternate;
 }
 @keyframes pulse-glowing-tl {
-  0% { box-shadow: 0 0 4px #dc2626; opacity: 0.8; }
-  100% { box-shadow: 0 0 12px #dc2626; opacity: 1; }
+  0% { box-shadow: 0 0 4px var(--clr-danger); opacity: 0.8; }
+  100% { box-shadow: 0 0 12px var(--clr-danger); opacity: 1; }
 }
 
 /* ---- A4: 印刷スタイル ---- */
 @media print {
   /* タイムライン以外を非表示 */
-  .sidebar, .tab-bar, .page-header .timeline-date, #tl-range-toggle, #tl-print-btn,
+  .page-header .timeline-date, #tl-range-toggle, #tl-print-btn,
   #timeline-filter-bar, #tl-prev-day, #tl-next-day, #tl-today-btn,
   #toast-container, #passcode-modal-overlay, .tl-ctx-menu, #tl-popup { display: none !important; }
 
@@ -1231,11 +1167,11 @@ h1, h2, h3, h4,
   .bed-card { backdrop-filter: none !important; }
   .bed-card.status-IN_BED          { background: #f1f5f9 !important; border-color: #94a3b8 !important; }
   .bed-card.status-MOVING          { background: #ede9fe !important; border-color: #7c3aed !important; }
-  .bed-card.status-ARRIVED         { background: #e0f2fe !important; border-color: #0284c7 !important; }
+  .bed-card.status-ARRIVED         { background: #e0f2fe !important; border-color: var(--clr-info) !important; }
   .bed-card.status-IN_EXAM         { background: #fef9c3 !important; border-color: #ca8a04 !important; }
   .bed-card.status-NEARLY_DONE     { background: #ffedd5 !important; border-color: #ea580c !important; }
-  .bed-card.status-PICKUP_REQUIRED { background: #fee2e2 !important; border-color: #dc2626 !important; }
-  .bed-card.status-RETURNED        { background: #dcfce7 !important; border-color: #16a34a !important; }
+  .bed-card.status-PICKUP_REQUIRED { background: #fee2e2 !important; border-color: var(--clr-danger) !important; }
+  .bed-card.status-RETURNED        { background: #dcfce7 !important; border-color: var(--clr-success) !important; }
   .bed-card.status-CANCELLED       { background: #f1f5f9 !important; border-color: #94a3b8 !important; opacity: 1 !important; }
   .status-badge { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   body { background: #fff !important; }
@@ -1552,7 +1488,7 @@ h1, h2, h3, h4,
   right: 24px;
   width: 52px; height: 52px;
   border-radius: 50%;
-  background: #16a34a;
+  background: var(--clr-success);
   color: #fff;
   border: none;
   font-size: 20px;
@@ -1562,7 +1498,7 @@ h1, h2, h3, h4,
   display: flex; align-items: center; justify-content: center;
 }
 .call-fab:hover { background: #15803d; transform: scale(1.08); }
-.call-fab.active { background: #dc2626; animation: pulse 1s infinite; }
+.call-fab.active { background: var(--clr-danger); animation: pulse 1s infinite; }
 .call-panel {
   position: fixed;
   bottom: 86px;
@@ -1590,28 +1526,6 @@ h1, h2, h3, h4,
 }
 .call-panel-header button { background: none; border: none; color: #fff; font-size: 14px; }
 .call-panel-body { padding: 14px; }
-#call-status-display {
-  text-align: center;
-  padding: 10px;
-  margin-bottom: 12px;
-}
-.call-target { font-size: 14px; font-weight: 700; }
-.call-status-text { font-size: 12px; color: var(--clr-text-muted); }
-.call-duration { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; color: #16a34a; }
-.call-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.btn-call { background: #16a34a; color: #fff; width: 100%; justify-content: center; }
-.btn-call:hover { background: #15803d; }
-.call-history-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--clr-text-muted);
-  margin-bottom: 6px;
-}
 /* ---------- ステータスバッジ共通 ---------- */
 .status-badge {
   display: inline-block;
@@ -1654,9 +1568,9 @@ h1, h2, h3, h4,
   gap: 10px;
 }
 .toast.toast-info { background: var(--clr-primary); }
-.toast.toast-success { background: #16a34a; }
-.toast.toast-warning { background: #d97706; }
-.toast.toast-danger { background: #dc2626; }
+.toast.toast-success { background: var(--clr-success); }
+.toast.toast-warning { background: var(--clr-warning); }
+.toast.toast-danger { background: var(--clr-danger); }
 .toast > span { flex: 1; min-width: 0; }
 .toast-action {
   flex-shrink: 0;
@@ -1702,7 +1616,7 @@ h1, h2, h3, h4,
 }
 .examroom-grid-pickup-badge {
   display: inline-flex; align-items: center; gap: 4px;
-  background: #fef2f2; color: #dc2626; font-weight: 700;
+  background: #fef2f2; color: var(--clr-danger); font-weight: 700;
   border: 1px solid #fca5a5; border-radius: 4px; padding: 1px 8px; font-size: 12px;
 }
 .examroom-room-grid {
@@ -1729,12 +1643,12 @@ h1, h2, h3, h4,
 }
 .examroom-card-icon {
   width: 36px; height: 36px; border-radius: 8px;
-  background: #e0f2fe; color: #0284c7;
+  background: #e0f2fe; color: var(--clr-info);
   display: flex; align-items: center; justify-content: center;
   font-size: 16px; flex-shrink: 0;
 }
 .examroom-card-icon .exam-master-image { width: 34px; height: 34px; }
-.examroom-card--urgent .examroom-card-icon { background: #fee2e2; color: #dc2626; }
+.examroom-card--urgent .examroom-card-icon { background: #fee2e2; color: var(--clr-danger); }
 .examroom-card--active .examroom-card-icon { background: #dbeafe; color: var(--clr-primary-dark); }
 .examroom-card-info { flex: 1; min-width: 0; }
 .examroom-card-name  { font-size: 14px; font-weight: 800; color: var(--clr-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1745,7 +1659,7 @@ h1, h2, h3, h4,
   display: flex; align-items: center; justify-content: center;
   font-size: 18px; font-weight: 900; flex-shrink: 0;
 }
-.examroom-card-total.urgent { background: #dc2626; color: #fff; }
+.examroom-card-total.urgent { background: var(--clr-danger); color: #fff; }
 .examroom-card-total.empty  { background: #f1f5f9; color: #94a3b8; font-size: 14px; }
 .examroom-card-pills { display: flex; flex-wrap: wrap; gap: 5px; }
 .examroom-pill {
@@ -1754,19 +1668,8 @@ h1, h2, h3, h4,
 }
 .pill-moving { background: #dbeafe; color: #1d4ed8; }
 .pill-exam   { background: #fef3c7; color: #b45309; }
-.pill-pickup { background: #fef2f2; color: #dc2626; }
+.pill-pickup { background: #fef2f2; color: var(--clr-danger); }
 .examroom-card-empty-note { font-size: 11px; color: #94a3b8; font-style: italic; }
-
-/* 検査室 未選択 空状態（検査室0件時のみ残す） */
-.examroom-empty-select { padding: 48px 32px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.examroom-empty-arrow { font-size: 28px; color: var(--clr-primary); animation: bounce-up .9s ease-in-out infinite; margin-bottom: 4px; }
-.examroom-empty-icon { font-size: 48px !important; opacity: .18 !important; color: var(--clr-primary); margin-bottom: 4px; }
-.examroom-empty-title { font-size: 17px !important; font-weight: 700; color: #1e40af !important; opacity: 1 !important; }
-.examroom-empty-hint { font-size: 13px !important; color: #64748b !important; text-align: center; line-height: 1.7; opacity: 1 !important; }
-@keyframes bounce-up {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
-}
 
 /* 病床モーダル — ボタン2グループレイアウト */
 .modal-footer-split { display: flex; justify-content: space-between; align-items: center; width: 100%; flex-wrap: wrap; gap: 8px; }
@@ -1774,17 +1677,17 @@ h1, h2, h3, h4,
 .modal-footer-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .modal-btn-cancel { opacity: .75; }
 .modal-btn-cancel:hover { opacity: 1; }
-.modal-btn-call { background: transparent; border: 1px solid #16a34a; color: #16a34a; }
+.modal-btn-call { background: transparent; border: 1px solid var(--clr-success); color: var(--clr-success); }
 .modal-btn-call:hover { background: #f0fdf4; }
 
 /* 病床モーダル — 迎え要 警戒色 */
 .modal.status-urgent .modal-header { background: #fef2f2; border-bottom-color: #fca5a5; }
-.modal.status-urgent #modal-title { color: #dc2626; }
+.modal.status-urgent #modal-title { color: var(--clr-danger); }
 .modal-urgent-banner {
   display: flex; align-items: center; gap: 10px;
   background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px;
   padding: 10px 14px; margin-bottom: 14px;
-  color: #dc2626; font-weight: 700; font-size: 14px;
+  color: var(--clr-danger); font-weight: 700; font-size: 14px;
 }
 .modal-urgent-bell { animation: bell-shake .6s ease-in-out infinite; font-size: 18px; }
 @keyframes bell-shake {
@@ -1799,12 +1702,12 @@ h1, h2, h3, h4,
 .carryover-overlay { z-index: 500; }
 .carryover-modal { max-width: 640px; width: 92%; }
 .carryover-header h2 { color: #b45309; }
-.carryover-header h2 i { color: #d97706; }
+.carryover-header h2 i { color: var(--clr-warning); }
 .carryover-lead { font-size: 12px; color: var(--clr-text-muted); line-height: 1.5; margin-bottom: 12px; }
 .carryover-list { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
 .carryover-row {
   border: 1px solid var(--clr-border);
-  border-left: 3px solid #d97706;
+  border-left: 3px solid var(--clr-warning);
   border-radius: var(--radius);
   padding: 8px 10px;
   background: var(--clr-surface);
@@ -1968,7 +1871,7 @@ h1, h2, h3, h4,
 }
 .phone-dial-hint {
   font-size: 13px;
-  color: #16a34a;
+  color: var(--clr-success);
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -2247,93 +2150,13 @@ button.announcement-template-item:hover {
 .odbc-input:focus { outline: none; border-color: var(--clr-primary); box-shadow: 0 0 0 2px rgba(47,109,146,.12); }
 .odbc-mono { font-family: 'Roboto Mono', Consolas, monospace !important; font-size: 11.5px !important; }
 select.odbc-input option[disabled] { color: #94a3b8; }
-/* ---- ODBCステッパー見出し(Power Query風の進行状況表示、見た目のみ) ---- */
-.odbc-stepper {
-  display: flex; align-items: center; gap: 0;
-  margin-bottom: 14px; padding: 10px 4px;
-  overflow-x: auto;
-}
-.odbc-step {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  flex-shrink: 0; min-width: 56px;
-}
-.odbc-step-circle {
-  width: 26px; height: 26px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700;
-  background: var(--clr-surface, #fff);
-  border: 2px solid var(--clr-border, #cbd5e0);
-  color: var(--clr-text-muted, #94a3b8);
-  transition: all .15s ease;
-}
-.odbc-step-label {
-  font-size: 10px; color: var(--clr-text-muted, #64748b); white-space: nowrap;
-}
-.odbc-step.completed .odbc-step-circle {
-  background: var(--clr-primary, #2f6d92); border-color: var(--clr-primary, #2f6d92); color: #fff;
-}
-.odbc-step.completed .odbc-step-label { color: var(--clr-primary, #2f6d92); font-weight: 700; }
-.odbc-step-connector {
-  flex: 1; height: 2px; min-width: 16px;
-  background: var(--clr-border, #cbd5e0);
-  margin: 0 2px; margin-bottom: 16px;
-  transition: background .15s ease;
-}
-.odbc-step-connector.completed { background: var(--clr-primary, #2f6d92); }
-
-/* ---- ODBCナビゲーター(検索付きテーブル/ビュー一覧) + クエリプレビュー ---- */
-.odbc-navigator {
-  display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: 14px;
-}
-@media (max-width: 900px) {
-  .odbc-navigator { grid-template-columns: 1fr; }
-}
-.odbc-navigator-pane { display: flex; flex-direction: column; min-width: 0; }
-.odbc-navigator-search {
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 8px; margin-bottom: 6px;
-  border: 1px solid var(--clr-border, #bfdbfe); border-radius: 5px;
-  background: var(--clr-surface, #fff); color: var(--clr-text-muted, #94a3b8);
-}
-.odbc-navigator-search input {
-  flex: 1; border: none; outline: none; background: transparent;
-  font-size: 12.5px; padding: 4px 0; color: var(--clr-text, #1e293b);
-}
-.odbc-navigator-search button { flex-shrink: 0; }
-.odbc-navigator-list {
-  border: 1px solid var(--clr-border, #bfdbfe); border-radius: 5px;
-  background: var(--clr-surface, #fff);
-  max-height: 220px; overflow-y: auto;
-}
-.odbc-navigator-empty {
-  padding: 16px 10px; text-align: center;
-  font-size: 11.5px; color: var(--clr-text-muted, #94a3b8);
-}
-.odbc-navigator-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 10px; cursor: pointer;
-  border-bottom: 1px solid var(--clr-border, #eef2f7);
-  font-size: 12px; transition: background .1s ease;
-}
-.odbc-navigator-item:last-child { border-bottom: none; }
-.odbc-navigator-item:hover { background: rgba(47,109,146,.08); }
-.odbc-navigator-item.selected { background: rgba(47,109,146,.14); font-weight: 700; }
-.odbc-navigator-item-icon { width: 14px; text-align: center; color: var(--clr-text-muted, #94a3b8); }
-.odbc-navigator-item-icon.is-view { color: #7c3aed; }
-.odbc-navigator-item-icon.is-table { color: #2563eb; }
-.odbc-navigator-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.odbc-navigator-item-type { font-size: 10px; color: var(--clr-text-muted, #94a3b8); flex-shrink: 0; }
-.odbc-table-status { font-size: 11px; margin-top: 4px; min-height: 14px; }
-.odbc-status-ok { color: #16a34a; }
-.odbc-status-error { color: #dc2626; }
-
 .odbc-preview-empty, .odbc-preview-loading, .odbc-preview-error {
   margin-top: 8px; padding: 10px; border-radius: 5px;
   font-size: 11.5px; line-height: 1.5;
 }
 .odbc-preview-empty { color: var(--clr-text-muted, #94a3b8); background: var(--clr-bg, #f8fafc); border: 1px dashed var(--clr-border, #cbd5e0); }
 .odbc-preview-loading { color: var(--clr-text-muted, #64748b); }
-.odbc-preview-error { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca; }
+.odbc-preview-error { color: var(--clr-danger); background: #fef2f2; border: 1px solid #fecaca; }
 .odbc-preview-grid-wrap {
   margin-top: 8px; max-height: 220px; overflow: auto;
   border: 1px solid var(--clr-border, #bfdbfe); border-radius: 5px;
@@ -2492,7 +2315,7 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   align-items: flex-start;
   gap: 6px;
 }
-.settings-hint i { color: #0284c7; margin-top: 1px; }
+.settings-hint i { color: var(--clr-info); margin-top: 1px; }
 .settings-table {
   width: 100%;
   border-collapse: collapse;
@@ -2585,8 +2408,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   margin-left: 6px;
   cursor: help;
 }
-.settings-badge--device { background: #e0f2fe; color: #0369a1; }
-
 /* ---- システム保守タブ: 「このアプリについて」情報グリッド ---- */
 .maint-info-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 16px;
@@ -2659,7 +2480,7 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 }
 .palette-special-item[data-special="corridor"] { background: #f0fdf4; border-color: #86efac; color: #15803d; }
 .palette-special-item[data-special="wall"]     { background: #f1f5f9; border-color: #94a3b8; color: #475569; }
-.palette-special-item[data-special="clear"]    { background: #fff7ed; border-color: #fca5a5; color: #dc2626; }
+.palette-special-item[data-special="clear"]    { background: #fff7ed; border-color: #fca5a5; color: var(--clr-danger); }
 
 .map-editor-wrap {
   flex: 1;
@@ -2737,18 +2558,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   border-color: #94a3b8;
   border-style: solid;
 }
-/* 複数選択(Ctrl+クリック)されたセル */
-.map-editor-cell.is-selected {
-  box-shadow: 0 0 0 3px #f59e0b inset;
-}
-.map-editor-cell.is-selected::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(245, 158, 11, 0.18);
-  border-radius: 4px;
-  pointer-events: none;
-}
 .map-cell-bed {
   display: flex;
   flex-direction: column;
@@ -2785,48 +2594,20 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 11px;
 }
-/* 全病棟横断表示: 病棟ごとにセクションを積み重ねる */
-#bed-map-grid.bed-map-grid-allwards {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.bedmap-ward-section-title {
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--clr-text);
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--clr-border);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.bedmap-ward-section-title i { color: var(--clr-primary); }
-.bedmap-ward-section-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-  gap: 11px;
-}
-.bed-cell-empty {
-  /* 空セル: 廊下・壁などを表す透明スペース */
-  min-height: 6px;
-}
-
 /* ============================================================
    既存スタイルへの補足
    ============================================================ */
 /* 出棟中の病床カードはよりはっきり表示 */
 .bed-card.status-PICKUP_REQUIRED {
-  box-shadow: 0 0 0 3px #dc2626, var(--shadow-sm);
+  box-shadow: 0 0 0 3px var(--clr-danger), var(--shadow-sm);
 }
 .bed-card.status-NEARLY_DONE {
   box-shadow: 0 0 0 2px #ea580c, var(--shadow-sm);
 }
 
 /* サマリーカードのカウント数字 */
-#summary-pickup .summary-value { color: #dc2626; }
-#summary-soon .summary-value { color: #d97706; }
+#summary-pickup .summary-value { color: var(--clr-danger); }
+#summary-soon .summary-value { color: var(--clr-warning); }
 #summary-delay .summary-value { color: #b91c1c; }
 
 /* 空床のスタイルを薄く */
@@ -2852,38 +2633,15 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   box-shadow: 0 2px 8px rgba(0,0,0,0.10);
 }
 
-/* 病床マップのタイトル行 */
-.room-separator {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--clr-text-muted);
-  padding: 4px 8px;
-  background: #f8fafc;
-  border-radius: 4px;
-  border-left: 3px solid var(--clr-primary);
-}
-
 /* 検査室画面 - アクションボタン群 */
 .exam-card-actions { margin-top: 8px; }
-
-/* プライオリティリストの件数バッジ */
-.panel-badge {
-  background: #dc2626;
-  color: #fff;
-  border-radius: 5px;
-  padding: 1px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  margin-left: 4px;
-}
 
 /* ============================================================
    初期設定ウィザード
    ============================================================ */
 .wiz-modal {
   max-width: 680px; width: 95vw;
-  box-shadow: var(--shadow-xl);
+  box-shadow: var(--shadow-lg);
 }
 .wiz-body { min-height: 260px; font-family: inherit; }
 
@@ -3008,11 +2766,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
 .text-sm { font-size: 12px; }
 .text-xs { font-size: 10px; }
 .font-bold { font-weight: 700; }
-.flex { display: flex; }
-.items-center { align-items: center; }
-.gap-2 { gap: 8px; }
-.mt-2 { margin-top: 8px; }
-.mb-2 { margin-bottom: 8px; }
 .hidden { display: none !important; }
 .divider { height: 1px; background: var(--clr-border); margin: 12px 0; }
 
@@ -3062,17 +2815,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   background: rgba(47, 109, 146, 0.06);
   border-color: rgba(47, 109, 146, 0.3);
 }
-.bed-cell-empty .add-memo-btn {
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 600;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  pointer-events: none;
-}
-.bed-cell-empty:hover .add-memo-btn {
-  opacity: 1;
-}
 
 .bed-cell-empty.is-corridor,
 .bed-cell-empty.is-wall {
@@ -3084,10 +2826,6 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   background: inherit !important;
   border-color: inherit !important;
   cursor: default !important;
-}
-.bed-cell-empty.is-corridor .add-memo-btn,
-.bed-cell-empty.is-wall .add-memo-btn {
-  display: none !important;
 }
 
 
@@ -3115,7 +2853,7 @@ select.odbc-input option[disabled] { color: #94a3b8; }
   left: 0;
   right: 0;
   z-index: 9999;
-  background: #dc2626;
+  background: var(--clr-danger);
   color: #fff;
   text-align: center;
   padding: 10px 16px;
@@ -3194,8 +2932,8 @@ body.exam-terminal-mode #page-ward-dashboard {
 .exam-stats-table { font-size: 12px; }
 .exam-stats-table th { white-space: nowrap; }
 .exam-stats-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.exam-stats-over { color: #dc2626; font-weight: 800; }   /* 実績が標準を超過 */
-.exam-stats-under { color: #16a34a; font-weight: 800; }  /* 実績が標準より短い */
+.exam-stats-over { color: var(--clr-danger); font-weight: 800; }   /* 実績が標準を超過 */
+.exam-stats-under { color: var(--clr-success); font-weight: 800; }  /* 実績が標準より短い */
 
 /* スタッフ稼働状況チップ(付き添い中/病棟待機/空き) */
 #staff-status-panel {
@@ -3435,37 +3173,6 @@ body.exam-terminal-mode #page-ward-dashboard {
 .device-popover-more {
   padding: 8px 0 2px;
 }
-
-/* ───────────────────────────────────────────────
-   占有率・当日KPIサマリー（ダッシュボード上部）
-   ─────────────────────────────────────────────── */
-#kpi-strip {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-bottom: 10px;
-  padding: 6px 12px;
-  background: var(--clr-surface);
-  border: 1px solid var(--clr-border);
-  border-left: 3px solid var(--clr-primary);
-  border-radius: var(--radius);
-  font-size: 12px;
-  color: var(--clr-text);
-}
-#kpi-strip:empty { display: none; }
-.kpi-item { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.kpi-item b { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.kpi-k { color: var(--clr-text-muted); font-weight: 700; }
-.kpi-sub { color: var(--clr-text-muted); font-size: 11px; }
-.kpi-div { width: 1px; align-self: stretch; background: var(--clr-border); }
-
-/* 検査時間実績テーブル */
-.exam-stats-table { font-size: 12px; }
-.exam-stats-table th { white-space: nowrap; }
-.exam-stats-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.exam-stats-over { color: #dc2626; font-weight: 800; }   /* 実績が標準を超過 */
-.exam-stats-under { color: #16a34a; font-weight: 800; }  /* 実績が標準より短い */
 
 /* スケジュール取り込み設定: CSVヘッダ読み込み結果のクリック可能なチップ
    (クリックで選択中のマッピング入力欄へ自動入力する) */
