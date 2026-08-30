@@ -1178,6 +1178,7 @@ const BedModal = {
     }
 
     const btn = document.querySelector(`[data-action-status="${newStatus}"]`);
+    const btnOriginalHtml = btn ? btn.innerHTML : null;
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>'; }
 
     try {
@@ -1210,7 +1211,8 @@ const BedModal = {
         this.close();
         return;
       }
-      UI.toast('更新に失敗しました', 'danger');
+      UI.toast('更新に失敗しました: ' + e.message, 'danger');
+      if (btn) { btn.disabled = false; btn.innerHTML = btnOriginalHtml; }
     }
   },
 

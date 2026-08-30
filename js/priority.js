@@ -267,7 +267,11 @@ const NotificationHistory = {
       unconfirmedOnly.checked = localStorage.getItem('cfg_notification_history_unconfirmed_only') === 'true';
       unconfirmedOnly.dataset.listenerBound = 'true';
       unconfirmedOnly.addEventListener('change', () => {
-        localStorage.setItem('cfg_notification_history_unconfirmed_only', unconfirmedOnly.checked ? 'true' : 'false');
+        try {
+          localStorage.setItem('cfg_notification_history_unconfirmed_only', unconfirmedOnly.checked ? 'true' : 'false');
+        } catch (e) {
+          console.warn('[Priority] 未確認のみ表示設定の保存に失敗しました:', e.message);
+        }
         this.render();
       });
     }

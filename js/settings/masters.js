@@ -230,6 +230,8 @@ Object.assign(Settings, {
         map_row: bed?.map_row ?? null,
         sort_order: bed?.sort_order ?? 99,
       };
+      const saveBtn = document.getElementById('bf-save');
+      saveBtn.disabled = true;
       try {
         if (isNew) {
           const newId = `bed-${Date.now()}`;
@@ -244,6 +246,7 @@ Object.assign(Settings, {
         this._renderBeds(document.getElementById('settings-tab-body'));
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        saveBtn.disabled = false;
       }
     };
   },
@@ -268,7 +271,7 @@ Object.assign(Settings, {
       await App.loadMasters();
       this._renderBeds(document.getElementById('settings-tab-body'));
     } catch (e) {
-      UI.toast('削除に失敗しました', 'danger');
+      UI.toast('削除に失敗しました: ' + e.message, 'danger');
     }
   },
 
@@ -1027,6 +1030,8 @@ Object.assign(Settings, {
         is_active: document.getElementById('rf-active').value === 'true',
         exam_type_ids: [...overlay.querySelectorAll('.rf-exam-type:checked')].map(cb => cb.value),
       };
+      const saveBtn = document.getElementById('rf-save');
+      saveBtn.disabled = true;
       try {
         if (isNew) {
           const newId = `room-${code.toLowerCase()}-${Date.now()}`;
@@ -1043,6 +1048,7 @@ Object.assign(Settings, {
         this._renderRooms(document.getElementById('settings-tab-body'));
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        saveBtn.disabled = false;
       }
     };
   },
@@ -1169,6 +1175,8 @@ Object.assign(Settings, {
         is_active: document.getElementById('sf-active').value === 'true',
         ward_id: wardId,
       };
+      const saveBtn = document.getElementById('sf-save');
+      saveBtn.disabled = true;
       try {
         if (isNew) {
           await API.create('staffs', { id: `staff-${Date.now()}`, ...data });
@@ -1182,6 +1190,7 @@ Object.assign(Settings, {
         this._renderStaffs(document.getElementById('settings-tab-body'));
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        saveBtn.disabled = false;
       }
     };
   },
@@ -1398,6 +1407,8 @@ Object.assign(Settings, {
         ) + 1;
       }
 
+      const saveBtn = document.getElementById('wf-save');
+      saveBtn.disabled = true;
       try {
         if (isNew) {
           await API.create('wards', { id, ...data });
@@ -1416,6 +1427,7 @@ Object.assign(Settings, {
         this._renderWards(document.getElementById('settings-tab-body'));
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        saveBtn.disabled = false;
       }
     };
   },
@@ -1774,6 +1786,8 @@ Object.assign(Settings, {
         standard_duration_min: parseInt(durationVal, 10),
       };
 
+      const saveBtn = document.getElementById('et-save');
+      saveBtn.disabled = true;
       try {
         if (isNew) {
           const newId = `exam-${code.toLowerCase()}-${Date.now()}`;
@@ -1788,6 +1802,7 @@ Object.assign(Settings, {
         this._renderExamTypes(document.getElementById('settings-tab-body'));
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        saveBtn.disabled = false;
       }
     };
   },
@@ -1950,6 +1965,8 @@ Object.assign(Settings, {
       if (!name) { UI.toast('名称を入力してください', 'warning'); return; }
       const icon = document.getElementById('pat-icon').value || null;
 
+      const saveBtn = document.getElementById('pat-save');
+      saveBtn.disabled = true;
       try {
         if (isNew) {
           const newId = `pat-${Date.now()}`;
@@ -1964,6 +1981,7 @@ Object.assign(Settings, {
         this._renderPickupAssistanceTypes(document.getElementById('settings-tab-body'));
       } catch (e) {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
+        saveBtn.disabled = false;
       }
     };
   },

@@ -276,9 +276,11 @@ const Timeline = {
       </div>
     `, x, y);
 
-    document.getElementById('tl-popup-save')?.addEventListener('click', async () => {
+    document.getElementById('tl-popup-save')?.addEventListener('click', async (e) => {
       const inp = document.getElementById('tl-popup-time');
       if (!inp || !inp.value) return;
+      const saveBtn = e.currentTarget;
+      saveBtn.disabled = true;
       const [h, m] = inp.value.split(':').map(Number);
       const base = new Date(event.departed_at || Date.now());
       base.setHours(h, m, 0, 0);
@@ -292,6 +294,7 @@ const Timeline = {
       } catch (err) {
         if (await App.handleDataConflict(err)) return;
         UI.toast('時間の変更に失敗しました', 'danger');
+        saveBtn.disabled = false;
       }
     });
   },

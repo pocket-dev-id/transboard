@@ -488,9 +488,12 @@ Object.assign(Settings, {
         return;
       }
 
+      saveNetworkBtn.disabled = true;
+
       const tokenSave = await API.setTerminalApiToken(apiToken);
       if (!tokenSave?.success) {
         UI.toast(tokenSave?.message || 'APIトークンを安全に保存できませんでした', 'danger');
+        saveNetworkBtn.disabled = false;
         return;
       }
 
@@ -558,6 +561,8 @@ Object.assign(Settings, {
       } catch (err) {
         console.error(err);
         UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
+      } finally {
+        saveNetworkBtn.disabled = false;
       }
     }; // if (saveNetworkBtn)
 

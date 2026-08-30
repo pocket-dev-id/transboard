@@ -1717,6 +1717,9 @@ Object.assign(Settings, {
 
     // ── マスター（音量・ミュート・スキャン・着信音）保存 ──
     document.getElementById('btn-save-sounds-master').onclick = async () => {
+      const saveBtn = document.getElementById('btn-save-sounds-master');
+      saveBtn.disabled = true;
+
       const vol      = document.getElementById('notif-volume').value;
       const muteOn   = document.getElementById('mute-enabled').checked;
       const muteStart= document.getElementById('mute-start').value || '22:00';
@@ -1758,6 +1761,8 @@ Object.assign(Settings, {
         UI.toast('音量・通知音設定を保存しました', 'success');
       } catch(err) {
         UI.toast('保存に失敗しました: ' + err.message, 'danger');
+      } finally {
+        saveBtn.disabled = false;
       }
     };
 
