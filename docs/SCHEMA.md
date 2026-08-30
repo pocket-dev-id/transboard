@@ -36,7 +36,9 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 |---|---|---|
 | `id` | string | 主キー（例: `ward-1`） |
 | `name` | string | 病棟名（例: `東2病棟`） |
-| `order` | number | 表示順 |
+| `phone` | string \| null | 内線番号 |
+| `note` | string \| null | 備考 |
+| `sort_order` | number | 表示順 |
 
 ---
 
@@ -48,7 +50,8 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 | `ward_id` | string | 所属病棟ID |
 | `bed_number` | string | ベッド番号（例: `101`） |
 | `room_number` | string \| null | 病室番号 |
-| `order` | number | 表示順 |
+| `sort_order` | number | 表示順 |
+| `map_col` / `map_row` | number | 病床マップ上の表示位置（列・行） |
 | `patient_id` | string \| null | 患者ID（CSV/ODBC同期） |
 | `patient_name` | string \| null | 患者氏名 |
 | `is_present` | boolean | 現在在床中か |
@@ -77,6 +80,30 @@ TransBoard はSQLiteを使用せず、JSONファイル（`db.json`）を独自�
 CSVでは `;` 区切りの文字列として入出力する。`exam_type_ids` 列を持たないCSVを
 取り込んだ場合、一括保存が既存レコードへのマージであることを利用して既存の
 紐付けを維持する（列が無いことを「全解除」とは解釈しない）。
+
+---
+
+### `exam_types` — 検査種別マスタ
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー（例: `exam-ct`） |
+| `name` | string | 検査種別名（例: `CT`） |
+| `code` | string | コード（例: `CT`） |
+| `standard_duration_min` | number | 標準所要時間（分）。`transfer_events.estimated_pickup_at`の再計算に使う |
+
+---
+
+### `pickup_assistance_types` — お迎え介助マスタ
+
+終了登録（迎え要）時に選べる「お迎えに必要なもの」の選択肢。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー（例: `pat-stretcher`） |
+| `name` | string | 表示名（例: `ストレッチャー`） |
+| `icon` | string \| null | 表示アイコン（Font Awesomeクラス）。未設定の項目もある |
+| `is_active` | boolean | 有効/無効 |
 
 ---
 
@@ -144,6 +171,18 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 | `staff_id` | string \| null | 操作スタッフID |
 | `details` | string | 操作詳細（JSON文字列） |
 | `created_at` | number | 操作日時（Unixms） |
+
+---
+
+### `staffs` — スタッフマスタ
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー（例: `staff-1`） |
+| `name` | string | スタッフ氏名 |
+| `role` | string | 役割（例: `nurse`） |
+| `ward_id` | string | 所属病棟ID |
+| `is_active` | boolean | 有効/無効（無効スタッフは選択肢から除外） |
 
 ---
 
@@ -237,6 +276,25 @@ IN_BED → MOVING → ARRIVED → IN_EXAM → NEARLY_DONE → PICKUP_REQUIRED �
 `ward-status`/`exam-room-status`エンドポイントが`recentAnnouncements`として返し、通知履歴パネルに
 状態変更通知と時系列で混ぜて表示します（送信した分は表示しません。受信側だけが対象です）。
 
+---
+
+### `calls` — 通話セッション記録
+
+WebRTC通話1件ごとの記録。シグナリング自体はメモリ上で行われ、本テーブルは
+開始・応答・終了の記録のみを残す。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー（例: `call-<timestamp>`） |
+| `from_id` | string | 発信元の論理ID（病棟ID / 検査室ID） |
+| `to_id` | string | 宛先の論理ID |
+| `status` | string | `calling` → `ended`（応答が無ければ無応答タイムアウトで自動終了） |
+| `started_at` | number | 発信日時（Unixms） |
+| `answered_at` | number \| null | 応答日時 |
+| `ended_at` | number \| null | 終了日時 |
+
+---
+
 ### `system_settings` — システム設定
 
 key-valueペアで管理。重要なキー一覧:
@@ -303,6 +361,43 @@ key-valueペアで管理。重要なキー一覧:
 なお Windows はサーバー単位でしか資格情報を保持できないため、同一サーバーに対して
 複数のフィードが異なる資格情報を指定することはできない（システムエラー1219）。
 その場合は保存時に警告が表示される。
+
+---
+
+### `schedule_items` — スケジュールアイテム
+
+`schedule_feeds`の設定でCSVを取り込むたびに生成される、実際の予定1件ごとのレコード。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー（`sched-<feedId>-<start_ms>-<連番>-<ファイル名>`） |
+| `feed_id` | string | 取り込み元の`schedule_feeds`のID |
+| `feed_name` | string | 取り込み時点のフィード名（表示用に複製） |
+| `color` | string | 取り込み時点のフィード表示色（表示用に複製） |
+| `ward_ids` | string[] | 対象病棟。空配列 = 全病棟（取り込み時点のフィード設定を複製） |
+| `title` | string | 内容（`mapping.col_title`列の値） |
+| `identifier` | string | 患者ID等（`mapping.col_id`列の値） |
+| `start_ms` | number | 予定日時（Unixms） |
+| `has_time` | boolean | CSV上に実際の時刻表記があったか（無い場合は00:00扱いだが未定として区別、詳細は上記参照） |
+| `duration_min` | number \| null | 所要時間（分） |
+| `raw` | object | CSV行そのもの（列名→値） |
+| `imported_at` | number | 取り込み日時（Unixms） |
+
+---
+
+### `import_logs` — CSVインポート履歴
+
+病床CSV/ODBC同期の実行結果ログ（`schedule_feeds`のCSV取り込みとは別の、病床マスタ
+本体を更新する取り込み機能のもの）。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `id` | string | 主キー（例: `log-<timestamp>`） |
+| `timestamp` | number | 実行日時（Unixms） |
+| `fileName` | string | 取り込んだCSVファイル名 |
+| `status` | string | `success` / `failed` |
+| `message` | string | 結果メッセージ |
+| `details` | string \| undefined | 失敗時のエラー詳細 |
 
 ---
 
