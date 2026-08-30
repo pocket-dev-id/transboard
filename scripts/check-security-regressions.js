@@ -346,7 +346,7 @@ assert(
   main.includes("const statusActor = isExternal") &&
   main.includes("? 'child_api'") &&
   main.includes("['ic_scan', 'maintenance'].includes(payload.source)") &&
-  main.includes('changed_by: statusActor') &&
+  main.includes('changedBy: statusActor') &&
   main.includes('actorType: statusActor'),
   'Status history must preserve trusted local operation sources while forcing external requests to child_api'
 );
