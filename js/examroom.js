@@ -49,12 +49,12 @@ const ExamRoom = {
     // 患者名表示トグルイベントのバインド
     const nameChk = document.getElementById('chk-exam-show-patient-names');
     if (nameChk && !nameChk.dataset.listenerBound) {
-      const savedVal = localStorage.getItem('cfg_show_patient_names') === 'true';
+      const savedVal = UI.getShowPatientNames();
       nameChk.checked = savedVal;
 
       nameChk.dataset.listenerBound = 'true';
       nameChk.addEventListener('change', () => {
-        localStorage.setItem('cfg_show_patient_names', nameChk.checked ? 'true' : 'false');
+        UI.setShowPatientNames(nameChk.checked);
         // トグル変更時は再描画を行うことで、ブラウザの描画遅延（一瞬の露出）を防ぐ
         this._renderQueue();
 
@@ -62,14 +62,6 @@ const ExamRoom = {
         const wardChk = document.getElementById('chk-show-patient-names');
         if (wardChk) {
           wardChk.checked = nameChk.checked;
-          const grid = document.getElementById('bed-map-grid');
-          if (grid) {
-            if (nameChk.checked) {
-              grid.classList.remove('hide-patient-names');
-            } else {
-              grid.classList.add('hide-patient-names');
-            }
-          }
         }
       });
     }
