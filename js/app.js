@@ -524,6 +524,128 @@ const App = {
     await this._loadTerminalRole();
     this._applyTerminalRoleMode({ navigate: false });
  
+    this._bindWindowControls();
+    await this._bindCoreMonitors();
+    this._bindTabSwitching();
+    this._bindBedMapFilterButtons();
+    this._bindPatientNameToggle();
+    this._bindStaffStatusFilter();
+    this._bindWardSelect();
+    this._bindTimelineDateControls();
+
+    // 通話パネル（ボタン初期化のみ）
+    CallPanel.init();
+
+    this._bindCardScanHandler();
+
+    // マスタ読み込み
+    await this.loadMasters();
+
+    // 病棟セレクトの動的同期
+    this.syncWardSelect();
+
+    // デモデータ投入（初回のみ）＆マスタ更新
+    await DemoData.setup();
+
+    // マスタ再読み込み（デモデータがmap_col等を更新した可能性があるため）
+    await this.loadMasters();
+
+    // 再度同期
+    this.syncWardSelect();
+    this._applyTerminalRoleMode({ navigate: false });
+
+    // 通話パネル描画（マスタ読み込み後）
+    CallPanel._renderCallPanel();
+
+    // イベントデータ読み込み
+    await this.refreshData();
+    this._primeNotificationBaseline();
+
+    // 初期表示・フォント設定の適用
+    await this.applySystemVisualSettings();
+
+    // 初期レンダリング
+    if (this.isExamTerminal()) UI.switchPage('exam-room');
+    else WardDashboard.render();
+
+    // ポーリング開始
+    this.startPolling();
+    // 子機では親機側の病床マスター変更（追加・変更・削除）を定期的に反映する。
+    this.startMasterSync();
+
+    // 初期設定ウィザードの自動起動チェック
+    const wizardSetting = AppState.systemSettings?.find(s => s.id === 'wizard_completed');
+    if (!wizardSetting || wizardSetting.value !== 'true') {
+      setTimeout(() => {
+        Wizard.open();
+      }, 500);
+    } else {
+      // 通常運用時のみ、日跨ぎ（帰棟し忘れ）の未完了出棟をチェックして通知する
+      // （初回セットアップ中はウィザードを優先し邪魔しない）
+      setTimeout(() => this.checkCarriedOver(), 800);
+    }
+
+    this._bindImportIpcListeners();
+
+    // タイマー更新 (30秒ごとに残り時間表示を更新)
+    // 病床マップ・優先対応一覧は病棟ダッシュボードにしか存在しないため、
+    // 他ページ表示中はDOM更新自体が無駄になる。ダッシュボード表示中は
+    // 5秒間隔ポーリングの再描画がこれより高頻度でカバーするが、通信断・
+    // バックオフ中でも時刻依存の表示（残り時間・遅延判定）が固まらないよう
+    // フォールバックとして残す。
+    if (this._uiRefreshTimer) clearInterval(this._uiRefreshTimer);
+    this._uiRefreshTimer = setInterval(() => {
+      const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
+      if (currentPage === 'ward-dashboard') {
+        BedMap.updateTimers();
+        Priority.renderSummary();
+        Priority.renderKpi();
+        Priority.renderPriorityList();
+      }
+      this._checkNotifications();
+    }, 30000);
+
+    // バージョン表示
+    if (window.electronAPI?.getAppVersion) {
+      const ver = await window.electronAPI.getAppVersion().catch(() => null);
+      if (ver) {
+        AppState.appVersion = ver;
+        this._renderAppVersion();
+      }
+    }
+
+    // 稼働モード設定の整合性チェック（ローカルDBとlocalStorageの不整合を自動修復）
+    await this._repairLocalShareMode();
+
+    // ハートビート送信（子機は必ず、親機も単独運用モードでなければ自身の
+    // 在席を他端末から見えるようにする。以前は子機モードのみ送っており、
+    // 親機の画面を実務端末として使っていても他の子機から永久に見えなかった）
+    if (!this.isStandalone()) {
+      this._startHeartbeat();
+    }
+
+    // 起動時の設定サマリを診断ログへ記録（DevTools操作なしで状態確認できるように）
+    if (window.electronAPI?.appendDebugLog) {
+      const token = await API.getTerminalApiToken();
+      const tokenSummary = token ? '設定あり' : '未設定';
+      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+      window.electronAPI.appendDebugLog(
+        `[App起動] version=${AppState.appVersion || '?'} cfg_share_mode=${shareMode} ` +
+        `cfg_parent_ip=${localStorage.getItem('cfg_parent_ip') || '(未設定)'} cfg_api_token=${tokenSummary}`
+      ).catch(() => {});
+    }
+
+    // 単独運用モードのUI反映（検査室タブ・通話ボタン・接続端末チップの非表示）
+    this._applyStandaloneMode();
+
+    // アプリ更新チェック（親機は自身の配信フォルダ、子機は親機を参照）
+    this._startUpdateCheck();
+    this._startDevicePresenceMonitor();
+
+    console.log('[App] 初期化完了');
+  },
+
+  _bindWindowControls() {
     // 表示倍率（ズーム）のイベントバインド（起動時はDBロード後に applySystemVisualSettings で一括適用）
     const zoomSelect = document.getElementById('zoom-select');
     if (zoomSelect) {
@@ -594,7 +716,9 @@ const App = {
         }
       });
     }
- 
+  },
+
+  async _bindCoreMonitors() {
     // 時計開始
     UI.startClock();
 
@@ -613,7 +737,9 @@ const App = {
 
     // パスコードモーダルの初期化
     PasscodeModal.init();
- 
+  },
+
+  _bindTabSwitching() {
     // タブ切り替え
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -648,7 +774,9 @@ const App = {
         this._renderDevicePresence(this._connectedDevicesSnapshot || [], null);
       });
     });
+  },
 
+  _bindBedMapFilterButtons() {
     // フィルターボタンイベント
     document.querySelectorAll('#bed-map-filter-bar .filter-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -658,7 +786,9 @@ const App = {
         BedMap.applyFilter();
       });
     });
+  },
 
+  _bindPatientNameToggle() {
     // 患者名表示トグルイベント
     const nameChk = document.getElementById('chk-show-patient-names');
     if (nameChk) {
@@ -681,7 +811,9 @@ const App = {
         }
       });
     }
+  },
 
+  _bindStaffStatusFilter() {
     // スタッフ稼働状況の絞り込みトグル（全員／稼働中のみ）
     const staffFilter = document.getElementById('staff-status-filter');
     if (staffFilter) {
@@ -691,7 +823,9 @@ const App = {
         if (typeof StaffStatus !== 'undefined') StaffStatus.render();
       });
     }
+  },
 
+  _bindWardSelect() {
     // 病棟セレクト変更
     document.getElementById('ward-select').addEventListener('change', async (e) => {
       if (this.isExamTerminal()) return;
@@ -713,7 +847,9 @@ const App = {
         CallPanel._renderCallPanel();
       }
     });
+  },
 
+  _bindTimelineDateControls() {
     // タイムライン日付
     const dateInput = document.getElementById('timeline-date');
     const todayValue = TimelineDate.format();
@@ -740,10 +876,9 @@ const App = {
         Timeline._renderFullTimeline().catch(console.error);
       }
     });
+  },
 
-    // 通話パネル（ボタン初期化のみ）
-    CallPanel.init();
-
+  _bindCardScanHandler() {
     // ICカードスキャンのグローバルハンドラ（タブに関わらず常に受信）
     if (window.electronAPI?.onCardScanned) {
       window.electronAPI.onCardScanned((uid) => {
@@ -771,54 +906,9 @@ const App = {
         }
       });
     }
+  },
 
-    // マスタ読み込み
-    await this.loadMasters();
-
-    // 病棟セレクトの動的同期
-    this.syncWardSelect();
-
-    // デモデータ投入（初回のみ）＆マスタ更新
-    await DemoData.setup();
-
-    // マスタ再読み込み（デモデータがmap_col等を更新した可能性があるため）
-    await this.loadMasters();
-
-    // 再度同期
-    this.syncWardSelect();
-    this._applyTerminalRoleMode({ navigate: false });
-
-    // 通話パネル描画（マスタ読み込み後）
-    CallPanel._renderCallPanel();
-
-    // イベントデータ読み込み
-    await this.refreshData();
-    this._primeNotificationBaseline();
-
-    // 初期表示・フォント設定の適用
-    await this.applySystemVisualSettings();
-
-    // 初期レンダリング
-    if (this.isExamTerminal()) UI.switchPage('exam-room');
-    else WardDashboard.render();
-
-    // ポーリング開始
-    this.startPolling();
-    // 子機では親機側の病床マスター変更（追加・変更・削除）を定期的に反映する。
-    this.startMasterSync();
-
-    // 初期設定ウィザードの自動起動チェック
-    const wizardSetting = AppState.systemSettings?.find(s => s.id === 'wizard_completed');
-    if (!wizardSetting || wizardSetting.value !== 'true') {
-      setTimeout(() => {
-        Wizard.open();
-      }, 500);
-    } else {
-      // 通常運用時のみ、日跨ぎ（帰棟し忘れ）の未完了出棟をチェックして通知する
-      // （初回セットアップ中はウィザードを優先し邪魔しない）
-      setTimeout(() => this.checkCarriedOver(), 800);
-    }
-
+  _bindImportIpcListeners() {
     // デスクトップアプリ用自動インポートのリスナー登録
     if (window.electronAPI) {
       console.log('[Electron] 患者・在床情報のインポートリスナーを設定しています...');
@@ -1238,63 +1328,6 @@ const App = {
         });
       }
     }
-
-    // タイマー更新 (30秒ごとに残り時間表示を更新)
-    // 病床マップ・優先対応一覧は病棟ダッシュボードにしか存在しないため、
-    // 他ページ表示中はDOM更新自体が無駄になる。ダッシュボード表示中は
-    // 5秒間隔ポーリングの再描画がこれより高頻度でカバーするが、通信断・
-    // バックオフ中でも時刻依存の表示（残り時間・遅延判定）が固まらないよう
-    // フォールバックとして残す。
-    if (this._uiRefreshTimer) clearInterval(this._uiRefreshTimer);
-    this._uiRefreshTimer = setInterval(() => {
-      const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
-      if (currentPage === 'ward-dashboard') {
-        BedMap.updateTimers();
-        Priority.renderSummary();
-        Priority.renderKpi();
-        Priority.renderPriorityList();
-      }
-      this._checkNotifications();
-    }, 30000);
-
-    // バージョン表示
-    if (window.electronAPI?.getAppVersion) {
-      const ver = await window.electronAPI.getAppVersion().catch(() => null);
-      if (ver) {
-        AppState.appVersion = ver;
-        this._renderAppVersion();
-      }
-    }
-
-    // 稼働モード設定の整合性チェック（ローカルDBとlocalStorageの不整合を自動修復）
-    await this._repairLocalShareMode();
-
-    // ハートビート送信（子機は必ず、親機も単独運用モードでなければ自身の
-    // 在席を他端末から見えるようにする。以前は子機モードのみ送っており、
-    // 親機の画面を実務端末として使っていても他の子機から永久に見えなかった）
-    if (!this.isStandalone()) {
-      this._startHeartbeat();
-    }
-
-    // 起動時の設定サマリを診断ログへ記録（DevTools操作なしで状態確認できるように）
-    if (window.electronAPI?.appendDebugLog) {
-      const token = await API.getTerminalApiToken();
-      const tokenSummary = token ? '設定あり' : '未設定';
-      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-      window.electronAPI.appendDebugLog(
-        `[App起動] version=${AppState.appVersion || '?'} cfg_share_mode=${shareMode} ` +
-        `cfg_parent_ip=${localStorage.getItem('cfg_parent_ip') || '(未設定)'} cfg_api_token=${tokenSummary}`
-      ).catch(() => {});
-    }
-
-    // 単独運用モードのUI反映（検査室タブ・通話ボタン・接続端末チップの非表示）
-    this._applyStandaloneMode();
-
-    // アプリ更新チェック（親機は自身の配信フォルダ、子機は親機を参照）
-    this._startUpdateCheck();
-    this._startDevicePresenceMonitor();
-
-    console.log('[App] 初期化完了');
   },
 
   // ── 稼働モード設定のセルフリペア ──
