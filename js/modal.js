@@ -496,7 +496,7 @@ const BedModal = {
       : '';
     const admissionHtml = (occ.admission_date != null && occ.started_at != null &&
       Math.abs(occ.started_at - occ.admission_date) >= 86400000)
-      ? `<span class="bed-history-admission-date">入院日: ${this._formatDateOnly(occ.admission_date)}</span>`
+      ? `<span class="bed-history-admission-date">入院日: ${UI.formatDate(occ.admission_date)}</span>`
       : '';
     return `
       <div class="bed-history-occupancy-row" data-history-index="occ-${index}">
@@ -511,13 +511,6 @@ const BedModal = {
         ${hasTransfers ? `<div class="bed-history-occupancy-detail hidden">${nestedHtml}</div>` : ''}
       </div>
     `;
-  },
-
-  // 入院日は日付入力由来で時刻が00:00になるため、時刻を出さずに整形する
-  _formatDateOnly(ms) {
-    if (!ms) return '--';
-    const d = new Date(ms);
-    return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
   },
 
   // 移送1件の進捗タイムライン(移送開始〜帰棟完了)HTML。現在進行中イベントと

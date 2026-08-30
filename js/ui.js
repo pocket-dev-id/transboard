@@ -182,6 +182,13 @@ const UI = {
            `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
   },
 
+  // 時刻を含まない日付のみの表示(入院日等、日付入力由来で時刻が00:00になる値向け)
+  formatDate(ms) {
+    if (!ms) return '--';
+    const d = new Date(ms);
+    return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
+  },
+
   // 今日なら時刻のみ、それ以外は日付付きで表示する。日跨ぎで残る移送
   // （継続扱いのイベント等）を時刻のみで表示すると別日のデータと誤読されるため
   formatTimeSmart(ms) {
