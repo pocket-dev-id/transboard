@@ -490,19 +490,18 @@ Object.assign(Settings, {
 
       saveNetworkBtn.disabled = true;
 
-      const tokenSave = await API.setTerminalApiToken(apiToken);
-      if (!tokenSave?.success) {
-        UI.toast(tokenSave?.message || 'APIトークンを安全に保存できませんでした', 'danger');
-        saveNetworkBtn.disabled = false;
-        return;
-      }
-
-      // localStorageへ保存（起動時の同期ロード用）
-      localStorage.setItem('cfg_share_mode', mode);
-      localStorage.setItem('cfg_parent_ip', parentIp);
-
-      // マスタDB側にも設定値（互換性保存）を反映
       try {
+        const tokenSave = await API.setTerminalApiToken(apiToken);
+        if (!tokenSave?.success) {
+          UI.toast(tokenSave?.message || 'APIトークンを安全に保存できませんでした', 'danger');
+          return;
+        }
+
+        // localStorageへ保存（起動時の同期ロード用）
+        localStorage.setItem('cfg_share_mode', mode);
+        localStorage.setItem('cfg_parent_ip', parentIp);
+
+        // マスタDB側にも設定値（互換性保存）を反映
         // 稼働モード・親機IPは「この端末自身」の設定のため、共有APIルーティング
         // （API.patch）を通さず常にローカルDBへ直接書き込む。
         // API.patch経由にすると子機からの保存が親機のDBの share_mode を'client'に
