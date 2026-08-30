@@ -144,7 +144,7 @@ Object.assign(Settings, {
       const { defaultZoomVal, fontStyleVal, bedCardSizeVal, terminalRoleVal } = saveLocalVisualValues();
 
       try {
-        const isChildMode = currentMode === 'client' || currentMode === 'child';
+        const isChildMode = isClientMode();
         // 端末固有設定は子機から親機DBへ書き込まない。親機自身で設定した値だけを
         // 新規端末向けのデフォルトとして共有し、子機はlocalStorageを優先する。
         let failed = false;
@@ -235,8 +235,7 @@ Object.assign(Settings, {
   },
 
   async _renderAccessProtectionSettings(body) {
-    const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const isClientMode = currentMode === 'client' || currentMode === 'child';
+    const isChildMode = isClientMode();
     const passcodeSetting = AppState.systemSettings?.find(s => s.id === 'admin_passcode') || { value: '0000' };
     const hasPasscode = !!passcodeSetting.value;
 
@@ -246,7 +245,7 @@ Object.assign(Settings, {
           <h3><i class="fas fa-lock"></i> 設定画面保護</h3>
           <span class="settings-badge settings-badge--shared">親機・子機共通</span>
         </div>
-        ${isClientMode ? `
+        ${isChildMode ? `
         <div style="margin-bottom:12px; padding:10px 12px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; color:#1e40af; font-size:12px; line-height:1.5;">
           <i class="fas fa-info-circle"></i>
           パスコードは親機・子機で共通です。子機では解除のみ可能で、変更は親機の設定画面から行います。
@@ -259,19 +258,19 @@ Object.assign(Settings, {
         `}
         <div class="form-row">
           <label style="font-size:12.5px; font-weight:700; color:#4a5568;">管理者パスコード（6文字以上）</label>
-          <input type="password" id="cfg-admin-passcode" ${isClientMode ? 'disabled' : ''} placeholder="${isClientMode ? '親機で変更してください' : (hasPasscode ? '変更する場合のみ入力' : '6文字以上で入力')}" style="width:100%; max-width:260px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700; ${isClientMode ? 'background:#f8fafc; color:#64748b;' : ''}">
+          <input type="password" id="cfg-admin-passcode" ${isChildMode ? 'disabled' : ''} placeholder="${isChildMode ? '親機で変更してください' : (hasPasscode ? '変更する場合のみ入力' : '6文字以上で入力')}" style="width:100%; max-width:260px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px; font-weight:700; ${isChildMode ? 'background:#f8fafc; color:#64748b;' : ''}">
           <small style="font-size:11px; color:#718096;">
             6文字以上で、連番・同一数字のみ・推測されやすい値は避けてください。保存時はハッシュ化されます。
           </small>
         </div>
         <div style="margin-top:12px;">
-          <button class="btn btn-primary btn-sm" id="btn-save-admin-passcode" ${isClientMode ? 'disabled' : ''}><i class="fas fa-save"></i> パスコードを保存</button>
+          <button class="btn btn-primary btn-sm" id="btn-save-admin-passcode" ${isChildMode ? 'disabled' : ''}><i class="fas fa-save"></i> パスコードを保存</button>
         </div>
       </div>
     `;
 
     const saveBtn = body.querySelector('#btn-save-admin-passcode');
-    if (!saveBtn || isClientMode) return;
+    if (!saveBtn || isChildMode) return;
 
     saveBtn.onclick = async () => {
       const raw = (body.querySelector('#cfg-admin-passcode')?.value || '').trim();

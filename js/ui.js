@@ -506,10 +506,15 @@ const UI = {
   },
 
   /* ---------- 通知音量・ミュート状態の取得 ---------- */
+  // 子機は端末固有のlocalStorage値を優先し、無ければ共有system_settingsへ
+  // フォールバックする。この「子機ならローカル優先」の判定を5箇所
+  // (このオブジェクト内4箇所+js/call.jsの着信音1箇所)で共通化する。
+  _localOverrideOrNull(key) {
+    return isClientMode() ? localStorage.getItem(key) : null;
+  },
+
   _getNotifVolume() {
-    const shareMode = localStorage.getItem('cfg_share_mode');
-    const isChild = shareMode === 'client' || shareMode === 'child';
-    const localVol = isChild ? localStorage.getItem('tbs_notification_volume') : null;
+    const localVol = this._localOverrideOrNull('tbs_notification_volume');
     if (localVol !== null && localVol !== undefined) return Math.min(1, Math.max(0, parseInt(localVol, 10) / 100));
     const rec = typeof AppState !== 'undefined'
       ? AppState.systemSettings?.find(s => s.id === 'notification_volume') : null;
@@ -517,9 +522,7 @@ const UI = {
   },
 
   _isNotifMuted() {
-    const shareMode = localStorage.getItem('cfg_share_mode');
-    const isChild = shareMode === 'client' || shareMode === 'child';
-    const localMute = isChild ? localStorage.getItem('tbs_notification_mute') : null;
+    const localMute = this._localOverrideOrNull('tbs_notification_mute');
     let muteCfg = null;
     if (localMute) {
       try { muteCfg = JSON.parse(localMute); } catch(e) {}
@@ -539,9 +542,7 @@ const UI = {
   },
 
   _isAutomaticSpeechEnabled() {
-    const shareMode = localStorage.getItem('cfg_share_mode');
-    const isChild = shareMode === 'client' || shareMode === 'child';
-    const localValue = isChild ? localStorage.getItem('tbs_notification_auto_speech') : null;
+    const localValue = this._localOverrideOrNull('tbs_notification_auto_speech');
     if (localValue !== null) return localValue !== 'false';
     const rec = typeof AppState !== 'undefined'
       ? AppState.systemSettings?.find(s => s.id === 'notification_auto_speech')
@@ -625,9 +626,7 @@ const UI = {
   /* ---------- スキャン音の再生 (合成音声) ---------- */
   playScanSound(success) {
     // スキャン音のON/OFF設定チェック
-    const shareMode = localStorage.getItem('cfg_share_mode');
-    const isChild = shareMode === 'client' || shareMode === 'child';
-    const localScan = isChild ? localStorage.getItem('tbs_notification_scan_sound') : null;
+    const localScan = this._localOverrideOrNull('tbs_notification_scan_sound');
     let scanEnabled = true;
     if (localScan !== null) {
       scanEnabled = localScan !== 'false';

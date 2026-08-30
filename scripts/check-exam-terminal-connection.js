@@ -26,8 +26,10 @@ function buildHarness(state) {
     Promise, Date, JSON, Math,
     API: state.API,
     AppState: state.AppState,
-    // catch節がlocalStorage.getItem('cfg_share_mode')を参照するため必要
+    // catch節がisClientMode()(js/api.js定義、localStorage.getItem('cfg_share_mode')を
+    // 見るグローバル関数)を参照するため必要
     localStorage: { getItem: (key) => (key === 'cfg_share_mode' ? 'client' : null) },
+    isClientMode: () => true,
     // 部分同期(partialSync)のトースト通知のため必要
     UI: { toast: () => {} },
   };

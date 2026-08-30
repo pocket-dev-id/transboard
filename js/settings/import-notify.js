@@ -64,8 +64,7 @@ function validateReadOnlyQuery(sql) {
 
 Object.assign(Settings, {
   _isChildTerminal() {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    return shareMode === 'client' || shareMode === 'child';
+    return isClientMode();
   },
 
   _parentAction(action, payload = {}, options) {
@@ -1435,8 +1434,7 @@ Object.assign(Settings, {
   //  通知音設定管理
   // ──────────────────────────────────
   _renderNotificationSettings(body) {
-    const shareMode = localStorage.getItem('cfg_share_mode');
-    const isChildMode = shareMode === 'client' || shareMode === 'child';
+    const isChildMode = this._isChildTerminal();
 
     // 通知音設定
     let soundSettings = {

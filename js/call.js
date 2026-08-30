@@ -1935,9 +1935,7 @@ const CallPanel = {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       this._audioCtx = new AudioCtx();
-      const shareMode = localStorage.getItem('cfg_share_mode');
-      const isChild = shareMode === 'client' || shareMode === 'child';
-      const localRingSound = isChild ? localStorage.getItem('tbs_incoming_ring_sound') : null;
+      const localRingSound = UI._localOverrideOrNull('tbs_incoming_ring_sound');
       const ringSetting = AppState.systemSettings?.find(s => s.id === 'incoming_ring_sound');
       const ringSound = sound || localRingSound || ringSetting?.value || 'ring';
       const volume = UI._getNotifVolume();
