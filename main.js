@@ -23,6 +23,17 @@ const {
   createSmbSessionRegistry,
 } = require('./main-modules/smb-credentials');
 
+// このプロセスは親機として動いていれば全子機を支える共有サーバーも兼ねる。
+// 個々の非同期処理内で拾いきれなかった例外・rejectionでアプリ全体が
+// 無言で落ちて全端末が巻き添えになる事態を避けるため、最後の砦としてログに
+// 残す(個別のtry/catchを置き換えるものではなく、あくまでフォールバック)。
+process.on('uncaughtException', (err) => {
+  console.error('[Fatal] 捕捉されない例外が発生しました:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Fatal] 捕捉されないPromise rejectionが発生しました:', reason);
+});
+
 const { Readable } = require('stream');
 const WINDOWS_SYSTEM_ROOT = process.env.SystemRoot || 'C:\\Windows';
 const POWERSHELL_EXE = path.join(
@@ -589,7 +600,7 @@ function encryptSensitiveValue(value) {
 function decryptSensitiveValue(value) {
   if (!value) return value;
   if (!value.startsWith('ENCRYPTED:')) return value; // 暗号化されていない
-  
+
   const base64Str = value.substring('ENCRYPTED:'.length);
   if (safeStorage && safeStorage.isEncryptionAvailable()) {
     try {
@@ -599,7 +610,15 @@ function decryptSensitiveValue(value) {
       console.error('[Crypto] Decryption failed:', err);
     }
   }
-  return ''; // 復号エラー時は空文字
+  // 復号エラー時は空文字を返さない。readDbShared()の復号結果はキャッシュされ、
+  // それをreadDB()経由でwriteDB()に渡すと、system_settingsの機微な値は
+  // 「ENCRYPTED:で始まる値は既に暗号化済みとしてそのまま素通り」する
+  // encryptSensitiveValue()により、空文字が「空文字を暗号化した結果」として
+  // そのままディスクへ書き戻されてしまう(SMBパスワード等が無言で消失する)。
+  // 元の暗号化済み値をそのまま返すことで、この値が使われても認証に失敗する
+  // だけで済み(復号できないので当然)、実際に保存されている秘密情報自体は
+  // 次回書き込み時も無傷のまま残る。
+  return value;
 }
 
 function getTerminalSecretsPath() {
@@ -1062,7 +1081,9 @@ function readDbShared() {
     
     if (hasDuplicates || needsEncryptionRewrite) {
       console.log('[DB] データ補正または暗号化適用のための再書き込みを実施します。');
-      writeDB(db);
+      if (!writeDB(db)) {
+        console.warn('[DB] データ補正・暗号化適用の再書き込みに失敗しました。次回の書き込み時に再試行されます。');
+      }
     }
 
     dbCache = structuredClone(db);
@@ -1303,7 +1324,9 @@ function appendParentActionAudit(action, result, requestMeta = {}) {
     result: result && result.success === false ? 'failure' : 'success',
     details: { action, message: result?.message || '' },
   });
-  writeDB(db);
+  if (!writeDB(db)) {
+    console.warn(`[AuditLog] 親機アクション監査ログの永続化に失敗しました: action=${action}`);
+  }
   return result;
 }
 
@@ -1456,8 +1479,11 @@ function repairShareModeBeforeServerStart() {
   }
 
   if (changed) {
-    writeDB(db);
-    console.warn(`[Role] 起動時にshare_modeを端末役割(${roleShareMode})へ自動修復しました`);
+    if (writeDB(db)) {
+      console.warn(`[Role] 起動時にshare_modeを端末役割(${roleShareMode})へ自動修復しました`);
+    } else {
+      console.error('[Role] share_modeの自動修復の保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
   }
 
   return roleShareMode;
@@ -1758,6 +1784,12 @@ function setupImportTrigger() {
         importCSV(filePath).catch(err => console.error(`[Watcher] CSV取り込みエラー: ${filePath}`, err));
       }
     });
+    // chokidarはリスナー無しの'error'イベントで例外を投げ、Electronの
+    // メインプロセスごとクラッシュさせる(EMFILE・共有フォルダの瞬断・
+    // 権限変更等で発生しうる)。ログに残すだけに留め、プロセスは維持する。
+    currentWatcher.on('error', (err) => {
+      console.error(`[Watcher] フォルダ監視エラー: ${currentWatchDir}`, err);
+    });
   } else if (schedule.mode === 'interval') {
     const mins = parseInt(schedule.intervalMin) || 10;
     console.log(`[Scheduler] 定期インポート（${mins}分ごと）を開始します: ${currentWatchDir}`);
@@ -1892,6 +1924,12 @@ function setupScheduleFeedTriggers() {
           scanAndImportScheduleFolder(watchDir, feed).catch(err => console.error(`[ScheduleFeed] CSV取り込みエラー: ${watchDir}`, err));
         }, SCHEDULE_FEED_REALTIME_DEBOUNCE_MS);
         scheduleFeedRealtimeDebounceTimers.set(feed.id, debounceTimer);
+      });
+      // chokidarはリスナー無しの'error'イベントで例外を投げ、Electronの
+      // メインプロセスごとクラッシュさせる(共有フォルダの瞬断・権限変更等で
+      // 発生しうる)。ログに残すだけに留め、他フィードの監視を巻き込まない。
+      watcher.on('error', (err) => {
+        console.error(`[ScheduleFeed] フォルダ監視エラー: ${watchDir}`, err);
       });
       scheduleFeedWatchers.push(watcher);
     } else if (schedule.mode === 'interval') {
@@ -3150,7 +3188,9 @@ handleTrusted('reset-database', () => {
     db.system_settings.push({ id: 'demo_inserted', value: 'true' });
   }
   
-  writeDB(db);
+  if (!writeDB(db)) {
+    return { success: false, message: 'データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。' };
+  }
   console.log('[DB] 進行中の移送情報と関連ログをクリアしました');
   return { success: true };
 });
@@ -4783,39 +4823,48 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
 
 // IPC通信でフロントからのREST-likeなデータベース操作を仲介する（ローカル処理のため isExternal = false）
 handleTrusted('db-request', async (event, { url, options }) => {
-  // デバイス管理エンドポイント（DBを使わず親機メモリで処理）
-  if (url === 'device/heartbeat') {
-    let info;
-    try { info = JSON.parse((options && options.body) || '{}'); } catch { info = {}; }
-    return applyHeartbeat(info, '127.0.0.1');
+  // 個々のprocess*Request関数はほぼ全ての想定内失敗を{success:false,message}で
+  // 返す規約だが、writeDbOrThrow()由来のディスク書き込み失敗だけは例外を投げる。
+  // 外部HTTP経路にはparent-server側に同種の受け皿があるが、ローカルIPC経路には
+  // 無かったため、ここで統一的に受け止めてrejectではなく規約通りの戻り値にする。
+  try {
+    // デバイス管理エンドポイント（DBを使わず親機メモリで処理）
+    if (url === 'device/heartbeat') {
+      let info;
+      try { info = JSON.parse((options && options.body) || '{}'); } catch { info = {}; }
+      return applyHeartbeat(info, '127.0.0.1');
+    }
+    if (url === 'device/list') return { success: true, devices: getActiveDevices() };
+    if (url === 'device/disconnect') {
+      let info;
+      try { info = JSON.parse((options && options.body) || '{}'); } catch { info = {}; }
+      delete connectedDevices[info.deviceId];
+      return { success: true };
+    }
+    const method = (options.method || 'GET').toUpperCase();
+    const terminalRole = readTerminalRole()?.terminalRole || 'ward';
+    if (url === 'audit/write') {
+      return processAuditWriteRequest(method, options.body || '', false);
+    }
+    if (url === 'status/update') {
+      return processStatusUpdateRequest(method, options.body || '', false, null, { terminalRole });
+    }
+    if (url === 'status/note') {
+      return processStatusNoteRequest(method, options.body || '', false);
+    }
+    if (url === 'status/ack') {
+      return processStatusAcknowledgeRequest(method, options.body || '', false, null, { terminalRole });
+    }
+    if (url === 'transfer/start') {
+      return processTransferStartRequest(method, options.body || '', false, null, { terminalRole });
+    }
+    const result = await processDbRequest(method, url, options.body || '', false);
+    syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
+    return result;
+  } catch (err) {
+    console.error('[DB Request] 予期しないエラー:', err);
+    return { success: false, message: err.message || 'データベース要求の処理に失敗しました' };
   }
-  if (url === 'device/list') return { success: true, devices: getActiveDevices() };
-  if (url === 'device/disconnect') {
-    let info;
-    try { info = JSON.parse((options && options.body) || '{}'); } catch { info = {}; }
-    delete connectedDevices[info.deviceId];
-    return { success: true };
-  }
-  const method = (options.method || 'GET').toUpperCase();
-  const terminalRole = readTerminalRole()?.terminalRole || 'ward';
-  if (url === 'audit/write') {
-    return processAuditWriteRequest(method, options.body || '', false);
-  }
-  if (url === 'status/update') {
-    return processStatusUpdateRequest(method, options.body || '', false, null, { terminalRole });
-  }
-  if (url === 'status/note') {
-    return processStatusNoteRequest(method, options.body || '', false);
-  }
-  if (url === 'status/ack') {
-    return processStatusAcknowledgeRequest(method, options.body || '', false, null, { terminalRole });
-  }
-  if (url === 'transfer/start') {
-    return processTransferStartRequest(method, options.body || '', false, null, { terminalRole });
-  }
-  const result = await processDbRequest(method, url, options.body || '', false);
-  syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
-  return result;
 });
 
 // IPC通信でフロントからのWebRTCシグナリング操作を仲介する
@@ -5035,7 +5084,9 @@ setInterval(() => {
     const db = readDB();
     if (normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) !== 'parent') return;
     const removed = pruneExpiredTransferEventsFromDb(db);
-    if (removed > 0) writeDB(db);
+    if (removed > 0 && !writeDB(db)) {
+      console.warn('[DB] 保持期間クリーンアップ結果の保存に失敗しました。次回の自動実行(24時間後)で再試行されます。');
+    }
   } catch (err) {
     console.warn('[DB] 保持期間クリーンアップの自動実行に失敗:', err.message);
   }
@@ -5667,7 +5718,9 @@ handleTrusted('import-update-files', async () => {
         actorType: 'local_ui',
         details: { version: info.version, fileName: path.basename(info.path) },
       });
-      writeDB(db);
+      if (!writeDB(db)) {
+        console.warn(`[AuditLog] 配信ファイル取込の監査ログの永続化に失敗しました: v${info.version}`);
+      }
     }
     console.log(`[Updater] 配信ファイルを取込: v${info.version}`);
     return { success: true, version: info.version };
@@ -5701,7 +5754,9 @@ handleTrusted('rollback-update-dist', () => {
         actorType: 'local_ui',
         details: { version: info.version },
       });
-      writeDB(db);
+      if (!writeDB(db)) {
+        console.warn(`[AuditLog] 配信ファイルロールバックの監査ログの永続化に失敗しました: v${info.version}`);
+      }
     }
     console.log(`[Updater] 配信をロールバック: v${info.version}`);
     return { success: true, version: info.version };
@@ -5914,7 +5969,9 @@ handleTrusted('backup-db', async (event, { mode = 'encrypted', password = '' } =
       actorType: 'local_ui',
       details: { mode, fileName: path.basename(filePath) },
     });
-    writeDB(dbObj);
+    if (!writeDB(dbObj)) {
+      console.warn('[DB] バックアップ日時・監査ログの保存に失敗しました(バックアップファイル自体は正常に作成されています)');
+    }
     return { success: true, filePath };
   } catch (err) {
     console.error('[DB Backup Error]', err);
@@ -5999,7 +6056,9 @@ handleTrusted('restore-db', async (event, { password = '' } = {}) => {
         actorType: 'local_ui',
         details: { encrypted: fileContent.startsWith(BACKUP_ENCRYPTION_MAGIC), fileName: path.basename(filePath) },
       });
-      writeDB(db);
+      if (!writeDB(db)) {
+        console.warn('[DB] 復元操作の監査ログの保存に失敗しました(復元自体は正常に完了しています)');
+      }
 
       // 端末役割ファイル(terminal_role.json)を復元後のDBに同期する。ここで揃えないと、
       // 次回起動時に repairShareModeBeforeServerStart() が「復元前の役割」を正としてDBを
@@ -6148,13 +6207,16 @@ handleTrusted('export-diagnostics-bundle', async () => {
     try {
       dbExists = fs.existsSync(DB_FILE);
       if (dbExists) {
-      const head = Buffer.alloc(DB_ENCRYPTION_PREFIX.length);
-      const fd = fs.openSync(DB_FILE, 'r');
-      fs.readSync(fd, head, 0, head.length, 0);
-      fs.closeSync(fd);
-      dbIsEncrypted = head.toString('utf8') === DB_ENCRYPTION_PREFIX;
-    }
-  } catch {}
+        const head = Buffer.alloc(DB_ENCRYPTION_PREFIX.length);
+        const fd = fs.openSync(DB_FILE, 'r');
+        try {
+          fs.readSync(fd, head, 0, head.length, 0);
+        } finally {
+          fs.closeSync(fd);
+        }
+        dbIsEncrypted = head.toString('utf8') === DB_ENCRYPTION_PREFIX;
+      }
+    } catch {}
     return { available, dbIsEncrypted, dbExists };
   });
 
@@ -6464,8 +6526,11 @@ function ensureApiToken() {
     db.system_settings = db.system_settings || [];
     db.system_settings.push({ id: 'api_token', value: token });
   }
-  writeDB(db);
-  console.log('[Security] APIトークンを生成しました（子機側の共有・ネットワーク設定に同じ値を入力してください）');
+  if (!writeDB(db)) {
+    console.error('[Security] APIトークンの永続化に失敗しました。今回の起動中は使用できますが、再起動すると別のトークンが生成され、既存の子機と不整合になります。ディスク容量や書き込み権限を確認してください。');
+  } else {
+    console.log('[Security] APIトークンを生成しました（子機側の共有・ネットワーク設定に同じ値を入力してください）');
+  }
   return token;
 }
 
@@ -6486,8 +6551,11 @@ function ensureParentInstanceId() {
     db.system_settings = db.system_settings || [];
     db.system_settings.push({ id: 'parent_instance_id', value: instanceId });
   }
-  writeDB(db);
-  console.log('[Server] 親機インスタンスIDを生成しました');
+  if (!writeDB(db)) {
+    console.error('[Server] 親機インスタンスIDの永続化に失敗しました。今回の起動中は使用できますが、再起動すると別のIDが生成され、子機側で「接続先の親機が入れ替わった」と誤検知される可能性があります。ディスク容量や書き込み権限を確認してください。');
+  } else {
+    console.log('[Server] 親機インスタンスIDを生成しました');
+  }
   return instanceId;
 }
 
@@ -6966,7 +7034,9 @@ app.whenReady().then(() => {
   if (prunedOccupancy > 0 || prunedEvents > 0) {
     console.log(`[DB Cleaner] Pruned ${prunedOccupancy} expired bed_occupancy_log entries at startup.`);
     console.log(`[DB Cleaner] Pruned ${prunedEvents} expired transfer_events entries at startup.`);
-    writeDB(db);
+    if (!writeDB(db)) {
+      console.warn('[DB Cleaner] 起動時クリーンアップ結果の保存に失敗しました。次回のクリーンアップ機会で再試行されます。');
+    }
   }
 
   const shareModeSetting = db.system_settings?.find(s => s.id === 'share_mode') || { value: shareMode };
