@@ -70,6 +70,100 @@ async function parentFetch(url, options = {}, timeoutMs = API_DEFAULT_TIMEOUT_MS
   return fetchWithTimeout(url, options, timeoutMs);
 }
 
+// 子機/単独モードかどうかの判定。localStorageの'cfg_share_mode'を直接読む
+// 箇所がAPI各メソッドに散在していたため、一箇所にまとめる。
+function isClientMode() {
+  const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+  return shareMode === 'client' || shareMode === 'child';
+}
+
+// 親機のAPIベースURL(http://<parentIp>:3005/api/<path>)の組み立て。
+// 各メソッドが個別にテンプレートリテラルで組み立てていたのを一箇所にまとめる。
+function buildParentApiUrl(path) {
+  const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+  return `http://${parentIp}:3005/api/${path}`;
+}
+
+// 設定画面(js/settings/network.js)とセットアップウィザード(js/wizard.js)の
+// 「接続テスト」ボタンが共通で使う、親機への疎通確認+APIトークン検証。
+// 2画面ともwards取得(疎通)→beds取得(トークン検証)の2段階を同じ形で実装して
+// いたため、判定ロジック+診断ログの出力だけをここに集約する。UIへの反映
+// (トースト表示か、インラインHTMLかなど画面ごとに異なる)は呼び出し元に残す。
+async function testParentConnection(parentIp, token, logPrefix) {
+  const url = `http://${parentIp}:3005/api/tables/wards`;
+  const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
+  const logLines = [
+    `[${logPrefix}] appVersion=${appVer} url=${url}`,
+    `  navigator.onLine=${navigator.onLine}`,
+  ];
+  let result;
+  try {
+    const res = await parentFetch(url, {
+      headers: token ? { 'X-API-Token': token } : {},
+      purpose: 'connection-test',
+    }, 4000);
+    if (res.ok) {
+      const data = await res.json();
+      const wardsCount = data.data?.length;
+      logLines.push(`  結果: 疎通成功 status=${res.status} wards=${wardsCount ?? '?'}件`);
+      // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
+      // 患者データ（beds等）はトークン必須。ここで検証しないと
+      // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
+      if (token) {
+        try {
+          const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
+            headers: { 'X-API-Token': token },
+            purpose: 'connection-test',
+          }, 4000);
+          if (res2.ok) {
+            logLines.push(`  トークン検証: 成功 status=${res2.status}`);
+            result = { outcome: 'ok', wardsCount };
+          } else if (res2.status === 401) {
+            logLines.push(`  トークン検証: 失敗 status=401（トークン不一致）`);
+            result = { outcome: 'token-mismatch', wardsCount };
+          } else {
+            logLines.push(`  トークン検証: HTTPエラー status=${res2.status}`);
+            result = { outcome: 'token-http-error', status: res2.status };
+          }
+        } catch (e2) {
+          logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
+          result = { outcome: 'token-exception', error: e2 };
+        }
+      } else {
+        logLines.push('  トークン検証: スキップ（未入力）');
+        result = { outcome: 'no-token', wardsCount };
+      }
+    } else {
+      logLines.push(`  結果: HTTPエラー status=${res.status}`);
+      result = { outcome: 'http-error', status: res.status };
+    }
+  } catch (e) {
+    const reason = e.name === 'AbortError'
+      ? 'タイムアウトしました（4秒応答なし）'
+      : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
+    logLines.push(`  結果: 例外 name=${e.name} message=${e.message} stack=${(e.stack || '').split('\n').slice(0, 3).join(' / ')}`);
+    result = { outcome: 'exception', reason, error: e };
+  }
+  window.electronAPI?.appendDebugLog?.(logLines.join('\n')).catch(() => {});
+  return result;
+}
+
+// 稼働モード・親機IPは「この端末自身」の設定のため、共有APIルーティング
+// （API.patch）を通さず常にローカルDBへ直接書き込む。API.patch経由にすると
+// 子機からの保存が親機のDBのshare_modeを'client'に上書きし、親機の再起動後に
+// 共有サーバー(3005)が起動しなくなる事故が起きる。main.jsは起動時にローカル
+// DBのshare_modeを見てサーバー起動を判定している。
+// 設定画面(network.js)とセットアップウィザード(wizard.js)の両方が保存時に
+// 使う共通処理。呼び出し元の既存のエラー処理方針(投げるか警告に留めるか)は
+// そのまま呼び出し元に委ねる。
+async function saveLocalShareModeSettings(mode, parentIp) {
+  if (!window.electronAPI?.dbRequest) return;
+  await Promise.all([
+    window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'PATCH', body: JSON.stringify({ value: mode }) } }),
+    window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: parentIp }) } }),
+  ]);
+}
+
 let terminalApiTokenCache = null;
 
 function ensureMutationSuccess(result) {
@@ -189,10 +283,7 @@ const API = {
 
   /* ---------- 汎用フェッチ ---------- */
   async _fetch(url, options = {}) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
-
-    if (shareMode === 'client' || shareMode === 'child') {
+    if (isClientMode()) {
       try {
         const cleanUrl = url.replace(/^\//, '');
         const apiToken = await getTerminalApiToken();
@@ -210,7 +301,7 @@ const API = {
               ...options,
               headers: { ...(options.headers || {}), 'X-Terminal-Role': terminalRole },
             };
-        const res = await parentFetch(`http://${parentIp}:3005/api/${cleanUrl}`, optionsWithToken);
+        const res = await parentFetch(buildParentApiUrl(cleanUrl), optionsWithToken);
         if (res.status === 204) return null;
         const data = await res.json();
         if (!res.ok) {
@@ -248,8 +339,7 @@ const API = {
   },
 
   async getPasscodeStatus() {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
+    if (isClientMode()) {
       const parentIp = localStorage.getItem('cfg_parent_ip') || '';
       const apiToken = await getTerminalApiToken();
       const res = await parentFetch(`http://${parentIp}:3005/api/auth/passcode-status`, {
@@ -264,8 +354,7 @@ const API = {
   },
 
   async verifyAdminPasscode(passcode) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
+    if (isClientMode()) {
       const parentIp = localStorage.getItem('cfg_parent_ip') || '';
       const apiToken = await getTerminalApiToken();
       const res = await parentFetch(`http://${parentIp}:3005/api/auth/verify-passcode`, {
@@ -285,8 +374,7 @@ const API = {
   },
 
   async setAdminPasscode(passcode) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
+    if (isClientMode()) {
       return { success: false, message: '管理者パスコードは親機でのみ変更できます' };
     }
     if (!window.electronAPI?.setAdminPasscode) {
@@ -645,12 +733,10 @@ const API = {
 
   /* ---------- WebRTCシグナリング ---------- */
   async webrtcSend(msg) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     const apiToken = await getTerminalApiToken();
 
-    if (shareMode === 'client' || shareMode === 'child') {
-      return parentFetch(`http://${parentIp}:3005/api/webrtc/send`, {
+    if (isClientMode()) {
+      return parentFetch(buildParentApiUrl('webrtc/send'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -679,13 +765,11 @@ const API = {
   },
 
   async webrtcPoll(myId, clientId = '') {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     const apiToken = await getTerminalApiToken();
     const qs = new URLSearchParams({ id: myId, client: clientId || myId }).toString();
 
-    if (shareMode === 'client' || shareMode === 'child') {
-      return parentFetch(`http://${parentIp}:3005/api/webrtc/poll?${qs}`, {
+    if (isClientMode()) {
+      return parentFetch(buildParentApiUrl(`webrtc/poll?${qs}`), {
         headers: apiToken ? { 'X-API-Token': apiToken } : {},
       }, API_SIGNALING_TIMEOUT_MS)
         // res.okを見ないと401のJSONが正常な空ポーリングとして扱われ、
@@ -706,11 +790,9 @@ const API = {
 
   /* ---------- デバイス管理（子機→親機ハートビート） ---------- */
   async deviceHeartbeat(info) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
-      const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+    if (isClientMode()) {
       const apiToken = await getTerminalApiToken();
-      return parentFetch(`http://${parentIp}:3005/api/device/heartbeat`, {
+      return parentFetch(buildParentApiUrl('device/heartbeat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -732,11 +814,9 @@ const API = {
   },
 
   async getConnectedDevices() {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
     const apiToken = await getTerminalApiToken();
-    if (shareMode === 'client' || shareMode === 'child') {
-      return parentFetch(`http://${parentIp}:3005/api/device/list`, {
+    if (isClientMode()) {
+      return parentFetch(buildParentApiUrl('device/list'), {
         headers: apiToken ? { 'X-API-Token': apiToken } : {},
       }, API_HEARTBEAT_TIMEOUT_MS).then(assertParentResponseOk);
     }
@@ -747,11 +827,9 @@ const API = {
   },
 
   async disconnectDevice(deviceId) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
-      const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
+    if (isClientMode()) {
       const apiToken = await getTerminalApiToken();
-      return parentFetch(`http://${parentIp}:3005/api/device/disconnect`, {
+      return parentFetch(buildParentApiUrl('device/disconnect'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -770,12 +848,10 @@ const API = {
   },
 
   async parentAction(action, payload = {}, { method = 'POST', timeoutMs = API_DEFAULT_TIMEOUT_MS } = {}) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const parentIp = localStorage.getItem('cfg_parent_ip') || 'localhost';
-    const apiToken = await getTerminalApiToken();
-    if (shareMode !== 'client' && shareMode !== 'child') {
+    if (!isClientMode()) {
       throw new Error('parentAction is only for child terminals');
     }
+    const apiToken = await getTerminalApiToken();
     const options = {
       method,
       headers: {
@@ -784,7 +860,7 @@ const API = {
       },
     };
     if (method !== 'GET') options.body = JSON.stringify(payload || {});
-    const res = await parentFetch(`http://${parentIp}:3005/api/parent-actions/${action}`, options, timeoutMs);
+    const res = await parentFetch(buildParentApiUrl(`parent-actions/${action}`), options, timeoutMs);
     const data = await res.json().catch(() => ({ success: false, message: `HTTP ${res.status}` }));
     if (!res.ok || data.unauthorized) {
       const err = new Error(data.message || `HTTP ${res.status}`);

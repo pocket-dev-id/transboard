@@ -178,7 +178,7 @@ assert(
     if (idx < 0 || end < 0 || end <= idx) return false;
     const body = main.slice(idx, end);
     return body.includes('autoAcceptForChild: isChildTerminal') &&
-      /shareMode\s*!==\s*'parent'/.test(body);
+      /isChildTerminal\s*=\s*isClientTerminal\(/.test(body);
   })(),
   'The download-and-install-update handler must pass autoAcceptForChild based on whether the terminal is a child (share_mode !== parent)'
 );
@@ -215,8 +215,9 @@ assert(
 
 assert(
   api.includes("'X-API-Token': apiToken") &&
-  api.includes('/api/device/heartbeat') &&
-  api.includes('/api/device/list'),
+  api.includes("buildParentApiUrl('device/heartbeat')") &&
+  api.includes("buildParentApiUrl('device/list')") &&
+  /function buildParentApiUrl\(path\) \{[\s\S]{0,200}return `http:\/\/\$\{parentIp\}:3005\/api\/\$\{path\}`/.test(api),
   'Device endpoints must send the API token'
 );
 assert(
@@ -1375,8 +1376,8 @@ assert(
 // マスク文字列が実パスワードを上書きしてしまう(過去に実在した不具合)
 assert(
   (() => {
-    const idx = main.indexOf("case 'save-import-settings'");
-    const end = main.indexOf("case 'manual-import'", idx);
+    const idx = main.indexOf('function saveImportSettingsOnParent(');
+    const end = main.indexOf('\n}', idx);
     return idx >= 0 && end > idx && main.slice(idx, end).includes('MASKED_SECRET_VALUE');
   })(),
   'save-import-settings must ignore masked secret placeholders instead of storing them over the real password'
@@ -1834,8 +1835,8 @@ assert(
 // 将来の呼び出し元で監視が古いまま取り残される静かな不整合を生む
 assert(
   (() => {
-    const idx = main.indexOf("case 'save-import-settings': {");
-    const end = main.indexOf("case 'manual-import':", idx);
+    const idx = main.indexOf('function saveImportSettingsOnParent(');
+    const end = main.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
     const body = main.slice(idx, end);
     const writeIdx = body.indexOf('writeDB(db)');

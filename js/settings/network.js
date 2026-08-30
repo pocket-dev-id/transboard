@@ -374,63 +374,33 @@ Object.assign(Settings, {
         const oldHtml = testBtn.innerHTML;
         testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 接続テスト中...';
 
-        const url = `http://${parentIp}:3005/api/tables/wards`;
         const token = document.getElementById('cfg-api-token')?.value.trim() || '';
-        const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
-        const logLines = [
-          `[設定画面接続テスト] appVersion=${appVer} url=${url}`,
-          `  navigator.onLine=${navigator.onLine}`,
-        ];
         try {
-          // テストフェッチ（親機側のwardsマスタを取得してみる）
-          const res = await parentFetch(url, {
-            headers: token ? { 'X-API-Token': token } : {},
-            purpose: 'connection-test',
-          }, 4000);
-
-          if (res.ok) {
-            const data = await res.json();
-            logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
-
-            // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
-            // 患者データ（beds等）はトークン必須。ここで検証しないと
-            // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
-            if (token) {
-              try {
-                const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
-                  headers: { 'X-API-Token': token },
-                  purpose: 'connection-test',
-                }, 4000);
-                if (res2.ok) {
-                  logLines.push(`  トークン検証: 成功 status=${res2.status}`);
-                  UI.toast(`✅ 接続に成功しました！ 病棟 ${data.data?.length || 0}件・APIトークン認証もOK。`, 'success');
-                } else if (res2.status === 401) {
-                  logLines.push(`  トークン検証: 失敗 status=401（トークン不一致）`);
-                  UI.toast(`⚠ ネットワークは正常ですが、APIトークンが親機と一致しません。親機の「共有・ネットワーク設定」画面のトークンをコピーし直してください。`, 'warning', 10000);
-                } else {
-                  logLines.push(`  トークン検証: HTTPエラー status=${res2.status}`);
-                  UI.toast(`❌ トークン検証でHTTPエラー ${res2.status}`, 'danger');
-                }
-              } catch (e2) {
-                logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
-                UI.toast(`❌ トークン検証中にエラー（${e2.message || e2.name}）`, 'danger');
-              }
-            } else {
-              logLines.push('  トークン検証: スキップ（未入力）');
-              UI.toast(`⚠ 疎通は成功（病棟 ${data.data?.length || 0}件）。ただしAPIトークンが未入力のため、患者データの取得はできません。`, 'warning', 10000);
-            }
-          } else {
-            logLines.push(`  結果: HTTPエラー status=${res.status}`);
-            UI.toast(`❌ 接続失敗: HTTPエラー ${res.status}`, 'danger');
+          const result = await testParentConnection(parentIp, token, '設定画面接続テスト');
+          switch (result.outcome) {
+            case 'ok':
+              UI.toast(`✅ 接続に成功しました！ 病棟 ${result.wardsCount || 0}件・APIトークン認証もOK。`, 'success');
+              break;
+            case 'token-mismatch':
+              UI.toast(`⚠ ネットワークは正常ですが、APIトークンが親機と一致しません。親機の「共有・ネットワーク設定」画面のトークンをコピーし直してください。`, 'warning', 10000);
+              break;
+            case 'token-http-error':
+              UI.toast(`❌ トークン検証でHTTPエラー ${result.status}`, 'danger');
+              break;
+            case 'token-exception':
+              UI.toast(`❌ トークン検証中にエラー（${result.error.message || result.error.name}）`, 'danger');
+              break;
+            case 'no-token':
+              UI.toast(`⚠ 疎通は成功（病棟 ${result.wardsCount || 0}件）。ただしAPIトークンが未入力のため、患者データの取得はできません。`, 'warning', 10000);
+              break;
+            case 'http-error':
+              UI.toast(`❌ 接続失敗: HTTPエラー ${result.status}`, 'danger');
+              break;
+            case 'exception':
+              UI.toast(`❌ 接続できませんでした（${result.reason}）。IPアドレスが正しいか、親機が起動しているか、またはネットワーク設定（ファイアウォール）を確認してください。`, 'danger', 8000);
+              break;
           }
-        } catch (e) {
-          const reason = e.name === 'AbortError'
-            ? 'タイムアウトしました（4秒応答なし）'
-            : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
-          logLines.push(`  結果: 例外 name=${e.name} message=${e.message} stack=${(e.stack || '').split('\n').slice(0, 3).join(' / ')}`);
-          UI.toast(`❌ 接続できませんでした（${reason}）。IPアドレスが正しいか、親機が起動しているか、またはネットワーク設定（ファイアウォール）を確認してください。`, 'danger', 8000);
         } finally {
-          window.electronAPI?.appendDebugLog?.(logLines.join('\n')).catch(() => {});
           testBtn.disabled = false;
           testBtn.innerHTML = oldHtml;
         }
@@ -502,17 +472,7 @@ Object.assign(Settings, {
         localStorage.setItem('cfg_parent_ip', parentIp);
 
         // マスタDB側にも設定値（互換性保存）を反映
-        // 稼働モード・親機IPは「この端末自身」の設定のため、共有APIルーティング
-        // （API.patch）を通さず常にローカルDBへ直接書き込む。
-        // API.patch経由にすると子機からの保存が親機のDBの share_mode を'client'に
-        // 上書きし、親機の再起動後に共有サーバー(3005)が起動しなくなる事故が起きる。
-        // main.js は起動時にローカルDBの share_mode を見てサーバー起動を判定している。
-        if (window.electronAPI?.dbRequest) {
-          await Promise.all([
-            window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'PATCH', body: JSON.stringify({ value: mode }) } }),
-            window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: parentIp }) } }),
-          ]);
-        }
+        await saveLocalShareModeSettings(mode, parentIp);
         const sharedUpdates = [
           API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
           API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
