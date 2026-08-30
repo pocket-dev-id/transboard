@@ -292,11 +292,10 @@ const Timeline = {
         TimelinePopup.hide();
         UI.toast('検査終了目安時間を変更しました', 'success');
       } catch (err) {
-        if (await App.handleDataConflict(err)) {
-          saveBtn.disabled = false;
-          return;
+        if (!(await App.handleDataConflict(err))) {
+          UI.toast('時間の変更に失敗しました', 'danger');
         }
-        UI.toast('時間の変更に失敗しました', 'danger');
+      } finally {
         saveBtn.disabled = false;
       }
     });
