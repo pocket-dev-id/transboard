@@ -97,7 +97,15 @@ const UI = {
     return localStorage.getItem(this.PATIENT_NAME_LS_KEY) === 'true';
   },
   setShowPatientNames(show) {
-    localStorage.setItem(this.PATIENT_NAME_LS_KEY, show ? 'true' : 'false');
+    try {
+      localStorage.setItem(this.PATIENT_NAME_LS_KEY, show ? 'true' : 'false');
+    } catch (e) {
+      // プライベートブラウジングやストレージ容量超過等でlocalStorageが
+      // 書き込み時に例外を投げる環境がある。ここで止めずに、少なくとも
+      // 今回の操作でのDOM表示は呼び出し元の意図通りに反映させる
+      // (次回再起動時は保存されていた値に戻る点はログで分かるようにする)。
+      console.warn('[UI] 患者名表示設定の保存に失敗しました:', e.message);
+    }
     const grid = document.getElementById('bed-map-grid');
     if (grid) grid.classList.toggle('hide-patient-names', !show);
   },

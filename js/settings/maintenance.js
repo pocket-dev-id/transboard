@@ -502,6 +502,7 @@ Object.assign(Settings, {
           UI.toast('暗号化バックアップにはパスワードの入力が必要です', 'warning');
           return;
         }
+        backupBtn.disabled = true;
         try {
           const res = await window.electronAPI.backupDatabase({ mode, password });
           if (res && res.success) {
@@ -512,6 +513,8 @@ Object.assign(Settings, {
           }
         } catch (e) {
           UI.toast(`バックアップ保存に失敗しました: ${e.message}`, 'danger');
+        } finally {
+          backupBtn.disabled = false;
         }
       };
     }
@@ -523,6 +526,7 @@ Object.assign(Settings, {
           return;
         }
         const password = document.getElementById('cfg-backup-password')?.value || '';
+        restoreBtn.disabled = true;
         try {
           const res = await window.electronAPI.restoreDatabase({ password });
           if (res && res.success) {
@@ -533,6 +537,7 @@ Object.assign(Settings, {
             if (typeof res.parentIp === 'string') localStorage.setItem('cfg_parent_ip', res.parentIp);
             UI.toast('復元に成功しました。アプリケーションを再起動します...', 'success');
             setTimeout(() => { window.electronAPI.relaunchApp(); }, 1500);
+            return;
           } else if (res && res.passwordRequired) {
             UI.toast('このバックアップはパスワードで保護されています。パスワード欄に入力してから再度お試しください。', 'warning', 6000);
           } else if (res && res.message !== 'Cancelled') {
@@ -541,6 +546,7 @@ Object.assign(Settings, {
         } catch (e) {
           UI.toast(`復元に失敗しました: ${e.message}`, 'danger');
         }
+        restoreBtn.disabled = false;
       };
     }
   },

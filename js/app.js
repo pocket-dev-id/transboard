@@ -2121,7 +2121,11 @@ const App = {
       confirmLabel: 'リセットする'
     })) return false;
     if (window.electronAPI) {
-      await window.electronAPI.resetDatabase();
+      const result = await window.electronAPI.resetDatabase();
+      if (result && result.success === false) {
+        UI.toast('リセットに失敗しました: ' + (result.message || '不明なエラー'), 'danger');
+        return false;
+      }
     } else {
       await this._resetAllActiveEvents();
     }

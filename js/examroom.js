@@ -881,7 +881,11 @@ const ExamRoom = {
       unconfirmedOnly.checked = localStorage.getItem('cfg_exam_notification_history_unconfirmed_only') === 'true';
       unconfirmedOnly.dataset.listenerBound = 'true';
       unconfirmedOnly.addEventListener('change', () => {
-        localStorage.setItem('cfg_exam_notification_history_unconfirmed_only', unconfirmedOnly.checked ? 'true' : 'false');
+        try {
+          localStorage.setItem('cfg_exam_notification_history_unconfirmed_only', unconfirmedOnly.checked ? 'true' : 'false');
+        } catch (e) {
+          console.warn('[ExamRoom] 未確認のみ表示設定の保存に失敗しました:', e.message);
+        }
         this._renderNotificationHistory();
       });
     }

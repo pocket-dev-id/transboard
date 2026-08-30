@@ -265,7 +265,9 @@ Object.assign(Settings, {
     `;
 
     // #1 表示名の保存・リセット
-    document.getElementById('btn-save-status-labels').onclick = async () => {
+    document.getElementById('btn-save-status-labels').onclick = async (evt) => {
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       const labels = {};
       body.querySelectorAll('.custom-label-input').forEach(input => {
         const v = input.value.trim();
@@ -274,19 +276,23 @@ Object.assign(Settings, {
       try {
         await saveSetting('status_custom_labels', labels);
         UI.toast('ステータス表示名を保存しました', 'success');
-      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
-    document.getElementById('btn-reset-status-labels').onclick = async () => {
+    document.getElementById('btn-reset-status-labels').onclick = async (evt) => {
       if (!await UI.confirmModal('すべてのカスタム表示名をデフォルトに戻しますか？')) return;
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       try {
         await saveSetting('status_custom_labels', {});
         body.querySelectorAll('.custom-label-input').forEach(input => { input.value = ''; });
         UI.toast('表示名をリセットしました', 'success');
-      } catch (e) { UI.toast('リセットに失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('リセットに失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
 
     // #2 しきい値の保存
-    document.getElementById('btn-save-thresholds').onclick = async () => {
+    document.getElementById('btn-save-thresholds').onclick = async (evt) => {
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       const ndVal = document.getElementById('cfg-nearly-done-min').value;
       const stVal = document.getElementById('cfg-soon-threshold').value;
       try {
@@ -302,7 +308,7 @@ Object.assign(Settings, {
         update('soon_threshold_min', stVal);
         if (typeof App !== 'undefined' && App.applySystemVisualSettings) App.applySystemVisualSettings();
         UI.toast('しきい値を保存しました', 'success');
-      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
 
     // #3 カラーのライブプレビュー・コントラスト警告更新（デザイン#2・#3）
@@ -339,7 +345,9 @@ Object.assign(Settings, {
         updateRowPreview(row);
       };
     });
-    document.getElementById('btn-save-colors').onclick = async () => {
+    document.getElementById('btn-save-colors').onclick = async (evt) => {
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       const colors = {};
       STATUS_ORDER.forEach(sid => {
         const bgEl = body.querySelector(`.sc-card-bg[data-status="${sid}"]`);
@@ -355,21 +363,25 @@ Object.assign(Settings, {
       try {
         await saveSetting('status_colors', colors);
         UI.toast('ステータスカラーを保存しました', 'success');
-      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
-    document.getElementById('btn-reset-all-colors').onclick = async () => {
+    document.getElementById('btn-reset-all-colors').onclick = async (evt) => {
       if (!await UI.confirmModal('すべてのステータスカラーをデフォルトに戻しますか？')) return;
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       try {
         await saveSetting('status_colors', {});
         document.documentElement.removeAttribute('style');
         if (typeof App !== 'undefined' && App.applySystemVisualSettings) App.applySystemVisualSettings();
         UI.toast('カラーをリセットしました', 'success');
         this._renderStatusCustomize(body);
-      } catch (e) { UI.toast('リセットに失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('リセットに失敗しました: ' + e.message, 'danger'); btn.disabled = false; }
     };
 
     // #4 ボタンラベルの保存・リセット
-    document.getElementById('btn-save-action-labels').onclick = async () => {
+    document.getElementById('btn-save-action-labels').onclick = async (evt) => {
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       const labels = {};
       body.querySelectorAll('.action-label-input').forEach(input => {
         const v = input.value.trim();
@@ -378,15 +390,17 @@ Object.assign(Settings, {
       try {
         await saveSetting('action_button_labels', labels);
         UI.toast('ボタンラベルを保存しました', 'success');
-      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
-    document.getElementById('btn-reset-action-labels').onclick = async () => {
+    document.getElementById('btn-reset-action-labels').onclick = async (evt) => {
       if (!await UI.confirmModal('すべてのカスタムボタンラベルをデフォルトに戻しますか？')) return;
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       try {
         await saveSetting('action_button_labels', {});
         body.querySelectorAll('.action-label-input').forEach(input => { input.value = ''; });
         UI.toast('ボタンラベルをリセットしました', 'success');
-      } catch (e) { UI.toast('リセットに失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('リセットに失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
 
     // #5 非表示ステータスの保存
@@ -401,7 +415,9 @@ Object.assign(Settings, {
       });
     }
 
-    document.getElementById('btn-save-hidden-statuses').onclick = async () => {
+    document.getElementById('btn-save-hidden-statuses').onclick = async (evt) => {
+      const btn = evt.currentTarget;
+      btn.disabled = true;
       const hidden = [];
       body.querySelectorAll('.hidden-status-chk:checked').forEach(chk => hidden.push(chk.dataset.status));
       try {
@@ -414,7 +430,7 @@ Object.assign(Settings, {
           Priority.renderPriorityList();
         }
         UI.toast('非表示設定を保存しました', 'success');
-      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); }
+      } catch (e) { UI.toast('保存に失敗しました: ' + e.message, 'danger'); } finally { btn.disabled = false; }
     };
   },
 
