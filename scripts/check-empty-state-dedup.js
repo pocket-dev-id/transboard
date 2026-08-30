@@ -10,12 +10,10 @@
 // 呼ばれない死んだコードになっていた。js/ui.js全体を実際にロードして直接
 // 実行することで、出荷されるコードそのものの挙動を検証する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const vm = require('vm');
+const { readRoot } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const uiSource = fs.readFileSync(path.join(ROOT, 'js/ui.js'), 'utf8');
+const uiSource = readRoot('js/ui.js');
 
 const sandbox = { console, document: { getElementById: () => null } };
 vm.runInNewContext(`${uiSource}\nthis.UI = UI;`, sandbox);
@@ -97,7 +95,7 @@ const screensToCheck = [
   'js/history.js',
 ];
 for (const rel of screensToCheck) {
-  const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const src = readRoot(rel);
   assert(
     !/class="empty-state"/.test(src),
     `${rel}: 生の class="empty-state" HTML文字列が直書きされています。UI.emptyStateHtml()/UI.showEmpty()を使ってください`
@@ -110,11 +108,11 @@ for (const rel of screensToCheck) {
 // examroom.jsとhistory.jsは複数箇所で使うため、実際に呼び出し箇所が
 // 十分な数あることも確認する(単なるコメント上の言及ではないこと)
 {
-  const examroomSrc = fs.readFileSync(path.join(ROOT, 'js/examroom.js'), 'utf8');
+  const examroomSrc = readRoot('js/examroom.js');
   assert((examroomSrc.match(/UI\.emptyStateHtml\(/g) || []).length >= 4, 'js/examroom.jsのUI.emptyStateHtml呼び出し数が想定より少ない');
   assert((examroomSrc.match(/UI\.loadingSpinnerHtml\(/g) || []).length >= 2, 'js/examroom.jsのUI.loadingSpinnerHtml呼び出し数が想定より少ない');
 
-  const historySrc = fs.readFileSync(path.join(ROOT, 'js/history.js'), 'utf8');
+  const historySrc = readRoot('js/history.js');
   assert((historySrc.match(/UI\.emptyStateHtml\(/g) || []).length >= 5, 'js/history.jsのUI.emptyStateHtml呼び出し数が想定より少ない');
 }
 

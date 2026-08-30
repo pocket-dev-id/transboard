@@ -3,19 +3,12 @@
 // combined/separateの両モード、列未指定、sampleRowに列が無い、値が不正な形式、
 // といったケースで意図通りの結果(ms または null)を返すことを確認する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
+const { readRoot, extractThroughFunctionEnd } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const source = readRoot('main.js');
 
-const startIdx = source.indexOf('const SCHEDULE_TIME_RE_SRC');
-assert(startIdx >= 0, 'SCHEDULE_TIME_RE_SRCが見つかりません');
-const fnIdx = source.indexOf('function previewScheduleDatetime');
-assert(fnIdx > startIdx, 'function previewScheduleDatetimeが見つかりません');
-const endIdx = source.indexOf('\n}', fnIdx);
-assert(endIdx > fnIdx, 'previewScheduleDatetimeの終端(\\n})が見つかりません');
-const snippet = source.slice(startIdx, endIdx + 2);
+const snippet = extractThroughFunctionEnd(source, 'const SCHEDULE_TIME_RE_SRC', 'function previewScheduleDatetime');
+assert(snippet, 'SCHEDULE_TIME_RE_SRC〜previewScheduleDatetimeの抽出に失敗しました(main.jsの構造が変わった可能性があります)');
 
 const mod = { exports: {} };
 const loader = new Function('module', `${snippet}\nmodule.exports = { previewScheduleDatetime };`);

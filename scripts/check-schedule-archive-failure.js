@@ -16,16 +16,14 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const source = readRoot('main.js');
 
 function extractFunction(startMarker) {
-  const idx = source.indexOf(startMarker);
-  assert(idx >= 0, `${startMarker} が見つかりません(main.jsの構造が変わった可能性があります)`);
-  const end = source.indexOf('\n}', idx);
-  assert(end > idx, `${startMarker} の終端(\\n})が見つかりません`);
-  return source.slice(idx, end + 2);
+  const snippet = extractByBraceEnd(source, startMarker);
+  assert(snippet, `${startMarker} の抽出に失敗しました(main.jsの構造が変わった可能性があります)`);
+  return snippet;
 }
 
 const archiveSrc = extractFunction('function archiveScheduleFeedFile(filePath, feed, policy) {');

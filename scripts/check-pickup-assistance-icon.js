@@ -13,12 +13,8 @@
 // js/ui.js・js/config.js・js/priority.js・js/settings/masters.jsを実際に
 // ロードして直接実行することで、出荷されるコードそのものの挙動を検証する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const vm = require('vm');
-
-const ROOT = path.resolve(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const { readRoot: read } = require('./lib/extract-source');
 
 // ── css/local-icons.cssで実際に定義済みのfaクラス一覧を抽出 ──
 const localIconsCss = read('css/local-icons.css');
