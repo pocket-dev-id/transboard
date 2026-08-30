@@ -5388,15 +5388,19 @@ $thumbprint = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Thumb
 // 更新が永久にブロックされてしまう。ここを通過しても即座に無条件で
 // 許可されるわけではなく、この先で人手のダイアログ確認（もしくは
 // isStronglyTrustedUpdateSourceを満たす場合のみ子機の自動承認）を経る。
+// isUnsignedUpdateSourceAllowed/isStronglyTrustedUpdateSourceの両方が使う
+// 「HTTPS・localhost・プライベートIPv4のいずれか＝形式上明確に安全な経路」の判定
+function isDefinitelySecureUpdateSource(source) {
+  return source.protocol === 'https:' ||
+    source.hostname === 'localhost' ||
+    isPrivateOrLoopbackIpv4(source.hostname);
+}
+
 function isUnsignedUpdateSourceAllowed(feedBase) {
   if (!feedBase) return true;
   try {
     const source = new URL(feedBase);
-    if (source.protocol === 'https:' ||
-        source.hostname === 'localhost' ||
-        isPrivateOrLoopbackIpv4(source.hostname)) {
-      return true;
-    }
+    if (isDefinitelySecureUpdateSource(source)) return true;
     return !/^\d{1,3}(\.\d{1,3}){3}$/.test(source.hostname);
   } catch {
     return false;
@@ -5556,8 +5560,7 @@ Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden
 handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
     const feedBase = buildUpdateFeedBase(parentIp);
-    const shareMode = normalizeShareMode(getSettingRecord(readDB(), 'share_mode')?.value);
-    const isChildTerminal = shareMode !== 'parent';
+    const isChildTerminal = isClientTerminal(readDB());
     const ymlText = await httpGetText(`${feedBase}/latest.yml`, {
       headers: getUpdateRequestHeaders(),
     });
@@ -6446,7 +6449,7 @@ function setAdminPasscode(rawPasscode) {
   }
 
   const db = readDB();
-  if (normalizeShareMode(getSettingRecord(db, 'share_mode')?.value) !== 'parent') {
+  if (isClientTerminal(db)) {
     return { success: false, message: '管理者パスコードは親機でのみ変更できます' };
   }
   const record = getSettingRecord(db, 'admin_passcode');
@@ -6610,61 +6613,8 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
   }
 
   switch (action) {
-    case 'save-import-settings': {
-      const settings = payload.settings || {};
-      const allowed = new Set([
-        'import_directory',
-        'import_mapping',
-        'import_schedule',
-        'import_retention_policy',
-        'import_connection_type',
-        'odbc_connection_string',
-        'odbc_sql_query',
-        'smb_auth_mode',
-        'smb_username',
-        'smb_password',
-        'show_sync_time',
-        'show_import_time',
-      ]);
-      const hasImportDirectory = Object.prototype.hasOwnProperty.call(settings, 'import_directory');
-      // DBへ書き込む前に監視先を検証し、設定だけ保存されて監視が壊れる状態を防ぐ。
-      let watchValidation = null;
-      if (hasImportDirectory) {
-        watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''), { isExternal: true });
-        if (!watchValidation.success) return watchValidation;
-      }
-      const db = readDB();
-      db.system_settings = db.system_settings || [];
-      for (const [id, value] of Object.entries(settings)) {
-        if (!allowed.has(id)) continue;
-        // 子機は機密設定をマスク値で受け取る(GETのisBlockedSecret参照)。設定画面を
-        // 開いて保存しただけでそのマスク値が送り返され、実際のパスワードを文字列
-        // '********' で上書きしてしまうため、マスク値は「変更なし」として無視する。
-        if (String(value ?? '') === MASKED_SECRET_VALUE) continue;
-        const rec = db.system_settings.find(s => s.id === id);
-        if (rec) rec.value = String(value ?? '');
-        else db.system_settings.push({ id, value: String(value ?? '') });
-      }
-      appendAuditLog(db, 'PARENT_ACTION', {
-        targetType: 'parent-actions',
-        targetId: action,
-        actorType: 'child_api',
-        remoteIp: requestMeta.remoteIp || '',
-        after: { settingIds: Object.keys(settings).filter(id => allowed.has(id)) },
-        details: { action },
-      });
-      if (!writeDB(db)) {
-        return { success: false, message: '連携設定を保存できませんでした。' };
-      }
-      // 監視に影響しうる項目(import_directory以外にもimport_schedule・
-      // import_connection_type・ODBC/SMB関連等)が部分的に送られてきた場合でも
-      // 監視が古いままにならないよう、書き込み成功後は無条件で再読み込みする。
-      // setupImportTrigger/setupScheduleFeedTriggersは冒頭で既存の監視を必ず
-      // 停止してから張り直すため、変更が無かった場合でも安全な冪等操作である。
-      setupImportTrigger();
-      setupScheduleFeedTriggers();
-      return { success: true };
-    }
+    case 'save-import-settings':
+      return saveImportSettingsOnParent(payload.settings || {}, requestMeta);
     case 'manual-import':
       return appendParentActionAudit(action, await triggerManualImportOnParent(), requestMeta);
     case 'update-watch-directory':
@@ -6728,6 +6678,65 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
     default:
       return { success: false, message: 'Unknown parent action' };
   }
+}
+
+// 'save-import-settings'アクションの実処理。他のcaseと違いappendParentActionAudit
+// ではなく、保存内容(settingIds)を含む詳細な監査ログを自前で残すため、独立した
+// 関数として切り出す(processParentActionRequestのswitch内は他caseと同様の
+// 一行デリゲートに揃える)。
+function saveImportSettingsOnParent(settings, requestMeta = {}) {
+  const allowed = new Set([
+    'import_directory',
+    'import_mapping',
+    'import_schedule',
+    'import_retention_policy',
+    'import_connection_type',
+    'odbc_connection_string',
+    'odbc_sql_query',
+    'smb_auth_mode',
+    'smb_username',
+    'smb_password',
+    'show_sync_time',
+    'show_import_time',
+  ]);
+  const hasImportDirectory = Object.prototype.hasOwnProperty.call(settings, 'import_directory');
+  // DBへ書き込む前に監視先を検証し、設定だけ保存されて監視が壊れる状態を防ぐ。
+  let watchValidation = null;
+  if (hasImportDirectory) {
+    watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''), { isExternal: true });
+    if (!watchValidation.success) return watchValidation;
+  }
+  const db = readDB();
+  db.system_settings = db.system_settings || [];
+  for (const [id, value] of Object.entries(settings)) {
+    if (!allowed.has(id)) continue;
+    // 子機は機密設定をマスク値で受け取る(GETのisBlockedSecret参照)。設定画面を
+    // 開いて保存しただけでそのマスク値が送り返され、実際のパスワードを文字列
+    // '********' で上書きしてしまうため、マスク値は「変更なし」として無視する。
+    if (String(value ?? '') === MASKED_SECRET_VALUE) continue;
+    const rec = db.system_settings.find(s => s.id === id);
+    if (rec) rec.value = String(value ?? '');
+    else db.system_settings.push({ id, value: String(value ?? '') });
+  }
+  appendAuditLog(db, 'PARENT_ACTION', {
+    targetType: 'parent-actions',
+    targetId: 'save-import-settings',
+    actorType: 'child_api',
+    remoteIp: requestMeta.remoteIp || '',
+    after: { settingIds: Object.keys(settings).filter(id => allowed.has(id)) },
+    details: { action: 'save-import-settings' },
+  });
+  if (!writeDB(db)) {
+    return { success: false, message: '連携設定を保存できませんでした。' };
+  }
+  // 監視に影響しうる項目(import_directory以外にもimport_schedule・
+  // import_connection_type・ODBC/SMB関連等)が部分的に送られてきた場合でも
+  // 監視が古いままにならないよう、書き込み成功後は無条件で再読み込みする。
+  // setupImportTrigger/setupScheduleFeedTriggersは冒頭で既存の監視を必ず
+  // 停止してから張り直すため、変更が無かった場合でも安全な冪等操作である。
+  setupImportTrigger();
+  setupScheduleFeedTriggers();
+  return { success: true };
 }
 
 // 親機としてのHTTP共有サーバー起動
@@ -6926,8 +6935,7 @@ function startParentServer() {
           if (action === 'heartbeat' && req.method === 'POST') {
             let info;
             try { info = JSON.parse(body || '{}'); } catch { info = {}; }
-            const clientIp = (req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
-            result = applyHeartbeat(info, clientIp);
+            result = applyHeartbeat(info, remoteIp);
           } else if (action === 'list' && req.method === 'GET') {
             result = { success: true, devices: getActiveDevices() };
           } else if (action === 'disconnect' && req.method === 'POST') {

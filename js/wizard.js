@@ -476,61 +476,33 @@ const Wizard = {
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> テスト中...';
       if (result) result.innerHTML = '';
-      const url = `http://${parentIp}:3005/api/tables/wards`;
       const token = document.getElementById('wizard-api-token')?.value.trim() || '';
-      const appVer = await window.electronAPI?.getAppVersion?.().catch(() => '?') ?? '?';
-      const logLines = [
-        `[Wizard接続テスト] appVersion=${appVer} url=${url}`,
-        `  navigator.onLine=${navigator.onLine}`,
-      ];
-      try {
-        const res = await parentFetch(url, {
-          headers: token ? { 'X-API-Token': token } : {},
-          purpose: 'connection-test',
-        }, 4000);
-        if (res.ok) {
-          const data = await res.json();
-          logLines.push(`  結果: 疎通成功 status=${res.status} wards=${data.data?.length ?? '?'}件`);
-
-          // 第2段階: APIトークン検証。wardsはトークン不要のため疎通確認にしかならず、
-          // 患者データ（beds等）はトークン必須。ここで検証しないと
-          // 「テストは成功するのに実際の同期は401で全滅」という状態を見逃す
-          if (token) {
-            try {
-              const res2 = await parentFetch(`http://${parentIp}:3005/api/tables/beds`, {
-                headers: { 'X-API-Token': token },
-                purpose: 'connection-test',
-              }, 4000);
-              if (res2.ok) {
-                logLines.push(`  トークン検証: 成功 status=${res2.status}`);
-                if (result) result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${data.data?.length ?? '?'}件・APIトークン認証もOK）</span>`;
-              } else if (res2.status === 401) {
-                logLines.push(`  トークン検証: 失敗 status=401（トークン不一致）`);
-                if (result) result.innerHTML = `<span style="color:#d97706"><i class="fas fa-key"></i> ネットワークは正常ですが、<b>APIトークンが親機と一致しません</b>。親機の「共有・ネットワーク設定」画面のトークンをコピーし直してください</span>`;
-              } else {
-                logLines.push(`  トークン検証: HTTPエラー status=${res2.status}`);
-                if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証でHTTPエラー ${res2.status}</span>`;
-              }
-            } catch (e2) {
-              logLines.push(`  トークン検証: 例外 name=${e2.name} message=${e2.message}`);
-              if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証中にエラー（${UI.escapeHTML(e2.message || e2.name)}）</span>`;
-            }
-          } else {
-            logLines.push('  トークン検証: スキップ（未入力）');
-            if (result) result.innerHTML = `<span style="color:#d97706"><i class="fas fa-exclamation-triangle"></i> 疎通は成功（病棟 ${data.data?.length ?? '?'}件）。ただし<b>APIトークンが未入力</b>のため、患者データの取得はできません。親機のトークンを入力してください</span>`;
-          }
-        } else {
-          logLines.push(`  結果: HTTPエラー status=${res.status}`);
-          if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${res.status}</span>`;
+      const testResult = await testParentConnection(parentIp, token, 'Wizard接続テスト');
+      if (result) {
+        switch (testResult.outcome) {
+          case 'ok':
+            result.innerHTML = `<span style="color:#16a34a"><i class="fas fa-check-circle"></i> 接続成功（病棟 ${testResult.wardsCount ?? '?'}件・APIトークン認証もOK）</span>`;
+            break;
+          case 'token-mismatch':
+            result.innerHTML = `<span style="color:#d97706"><i class="fas fa-key"></i> ネットワークは正常ですが、<b>APIトークンが親機と一致しません</b>。親機の「共有・ネットワーク設定」画面のトークンをコピーし直してください</span>`;
+            break;
+          case 'token-http-error':
+            result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証でHTTPエラー ${testResult.status}</span>`;
+            break;
+          case 'token-exception':
+            result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> トークン検証中にエラー（${UI.escapeHTML(testResult.error.message || testResult.error.name)}）</span>`;
+            break;
+          case 'no-token':
+            result.innerHTML = `<span style="color:#d97706"><i class="fas fa-exclamation-triangle"></i> 疎通は成功（病棟 ${testResult.wardsCount ?? '?'}件）。ただし<b>APIトークンが未入力</b>のため、患者データの取得はできません。親機のトークンを入力してください</span>`;
+            break;
+          case 'http-error':
+            result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${testResult.status}</span>`;
+            break;
+          case 'exception':
+            result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした（${UI.escapeHTML(testResult.reason)}）。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
+            break;
         }
-      } catch (e) {
-        const reason = e.name === 'AbortError'
-          ? 'タイムアウトしました（4秒応答なし）'
-          : `${e.name || 'Error'}: ${e.message || '原因不明'}`;
-        logLines.push(`  結果: 例外 name=${e.name} message=${e.message} stack=${(e.stack || '').split('\n').slice(0, 3).join(' / ')}`);
-        if (result) result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした（${UI.escapeHTML(reason)}）。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
       }
-      window.electronAPI?.appendDebugLog?.(logLines.join('\n')).catch(() => {});
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-plug"></i> 接続テスト';
     });
@@ -723,17 +695,10 @@ const Wizard = {
         (this.config.share_mode === 'parent' && this.config.standalone) ? 'true' : 'false');
 
       // 稼働モード・親機IPはこの端末自身のローカルDBにも書き込む
-      // （main.jsが起動時にローカルDBの share_mode を見て共有サーバーの起動を判定するため。
-      // 共有ルーティングのAPI.patchは使わない — 子機から親機のDBを上書きしてしまう）
-      if (window.electronAPI?.dbRequest) {
-        try {
-          await Promise.all([
-            window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'PATCH', body: JSON.stringify({ value: this.config.share_mode }) } }),
-            window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: this.config.parent_ip || '' }) } }),
-          ]);
-        } catch (e) {
-          console.warn('[Wizard] ローカルDBへの稼働モード保存に失敗:', e);
-        }
+      try {
+        await saveLocalShareModeSettings(this.config.share_mode, this.config.parent_ip || '');
+      } catch (e) {
+        console.warn('[Wizard] ローカルDBへの稼働モード保存に失敗:', e);
       }
 
       // 表示設定など、親機・子機を問わず共有DBへ反映してよい項目
