@@ -239,8 +239,12 @@ assert(
   'CSV originals must be archived only after renderer DB update acknowledgement'
 );
 assert(
-  app.includes('startMasterSync()') &&
-  app.includes("mode !== 'client' && mode !== 'child'") &&
+  (() => {
+    const idx = app.indexOf('startMasterSync() {');
+    const end = app.indexOf('\n  },', idx);
+    if (idx < 0 || end < idx) return false;
+    return app.slice(idx, end).includes('isClientMode()');
+  })() &&
   api.includes('ensureMutationSuccess'),
   'Child terminals must refresh shared masters and surface parent write failures'
 );
@@ -253,7 +257,9 @@ assert(
 );
 assert(
   app.includes('CallPanel._renderCallPanel()') &&
-  importNotify.includes("shareMode === 'child'"),
+  importNotify.includes('_isChildTerminal() {') &&
+  importNotify.includes('return isClientMode();') &&
+  api.includes("shareMode === 'client' || shareMode === 'child'"),
   'Master sync and legacy child mode handling must remain wired'
 );
 assert(

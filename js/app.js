@@ -342,8 +342,7 @@ const ParentServerMonitor = {
   _wasUnavailable: false,
 
   init() {
-    const mode = localStorage.getItem('cfg_share_mode');
-    if (mode !== 'client' && mode !== 'child') return;
+    if (!isClientMode()) return;
     if (this._interval) clearTimeout(this._interval);
     this._failures = 0;
     this._wasUnavailable = false;
@@ -750,8 +749,7 @@ const App = {
           const passcodeStatus = await PasscodeModal.getPasscodeStatus();
 
           if (!passcodeStatus?.success || passcodeStatus.requiresSetup) {
-            const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-            if (shareMode === 'client' || shareMode === 'child') {
+            if (isClientMode()) {
               UI.toast('初回パスコード設定は親機で行ってください。設定後に子機から開けます。', 'warning', 7000);
               return;
             }
@@ -1395,8 +1393,7 @@ const App = {
   // 注: これは「切り替わり」の検知であって、親機が同時に2台存在する状態そのものは
   // 検知できない（それにはmDNS等の探索が必要）。
   _checkParentIdentity(systemSettings) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode !== 'client' && shareMode !== 'child') return;
+    if (!isClientMode()) return;
     const current = (systemSettings || []).find(s => s.id === 'parent_instance_id')?.value || '';
     if (!current) return;
     const known = localStorage.getItem('cfg_parent_instance_id') || '';
@@ -1474,8 +1471,7 @@ const App = {
   _updateCheckTimer: null,
 
   _getUpdateParentIp() {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (shareMode === 'client' || shareMode === 'child') {
+    if (isClientMode()) {
       return localStorage.getItem('cfg_parent_ip') || '';
     }
     return ''; // 親機は自分自身(127.0.0.1)の配信フォルダを参照する
@@ -1486,9 +1482,8 @@ const App = {
 
     const check = async () => {
       if (localStorage.getItem('cfg_auto_update_check') === 'false') return;
-      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
       const parentIp = this._getUpdateParentIp();
-      if ((shareMode === 'client' || shareMode === 'child') && !parentIp) return;
+      if (isClientMode() && !parentIp) return;
       const res = await window.electronAPI.checkForUpdate({ parentIp }).catch(() => null);
       if (res?.success && res.updateAvailable) {
         this._showUpdateAvailable(res);
@@ -1522,8 +1517,7 @@ const App = {
     // 既に一度通過しているため、子機ごとのWindows確認ダイアログは表示されない
     // (main.jsのconfirmUnsignedUpdate参照)。親機自身の更新のみ、この後に
     // もう一つ確認ダイアログが表示される
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const isChildTerminal = shareMode === 'client' || shareMode === 'child';
+    const isChildTerminal = isClientMode();
     const detail = isChildTerminal
       ? 'ダウンロードと検証が終わると、アプリが自動的に終了してインストールが始まります（数十秒〜数分）。データは更新前に自動バックアップされます。'
       : 'ダウンロードと検証が終わると、Windowsの確認ダイアログがもう一つ表示されます（配布ファイルが未署名のため）。「署名なしで続行」を選択するとインストールが始まり、アプリが自動的に終了します（数十秒〜数分）。データは更新前に自動バックアップされます。';
@@ -1692,8 +1686,7 @@ const App = {
   },
 
   _renderDevicePresence(devices, error) {
-    const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-    const isChild = shareMode === 'client' || shareMode === 'child';
+    const isChild = isClientMode();
     const summary = DevicePresence.summarize(devices, {
       currentWardId: this.isExamTerminal() ? null : AppState.currentWardId,
       parentVersion: AppState.appVersion,
@@ -1919,8 +1912,7 @@ const App = {
   startMasterSync() {
     if (this._masterSyncTimer) clearInterval(this._masterSyncTimer);
     this._masterSyncTimer = null;
-    const mode = localStorage.getItem('cfg_share_mode') || 'parent';
-    if (mode !== 'client' && mode !== 'child') return;
+    if (!isClientMode()) return;
     this._masterSyncTimer = setInterval(async () => {
       if (this._masterSyncInFlight || this._refreshPromise) return;
       this._masterSyncInFlight = true;
@@ -2036,8 +2028,7 @@ const App = {
       return true;
     } catch (e) {
       console.error('[App] データ更新失敗:', e);
-      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-      if (shareMode === 'client' || shareMode === 'child') {
+      if (isClientMode()) {
         this._setConnectionStatus(false, e?.unauthorized ? 'unauthorized' : 'network');
       }
       return false;
@@ -2250,8 +2241,7 @@ const App = {
       RETURNED: { enabled: false, sound: 'ding' }
     };
     // 子機は端末固有の localStorage 値を優先
-    const _shareMode = localStorage.getItem('cfg_share_mode');
-    const _localSounds = (_shareMode === 'client' || _shareMode === 'child')
+    const _localSounds = isClientMode()
       ? localStorage.getItem('tbs_notification_sounds') : null;
     if (_localSounds) {
       try {

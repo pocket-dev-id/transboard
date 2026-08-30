@@ -219,10 +219,7 @@ const Settings = {
   },
 
   _getTabGroups() {
-    const mode = localStorage.getItem('cfg_share_mode');
-    return mode === 'client' || mode === 'child'
-      ? SETTINGS_TAB_GROUPS.child
-      : SETTINGS_TAB_GROUPS.parent;
+    return isClientMode() ? SETTINGS_TAB_GROUPS.child : SETTINGS_TAB_GROUPS.parent;
   },
 
   _renderTabButton(id) {
@@ -272,8 +269,7 @@ const Settings = {
 
   // 設定タブ種別バナーを先頭に挿入
   _injectCategoryBanner(body) {
-    const mode = localStorage.getItem('cfg_share_mode');
-    const isChild = mode === 'client' || mode === 'child';
+    const isChild = isClientMode();
     const category = SETTINGS_TAB_CATEGORIES[this._activeTab];
     if (!category) return;
 
