@@ -8,23 +8,19 @@
 // 実装コードそのもの(js/ui.js の conversationKey、main.js の trimTable)を
 // 取り出して直接実行し、出荷されるコードの挙動を検証する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const vm = require('vm');
+const { readRoot, extractBetweenMarkers } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+const read = readRoot;
 const mainSource = read('main.js');
 const uiSource = read('js/ui.js');
 const callSource = read('js/call.js');
 const apiSource = read('js/api.js');
 
 function extract(source, startMarker, endMarker) {
-  const idx = source.indexOf(startMarker);
-  assert(idx >= 0, `"${startMarker}" が見つかりません`);
-  const end = source.indexOf(endMarker, idx);
-  assert(end > idx, `"${startMarker}" の終端が見つかりません`);
-  return source.slice(idx, end + endMarker.length);
+  const snippet = extractBetweenMarkers(source, startMarker, endMarker);
+  assert(snippet, `"${startMarker}" の抽出に失敗しました`);
+  return snippet;
 }
 
 // ── UI.conversationKey: 会話キーの一貫性 ──

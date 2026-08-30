@@ -9,19 +9,12 @@
 // main.jsからparseScheduleDatetimeMs/buildValidatedScheduleDateMsの実装コード
 // そのものを取り出して直接実行し、出荷されるコードの挙動を検証する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
+const { readRoot, extractThroughFunctionEnd } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const source = readRoot('main.js');
 
-const startIdx = source.indexOf('const SCHEDULE_TIME_RE_SRC');
-assert(startIdx >= 0, 'SCHEDULE_TIME_RE_SRCが見つかりません');
-const fnIdx = source.indexOf('function parseScheduleDatetimeMs');
-assert(fnIdx > startIdx, 'function parseScheduleDatetimeMsが見つかりません');
-const endIdx = source.indexOf('\n}', fnIdx);
-assert(endIdx > fnIdx, 'parseScheduleDatetimeMsの終端(\\n})が見つかりません');
-const snippet = source.slice(startIdx, endIdx + 2);
+const snippet = extractThroughFunctionEnd(source, 'const SCHEDULE_TIME_RE_SRC', 'function parseScheduleDatetimeMs');
+assert(snippet, 'SCHEDULE_TIME_RE_SRC〜parseScheduleDatetimeMsの抽出に失敗しました(main.jsの構造が変わった可能性があります)');
 
 const mod = { exports: {} };
 const loader = new Function('module', `${snippet}\nmodule.exports = { parseScheduleDatetimeMs, buildValidatedScheduleDateMs };`);

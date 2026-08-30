@@ -7,12 +7,10 @@
 // 両方から共有される。js/ui.js全体を実際にロードして直接実行することで、
 // 出荷されるコードそのものの挙動を検証する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const vm = require('vm');
+const { readRoot } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'js/ui.js'), 'utf8');
+const source = readRoot('js/ui.js');
 
 const sandbox = { console };
 vm.runInNewContext(`${source}\nthis.UI = UI;`, sandbox);

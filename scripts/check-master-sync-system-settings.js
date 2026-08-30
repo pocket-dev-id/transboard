@@ -12,20 +12,13 @@
 // 現実的でないため、loadMasters()メソッド本体だけを文字列として取り出し、
 // 最小限のthis/API/AppStateモックにバインドして直接実行する。
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const vm = require('vm');
+const { readRoot, extractMethodBody } = require('./lib/extract-source');
 
-const ROOT = path.resolve(__dirname, '..');
-const source = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
+const source = readRoot('js/app.js');
 
-const startMarker = 'async loadMasters({ silent = false } = {}) {';
-const startIdx = source.indexOf(startMarker);
-assert(startIdx >= 0, 'loadMasters({ silent })が見つかりません(js/app.jsの構造が変わった可能性があります)');
-const bodyStart = startIdx + startMarker.length;
-const endIdx = source.indexOf('\n  },', bodyStart);
-assert(endIdx > bodyStart, 'loadMastersの終端(\\n  },)が見つかりません');
-const methodBody = source.slice(bodyStart, endIdx);
+const methodBody = extractMethodBody(source, 'async loadMasters({ silent = false } = {}) {');
+assert(methodBody, 'loadMasters({ silent })の抽出に失敗しました(js/app.jsの構造が変わった可能性があります)');
 
 function buildHarness(state) {
   const sandbox = {
