@@ -554,6 +554,23 @@ function pruneTransferStatusLogs(db) {
   return removableIds.size;
 }
 
+// transfer_status_logsへのエントリ追加を共通化する。ステータス変更が発生する
+// 複数の経路(移送開始/ステータス更新/メモ追記/旧端末互換の移送統合)で
+// 個別に重複実装されていた
+function pushStatusLog(db, { transferEventId, fromStatus, toStatus, changedBy, changedAt, note }) {
+  db.transfer_status_logs = db.transfer_status_logs || [];
+  db.transfer_status_logs.push({
+    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    transfer_event_id: transferEventId,
+    from_status: fromStatus,
+    to_status: toStatus,
+    changed_by: changedBy,
+    changed_at: changedAt,
+    note: note || '',
+  });
+  pruneTransferStatusLogs(db);
+}
+
 function encryptSensitiveValue(value) {
   if (!value) return value;
   if (value.startsWith('ENCRYPTED:')) return value; // 既に暗号化済み
@@ -1176,6 +1193,14 @@ function writeDB(data) {
   }
 }
 
+// writeDB()失敗時に共通のエラーメッセージでthrowする。POSTハンドラ各所で
+// 同じチェック+エラーメッセージが重複していたため一本化した
+function writeDbOrThrow(db) {
+  if (!writeDB(db)) {
+    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+  }
+}
+
 function getSettingRecord(db, id) {
   return (db.system_settings || []).find(s => s.id === id);
 }
@@ -1300,13 +1325,12 @@ function processAuditWriteRequest(method, bodyStr, isExternal = false, apiToken 
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
   }
-  if (isExternal && !isValidApiToken(apiToken)) {
-    console.warn('[Security] 監査ログAPIトークン認証失敗');
+  if (!requireExternalAuth(isExternal, apiToken, '監査ログ')) {
     return { success: false, message: 'Unauthorized', unauthorized: true };
   }
 
-  let payload;
-  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+  const { ok, payload } = parseJsonBody(bodyStr);
+  if (!ok) {
     return { success: false, message: 'リクエストボディのJSONが不正です' };
   }
 
@@ -1320,9 +1344,7 @@ function processAuditWriteRequest(method, bodyStr, isExternal = false, apiToken 
     remoteIp: requestMeta.remoteIp || '',
     details: audit.details,
   });
-  if (!writeDB(db)) {
-    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-  }
+  writeDbOrThrow(db);
   return { success: true };
 }
 
@@ -3580,16 +3602,15 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
   }
-  if (isExternal && !isValidApiToken(apiToken)) {
-    console.warn('[Security] 移送開始APIトークン認証失敗');
+  if (!requireExternalAuth(isExternal, apiToken, '移送開始')) {
     return { success: false, message: 'Unauthorized', unauthorized: true };
   }
   if (normalizeTerminalRole(requestMeta.terminalRole) === 'exam') {
     return { success: false, message: '検査室端末では移送を開始できません' };
   }
 
-  let payload;
-  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+  const { ok, payload } = parseJsonBody(bodyStr);
+  if (!ok) {
     return { success: false, message: 'リクエストボディのJSONが不正です' };
   }
 
@@ -3688,17 +3709,13 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
   if (conflict) return activeBedConflictResponse(conflict);
 
   events.push(eventData);
-  db.transfer_status_logs = db.transfer_status_logs || [];
-  db.transfer_status_logs.push({
-    id: `log-${now}-${Math.random().toString(36).slice(2, 7)}`,
-    transfer_event_id: eventId,
-    from_status: null,
-    to_status: 'MOVING',
-    changed_by: isExternal ? 'child_api' : 'local_ui',
-    changed_at: now,
-    note: '',
+  pushStatusLog(db, {
+    transferEventId: eventId,
+    fromStatus: null,
+    toStatus: 'MOVING',
+    changedBy: isExternal ? 'child_api' : 'local_ui',
+    changedAt: now,
   });
-  pruneTransferStatusLogs(db);
   trimTable(events, TRANSFER_EVENTS_MAX_ENTRIES, 'transfer_events');
   appendAuditLog(db, 'TRANSFER_START', {
     targetType: 'transfer_events',
@@ -3709,9 +3726,7 @@ async function processTransferStartRequest(method, bodyStr, isExternal = false, 
     details: { fromStatus: null, toStatus: 'MOVING', scope: 'ward' },
   });
 
-  if (!writeDB(db)) {
-    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-  }
+  writeDbOrThrow(db);
 
   const speechMsg = createStatusSpeechMessage(db, eventData, 'MOVING', false);
   if (speechMsg?.to) {
@@ -3726,13 +3741,12 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
   }
-  if (isExternal && !isValidApiToken(apiToken)) {
-    console.warn('[Security] ステータス更新APIトークン認証失敗');
+  if (!requireExternalAuth(isExternal, apiToken, 'ステータス更新')) {
     return { success: false, message: 'Unauthorized', unauthorized: true };
   }
 
-  let payload;
-  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+  const { ok, payload } = parseJsonBody(bodyStr);
+  if (!ok) {
     return { success: false, message: 'リクエストボディのJSONが不正です' };
   }
 
@@ -3831,17 +3845,13 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
   }
 
   list[index] = { ...current, ...patch };
-  db.transfer_status_logs = db.transfer_status_logs || [];
-  db.transfer_status_logs.push({
-    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    transfer_event_id: eventId,
-    from_status: fromStatus,
-    to_status: newStatus,
-    changed_by: statusActor,
-    changed_at: now,
-    note: '',
+  pushStatusLog(db, {
+    transferEventId: eventId,
+    fromStatus: fromStatus,
+    toStatus: newStatus,
+    changedBy: statusActor,
+    changedAt: now,
   });
-  pruneTransferStatusLogs(db);
   appendAuditLog(db, 'STATUS_CHANGE', {
     targetType: 'transfer_events',
     targetId: eventId,
@@ -3857,9 +3867,7 @@ async function processStatusUpdateRequest(method, bodyStr, isExternal = false, a
     },
   });
 
-  if (!writeDB(db)) {
-    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-  }
+  writeDbOrThrow(db);
 
   const speechMsg = createStatusSpeechMessage(db, list[index], newStatus, filledArrivedAtForDirectExamStart);
   if (speechMsg && speechMsg.to) {
@@ -3874,12 +3882,12 @@ function processStatusNoteRequest(method, bodyStr, isExternal = false, apiToken 
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
   }
-  if (isExternal && !isValidApiToken(apiToken)) {
+  if (!requireExternalAuth(isExternal, apiToken, 'ステータスメモ')) {
     return { success: false, message: 'Unauthorized', unauthorized: true };
   }
 
-  let payload;
-  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+  const { ok, payload } = parseJsonBody(bodyStr);
+  if (!ok) {
     return { success: false, message: 'リクエストボディのJSONが不正です' };
   }
   const eventId = String(payload.eventId || '').trim();
@@ -3897,26 +3905,21 @@ function processStatusNoteRequest(method, bodyStr, isExternal = false, apiToken 
   }
 
   const now = Date.now();
-  db.transfer_status_logs = Array.isArray(db.transfer_status_logs) ? db.transfer_status_logs : [];
-  db.transfer_status_logs.push({
-    id: `log-${now}-${Math.random().toString(36).slice(2, 7)}`,
-    transfer_event_id: event.id,
-    from_status: event.current_status,
-    to_status: event.current_status,
-    changed_by: isExternal ? '子機操作' : 'UI操作',
-    changed_at: now,
+  pushStatusLog(db, {
+    transferEventId: event.id,
+    fromStatus: event.current_status,
+    toStatus: event.current_status,
+    changedBy: isExternal ? '子機操作' : 'UI操作',
+    changedAt: now,
     note,
   });
-  pruneTransferStatusLogs(db);
   appendAuditLog(db, 'STATUS_NOTE', {
     targetType: 'transfer_events',
     targetId: event.id,
     actorType: isExternal ? 'child_api' : 'local_ui',
     details: { status: event.current_status },
   });
-  if (!writeDB(db)) {
-    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-  }
+  writeDbOrThrow(db);
   return { success: true };
 }
 
@@ -3924,15 +3927,15 @@ function processStatusAcknowledgeRequest(method, bodyStr, isExternal = false, ap
   if (method !== 'POST') {
     return { success: false, message: 'Method Not Allowed' };
   }
-  if (isExternal && !isValidApiToken(apiToken)) {
+  if (!requireExternalAuth(isExternal, apiToken, '確認応答')) {
     return { success: false, message: 'Unauthorized', unauthorized: true };
   }
   if (normalizeTerminalRole(requestMeta.terminalRole) === 'exam') {
     return { success: false, message: '検査室端末では病棟通知を確認できません' };
   }
 
-  let payload;
-  try { payload = JSON.parse(bodyStr || '{}'); } catch {
+  const { ok, payload } = parseJsonBody(bodyStr);
+  if (!ok) {
     return { success: false, message: 'リクエストボディのJSONが不正です' };
   }
   const logId = String(payload.logId || '').trim().slice(0, 160);
@@ -4038,9 +4041,7 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
     after: operations.map(operation => summarizeAuditRecord(table, operation.after)),
     details: { method: 'POST', count: operations.length },
   });
-  if (!writeDB(db)) {
-    throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-  }
+  writeDbOrThrow(db);
   return { success: true, count: operations.length, data: operations.map(operation => operation.after) };
 }
 
@@ -4503,17 +4504,14 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       list.push(data);
       if (table === 'transfer_events' && normalizedLegacyTransfer) {
         const changedAt = data.departed_at || Date.now();
-        db.transfer_status_logs = db.transfer_status_logs || [];
-        db.transfer_status_logs.push({
-          id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          transfer_event_id: data.id,
-          from_status: null,
-          to_status: 'MOVING',
-          changed_by: 'legacy-client',
-          changed_at: changedAt,
+        pushStatusLog(db, {
+          transferEventId: data.id,
+          fromStatus: null,
+          toStatus: 'MOVING',
+          changedBy: 'legacy-client',
+          changedAt: changedAt,
           note: '旧端末の出棟登録を移動中へ統合',
         });
-        pruneTransferStatusLogs(db);
       }
       console.log(`[DB] POST Created: table=${table}, id=${data.id}`);
     }
@@ -4554,9 +4552,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       details: { method: 'POST' },
     });
 
-    if (!writeDB(db)) {
-      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-    }
+    writeDbOrThrow(db);
     if (table === 'transfer_events' && normalizedLegacyTransfer && index === -1) {
       const speechMsg = createStatusSpeechMessage(db, data, 'MOVING', false);
       if (speechMsg?.to) {
@@ -4653,9 +4649,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
         after: updatedItems.map(item => summarizeAuditRecord(table, item)),
         details: { method, count: updatedItems.length },
       });
-      if (!writeDB(db)) {
-        throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-      }
+      writeDbOrThrow(db);
       console.log(`[DB] Bulk ${method} Updated: table=${table}, items=${updatedItems.length}`);
       return { success: true, count: updatedItems.length, data: updatedItems };
     }
@@ -4719,9 +4713,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       after: summarizeAuditRecord(table, list[index]),
       details: { method, fields: Object.keys(data) },
     });
-    if (!writeDB(db)) {
-      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-    }
+    writeDbOrThrow(db);
     console.log(`[DB] PATCH Updated: table=${table}, id=${id}, updated fields:`, Object.keys(data));
     return list[index];
   }
@@ -4781,9 +4773,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       before: summarizeAuditRecord(table, removed),
       details: { method: 'DELETE' },
     });
-    if (!writeDB(db)) {
-      throw new Error('データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
-    }
+    writeDbOrThrow(db);
     console.log(`[DB] DELETE Success: table=${table}, id=${id}`);
     return removed;
   }
@@ -6499,6 +6489,26 @@ function ensureParentInstanceId() {
   writeDB(db);
   console.log('[Server] 親機インスタンスIDを生成しました');
   return instanceId;
+}
+
+// 外部(子機)からのPOSTリクエストを処理する各ハンドラの冒頭で共通の
+// 「メソッドチェック→APIトークン検証」を行う。認証失敗時はwarnLabelを
+// 含むログを出す(どのエンドポイントで失敗したか区別するため)
+function requireExternalAuth(isExternal, apiToken, warnLabel) {
+  if (isExternal && !isValidApiToken(apiToken)) {
+    console.warn(`[Security] ${warnLabel}APIトークン認証失敗`);
+    return false;
+  }
+  return true;
+}
+
+// POSTリクエストのJSON本文を安全にパースする共通ヘルパー
+function parseJsonBody(bodyStr) {
+  try {
+    return { ok: true, payload: JSON.parse(bodyStr || '{}') };
+  } catch {
+    return { ok: false, payload: null };
+  }
 }
 
 function isValidApiToken(apiToken) {
