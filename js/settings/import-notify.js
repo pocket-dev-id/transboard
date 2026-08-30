@@ -166,6 +166,23 @@ Object.assign(Settings, {
   },
 
   async _renderImportSettings(body) {
+    const data = await this._gatherImportSettingsData();
+    body.innerHTML = this._buildImportSettingsHtml(data);
+
+    this._bindConnTypeToggle(body);
+    this._bindManualImportButton(body);
+    this._bindOdbcWizard(body);
+    this._bindOdbcTestButton(body);
+    this._bindOdbcSyncButton(body);
+    this._bindImportScheduleAndPolicyToggle(body);
+    this._bindCsvMappingHelper(body, data.mapping);
+    this._bindImportMapModeToggle(body);
+    this._bindAdmissionModeCards(body);
+    this._bindAdmissionModeSaveButton(body);
+    this._saveImportSettings(body);
+  },
+
+  async _gatherImportSettingsData() {
     // マスタから設定レコードを取得
     const dirSetting = AppState.systemSettings?.find(s => s.id === 'import_directory') || { value: '' };
     const currentPath = dirSetting.value || '（デフォルト: ユーザーデータ内の import_folder フォルダ）';
@@ -214,6 +231,26 @@ Object.assign(Settings, {
       console.error('[Settings] ログの取得失敗:', e);
     }
 
+    return {
+      dirSetting, currentPath, archiveInfo,
+      smbAuthSetting, smbUsernameSetting, smbPasswordSetting,
+      mapping, schedule, policy,
+      connTypeSetting, odbcConnSetting, odbcQuerySetting,
+      showSyncTime, showImportTime, admissionModeSetting,
+      logs,
+    };
+  },
+
+  _buildImportSettingsHtml(data) {
+    const {
+      dirSetting, currentPath, archiveInfo,
+      smbAuthSetting, smbUsernameSetting, smbPasswordSetting,
+      mapping, schedule, policy,
+      connTypeSetting, odbcConnSetting, odbcQuerySetting,
+      showSyncTime, showImportTime, admissionModeSetting,
+      logs,
+    } = data;
+
     const logRowsHtml = logs.length === 0
       ? '<tr><td colspan="5" class="text-center text-muted" style="padding:15px;">インポート履歴データがありません</td></tr>'
       : logs.map(l => {
@@ -234,9 +271,8 @@ Object.assign(Settings, {
           </tr>
         `;
       }).join('');
-
     const admMode = admissionModeSetting.value === 'hybrid' ? 'hybrid' : 'csv';
-    body.innerHTML = `
+    return `
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
           <h3><i class="fas fa-procedures"></i> 在室管理モード</h3>
@@ -680,7 +716,9 @@ Object.assign(Settings, {
         </div>
       </div>
     `;
+  },
 
+  _bindConnTypeToggle(body) {
     // 連携方式選択変更イベント
     const connRadios = body.querySelectorAll('input[name="import-conn-type"]');
     connRadios.forEach(radio => {
@@ -692,7 +730,9 @@ Object.assign(Settings, {
         document.getElementById('odbc-conn-panel').style.display = isCsv ? 'none' : 'block';
       });
     });
+  },
 
+  _bindManualImportButton(body) {
     // 今すぐフォルダスキャン実行ボタンイベント
     document.getElementById('btn-manual-import').onclick = async () => {
       const btn = document.getElementById('btn-manual-import');
@@ -723,7 +763,9 @@ Object.assign(Settings, {
         btn.innerHTML = oldHtml;
       }
     };
+  },
 
+  _bindOdbcWizard(body) {
     // ── DSN一覧を取得してドロップダウンに反映 ────────────────
     const _loadDsnList = async () => {
       const sel = document.getElementById('odbc-dsn-select');
@@ -931,7 +973,9 @@ Object.assign(Settings, {
     });
 
     _loadDsnList();
+  },
 
+  _bindOdbcTestButton(body) {
     // ODBC接続テストボタンイベント
     document.getElementById('btn-odbc-test').onclick = async () => {
       const btn = document.getElementById('btn-odbc-test');
@@ -962,7 +1006,9 @@ Object.assign(Settings, {
         btn.innerHTML = oldHtml;
       }
     };
+  },
 
+  _bindOdbcSyncButton(body) {
     // ODBC同期実行ボタンイベント
     document.getElementById('btn-odbc-sync').onclick = async () => {
       const btn = document.getElementById('btn-odbc-sync');
@@ -992,7 +1038,9 @@ Object.assign(Settings, {
         btn.innerHTML = oldHtml;
       }
     };
+  },
 
+  _bindImportScheduleAndPolicyToggle(body) {
     // UI要素のイベントバインド（条件表示切替）
     const modeSelect = document.getElementById('cfg-sched-mode');
     modeSelect.addEventListener('change', (e) => {
@@ -1016,7 +1064,9 @@ Object.assign(Settings, {
         document.getElementById('smb-custom-credentials').style.display = e.target.value === 'custom' ? 'block' : 'none';
       });
     }
+  },
 
+  _bindCsvMappingHelper(body, mapping) {
     // 列割り当て初期設定アシスタント（CSV読み込み＆プルダウン化）
     const triggerBtn = document.getElementById('btn-trigger-helper');
     const fileInput = document.getElementById('btn-helper-csv-file');
@@ -1198,7 +1248,9 @@ Object.assign(Settings, {
         };
       }
     }
+  },
 
+  _bindImportMapModeToggle(body) {
     const mapModeSelect = document.getElementById('cfg-map-mode');
     mapModeSelect.addEventListener('change', (e) => {
       document.getElementById('map-single-container').style.display = e.target.value === 'single' ? 'flex' : 'none';
@@ -1212,7 +1264,9 @@ Object.assign(Settings, {
         Settings.updateImportPreview();
       });
     }
+  },
 
+  _bindAdmissionModeCards(body) {
     // 在室管理モードカード選択イベント
     body.querySelectorAll('.admission-mode-card').forEach(card => {
       card.addEventListener('click', () => {
@@ -1229,7 +1283,9 @@ Object.assign(Settings, {
         card.querySelector('input').checked = true;
       });
     });
+  },
 
+  _bindAdmissionModeSaveButton(body) {
     // 在室管理モード保存
     document.getElementById('btn-save-admission-mode').onclick = async () => {
       const selected = body.querySelector('input[name="admission-mode"]:checked')?.value || 'csv';
@@ -1244,7 +1300,9 @@ Object.assign(Settings, {
         UI.toast('保存に失敗しました: ' + e.message, 'danger');
       }
     };
+  },
 
+  _saveImportSettings(body) {
     // 保存ボタンイベント
     document.getElementById('btn-save-import-all').onclick = async () => {
       const saveBtn = document.getElementById('btn-save-import-all');
@@ -1265,7 +1323,7 @@ Object.assign(Settings, {
       const smbPassword = document.getElementById('cfg-smb-password').value;
 
       // マッピング構築
-      const mapMode = mapModeSelect.value;
+      const mapMode = document.getElementById('cfg-map-mode').value;
       const mappingData = {
         bed_number: mapMode === 'single' ? document.getElementById('cfg-map-bed').value.trim() : '',
         room_code: mapMode === 'combined' ? document.getElementById('cfg-map-room').value.trim() : '',
@@ -1291,7 +1349,7 @@ Object.assign(Settings, {
       }
 
       // スケジュール構築
-      const scheduleMode = modeSelect.value;
+      const scheduleMode = document.getElementById('cfg-sched-mode').value;
       const intervalMin = document.getElementById('cfg-sched-interval').value;
       const timesStr = document.getElementById('cfg-sched-times').value;
       const timesArray = timesStr.split(',').map(t => t.trim()).filter(t => /^\d{2}:\d{2}$/.test(t));
@@ -1310,7 +1368,7 @@ Object.assign(Settings, {
       };
 
       // ポリシー構築
-      const policyAction = policySelect.value;
+      const policyAction = document.getElementById('cfg-policy-action').value;
       const retentionDays = document.getElementById('cfg-policy-days').value;
       const clearUnlisted = document.getElementById('cfg-policy-clear-unlisted')?.checked ?? false;
 
