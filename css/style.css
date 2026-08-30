@@ -208,6 +208,9 @@ h1, h2, h3, h4,
   color: #1a202c;
   background-color: #ffffff;
 }
+#zoom-select option {
+  color: #1a202c;
+}
 .btn-icon {
   background: rgba(255,255,255,.12);
   border: 1px solid rgba(255,255,255,.2);
@@ -1210,6 +1213,7 @@ h1, h2, h3, h4,
 .history-time { font-size: 10px; color: var(--clr-text-muted); margin-bottom: 2px; }
 .history-main { font-weight: 600; }
 .history-sub { color: var(--clr-text-muted); font-size: 11px; }
+.history-filter-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: #4a5568; }
 
 /* ---------- モーダル ---------- */
 .modal-overlay {
@@ -2932,6 +2936,7 @@ body.exam-terminal-mode #page-ward-dashboard {
 .exam-stats-table { font-size: 12px; }
 .exam-stats-table th { white-space: nowrap; }
 .exam-stats-table td { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.exam-stats-toolbar-select { padding: 4px 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .exam-stats-over { color: var(--clr-danger); font-weight: 800; }   /* 実績が標準を超過 */
 .exam-stats-under { color: var(--clr-success); font-weight: 800; }  /* 実績が標準より短い */
 

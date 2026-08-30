@@ -6931,6 +6931,7 @@ if (!gotTheLock) {
       clearTimeout(scheduleFeedRetryTimer);
       scheduleFeedRetryTimer = null;
     }
+    webrtcSignaling.dispose();
     stopParentServer();
     if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) {
       powerSaveBlocker.stop(powerSaveBlockerId);
