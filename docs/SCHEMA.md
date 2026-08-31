@@ -301,7 +301,6 @@ key-valueペアで管理。重要なキー一覧:
 
 | `id` (key) | 初期値 | 説明 |
 |---|---|---|
-| `theme_style` | `light` | テーマ（`light`/`dark`/`blue`/`high-contrast`/`cvd`） |
 | `share_mode` | `parent` | 動作モード（`parent`/`client`） |
 | `parent_ip` | `` | 子機が接続する親機のIPアドレス |
 | `admin_passcode` | `0000` | 設定画面保護パスコード（SHA256ハッシュ形式 `SHA256:...`） |
