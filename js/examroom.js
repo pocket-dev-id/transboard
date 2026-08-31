@@ -520,7 +520,7 @@ const ExamRoom = {
                 </div>
               </div>
               <div class="summary-card">
-                <div class="summary-icon" style="background: #fef3c7; color: #d97706;"><i class="fas fa-clock"></i></div>
+                <div class="summary-icon" style="background: #fef3c7; color: #92400e;"><i class="fas fa-clock"></i></div>
                 <div class="summary-body">
                   <div class="summary-value">0</div>
                   <div class="summary-label">待ち</div>
@@ -578,7 +578,7 @@ const ExamRoom = {
               </div>
             </div>
             <div class="summary-card">
-              <div class="summary-icon" style="background: #fef3c7; color: #d97706;"><i class="fas fa-clock"></i></div>
+              <div class="summary-icon" style="background: #fef3c7; color: #92400e;"><i class="fas fa-clock"></i></div>
               <div class="summary-body">
                 <div class="summary-value">${waitingCount}</div>
                 <div class="summary-label">待ち</div>

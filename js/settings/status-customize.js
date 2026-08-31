@@ -177,14 +177,14 @@ Object.assign(Settings, {
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:500px;">
             <div>
               <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">「あと何分」（NEARLY_DONE）</label>
-              <select id="cfg-nearly-done-min" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:14px;">
+              <select id="cfg-nearly-done-min" style="width:100%; padding:6px 8px; border:1px solid #cbd5e0; border-radius:4px; font-size:14px;">
                 ${ndOptions}
               </select>
               <p style="font-size:11px; color:#64748b; margin-top:2px;">この分数後に検査終了目安を自動設定します</p>
             </div>
             <div>
               <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">「まもなく迎え」閾値（SOON）</label>
-              <select id="cfg-soon-threshold" style="width:100%; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:14px;">
+              <select id="cfg-soon-threshold" style="width:100%; padding:6px 8px; border:1px solid #cbd5e0; border-radius:4px; font-size:14px;">
                 ${stOptions}
               </select>
               <p style="font-size:11px; color:#64748b; margin-top:2px;">残り時間がこの分数以内で「まもなく」表示</p>
@@ -244,7 +244,7 @@ Object.assign(Settings, {
 
         <div class="settings-section" style="margin-bottom:24px;">
           <h4 class="settings-section-title"><i class="fas fa-toggle-on"></i> 検査室到着ステップ</h4>
-          <label style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:6px; background:#f8fafc; max-width:720px;">
+          <label style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid #cbd5e0; border-radius:6px; background:#f8fafc; max-width:720px;">
             <input type="checkbox" id="chk-skip-arrived-step" ${skipArrivedStep ? 'checked' : ''} style="margin-top:3px;">
             <span>
               <strong>「検査室到着」と「検査開始」を統合する</strong><br>
