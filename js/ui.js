@@ -503,6 +503,12 @@ const UI = {
       clearInterval(Settings._deviceListTimer);
       Settings._deviceListTimer = null;
     }
+
+    // 電話番号パネルを開いたまま画面遷移すると表示され続けてしまうため、
+    // 遷移のたびに閉じる（チャットポーリング停止もhidePanel()内で行われる）
+    if (typeof CallPanel !== 'undefined' && !document.getElementById('call-panel')?.classList.contains('hidden')) {
+      CallPanel.hidePanel();
+    }
   },
 
   /* ---------- 通知音量・ミュート状態の取得 ---------- */
