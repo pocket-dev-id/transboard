@@ -125,8 +125,8 @@ function createElementStub(tag) {
 
 const KNOWN_IDS = [
   'announce-custom-text', 'btn-call-toggle',
-  'btn-send-announce-custom', 'btn-stop-speech',
-  'call-panel', 'call-panel-body', 'call-panel-close', 'exam-room-select',
+  'btn-send-announce-custom', 'btn-stop-speech', 'btn-exam-all-rooms',
+  'call-panel', 'call-panel-body', 'call-panel-close', 'exam-room-select', 'ward-select',
   'chat-back', 'chat-input', 'chat-send', 'chat-timeline', 'chat-peer-name',
   'webrtc-btn-accept', 'webrtc-btn-cancel-selection', 'webrtc-btn-close-selection',
   'webrtc-btn-fullscreen', 'webrtc-btn-hangup', 'webrtc-btn-lower-quality',
@@ -344,6 +344,15 @@ const AppState = {
 
 const History = { _loadCalls() {} };
 
+// showPanel()/hidePanel()が病棟セレクトの無効化状態の復元を委譲する先の
+// App._applyTerminalRoleMode()のモック。呼び出し回数だけ記録し、実際の
+// disabled値操作は行わない(検査室端末モード判定自体はjs/app.js側の
+// 責務であり、ここではCallPanel側が正しく委譲していることだけを確認する)
+const App = {
+  _applyTerminalRoleModeCalls: [],
+  _applyTerminalRoleMode(opts) { this._applyTerminalRoleModeCalls.push(opts); },
+};
+
 const sandbox = {
   console,
   setTimeout, clearTimeout, setInterval, clearInterval,
@@ -360,6 +369,7 @@ const sandbox = {
   API,
   AppState,
   History,
+  App,
 };
 
 const CallPanel = vm.runInNewContext(`${source}\nCallPanel;`, sandbox);
@@ -381,6 +391,7 @@ async function resetAll() {
   audioContextCreateCount = 0;
   resetElementRegistry();
   createdElements.length = 0;
+  App._applyTerminalRoleModeCalls.length = 0;
 }
 
 async function main() {
@@ -1087,6 +1098,38 @@ async function main() {
     room.name = originalName;
   } finally {
     CallPanel._renderChatView = originalRenderChatView;
+  }
+
+  // 29) BUG FIX: 通話パネルを開いている間、病棟/検査室セレクトと「全検査室」
+  //     ボタンを操作できてしまうと、getMyId()が選択中の値をその場で読むため、
+  //     発信元・会話相手の取り違えにつながる。パネルを開いている間は無効化し、
+  //     閉じたら元に戻ることを確認する
+  await resetAll();
+  {
+    const wardSelect = documentMock.getElementById('ward-select');
+    const examRoomSelect = documentMock.getElementById('exam-room-select');
+    const allRoomsBtn = documentMock.getElementById('btn-exam-all-rooms');
+    assert.strictEqual(wardSelect.disabled, false, '前提: 初期状態では病棟セレクトは有効であること');
+
+    CallPanel.showPanel();
+    assert.strictEqual(wardSelect.disabled, true, 'BUG FIX: パネルを開いている間、病棟セレクトが無効化されること');
+    assert.strictEqual(examRoomSelect.disabled, true, 'BUG FIX: パネルを開いている間、検査室セレクトが無効化されること');
+    assert.strictEqual(allRoomsBtn.disabled, true, 'BUG FIX: パネルを開いている間、「全検査室」ボタンが無効化されること');
+
+    CallPanel.hidePanel();
+    assert.strictEqual(examRoomSelect.disabled, false, 'パネルを閉じると検査室セレクトが再び有効化されること');
+    assert.strictEqual(allRoomsBtn.disabled, false, 'パネルを閉じると「全検査室」ボタンが再び有効化されること');
+    assert.strictEqual(
+      App._applyTerminalRoleModeCalls.length, 1,
+      '病棟セレクトの無効化状態の復元は、検査室端末モード判定を持つApp._applyTerminalRoleMode()へ委譲すること' +
+      '(単純にfalseへ戻すと、検査室端末モードの端末で誤って有効化してしまうため)'
+    );
+    // vmサンドボックス内で生成されたオブジェクトは別レルムのプロトタイプを持つため
+    // deepStrictEqualではなく個々のフィールドを比較する
+    assert.strictEqual(
+      App._applyTerminalRoleModeCalls[0].navigate, false,
+      'App._applyTerminalRoleMode()は画面遷移を伴わない{navigate:false}で呼ばれること'
+    );
   }
 
   await resetAll();
