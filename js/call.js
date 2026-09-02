@@ -121,12 +121,34 @@ const CallPanel = {
       this._loadChatMessages();
       this._startChatPoll();
     }
+    // 通話パネルを開いている間に病棟/検査室を切り替えると、発信元や会話相手の
+    // 取り違えにつながるため(getMyId()が選択中の値をその場で読むため)、
+    // パネルが閉じるまで一時的に操作を禁止する
+    const wardSelect = document.getElementById('ward-select');
+    if (wardSelect) wardSelect.disabled = true;
+    const examRoomSelect = document.getElementById('exam-room-select');
+    if (examRoomSelect) examRoomSelect.disabled = true;
+    const allRoomsBtn = document.getElementById('btn-exam-all-rooms');
+    if (allRoomsBtn) allRoomsBtn.disabled = true;
   },
 
   hidePanel() {
     document.getElementById('call-panel').classList.add('hidden');
     // 閉じている間まで会話をポーリングし続けない
     this._stopChatPoll();
+    const examRoomSelect = document.getElementById('exam-room-select');
+    if (examRoomSelect) examRoomSelect.disabled = false;
+    const allRoomsBtn = document.getElementById('btn-exam-all-rooms');
+    if (allRoomsBtn) allRoomsBtn.disabled = false;
+    // 病棟セレクトは検査室端末モードでは常に無効化されているため、その状態を
+    // 正しく復元できるApp側の関数へ委譲する(単純にfalseへ戻すと検査室端末
+    // モードの端末で誤って有効化してしまう)
+    if (typeof App !== 'undefined' && typeof App._applyTerminalRoleMode === 'function') {
+      App._applyTerminalRoleMode({ navigate: false });
+    } else {
+      const wardSelect = document.getElementById('ward-select');
+      if (wardSelect) wardSelect.disabled = false;
+    }
   },
 
   // FAB(#btn-call-toggle)へ通話状態を反映する。発信中・着信中・通話中は
