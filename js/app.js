@@ -431,13 +431,22 @@ const App = {
 
   async _loadTerminalRole() {
     const storedRole = localStorage.getItem('cfg_terminal_role');
-    if (storedRole === 'exam' || storedRole === 'ward') return;
+    const needsRole = storedRole !== 'exam' && storedRole !== 'ward';
+    // 配布管理ツールが投入した既定の病棟は「まだ一度も病棟を選んでいない端末」
+    // にだけ適用する。利用者が選び直した結果を毎起動で上書きしないため
+    const needsWard = !localStorage.getItem('current_ward_id');
+    if (!needsRole && !needsWard) return;
     try {
       const result = await window.electronAPI?.getTerminalRole?.();
-      localStorage.setItem('cfg_terminal_role', result?.terminalRole === 'exam' ? 'exam' : 'ward');
+      if (needsRole) {
+        localStorage.setItem('cfg_terminal_role', result?.terminalRole === 'exam' ? 'exam' : 'ward');
+      }
+      if (needsWard && result?.wardId) {
+        localStorage.setItem('current_ward_id', String(result.wardId));
+      }
     } catch (err) {
       console.warn('[TerminalRole] 端末役割の読み込みに失敗しました:', err);
-      localStorage.setItem('cfg_terminal_role', 'ward');
+      if (needsRole) localStorage.setItem('cfg_terminal_role', 'ward');
     }
   },
 
