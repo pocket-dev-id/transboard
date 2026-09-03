@@ -1,0 +1,59 @@
+# 管理配布(配布管理ツール + PsExec)専用のビルド設定。
+#
+# package.json の build 設定を継承しつつ、NSISのインストール形態だけを
+# per-machine(Program Files配下・全ユーザー共通)へ上書きする。
+#
+# 【なぜ別ファイルに分けているか】
+# 通常配布(手動インストール)は per-user のままにしておく必要がある。
+# per-user は管理者権限が不要で、アプリ自身の自動更新が使えるため
+# (docs/manual.md「更新に管理者権限は不要です」)。
+# 一方、PsExecによる一括配布はリモート側がSYSTEMとして実行されるため、
+# per-user のままだとSYSTEMのプロファイル配下へ入ってしまい、
+# 実際に利用する共通アカウントからは見えない。そのため管理配布時のみ
+# per-machine が必要になる。
+#
+# 【重要な運用上の注意】
+# per-machine で入れた端末は Program Files 配下になるため、
+# main.js の isPerMachineInstall() により**アプリ自身の自動更新は無効**になる。
+# 管理配布した端末の更新は、必ず配布管理ツールから行うこと。
+# また、この成果物を親機の更新配信ディレクトリへ置いてはいけない
+# (per-user の子機が取得してしまい、インストール形態が混ざる)。
+#
+# 使い方:
+#   npm run dist:per-machine
+extends: null
+appId: io.transboard.app
+productName: TransBoard
+directories:
+  output: dist-per-machine
+files:
+  - main.js
+  - main-modules/**/*
+  - preload.js
+  - index.html
+  - js/**/*
+  - css/**/*
+  - assets/**/*
+  - build/icon.ico
+  - build/icon.png
+  - nfc-reader.ps1
+  - package.json
+  - LICENSE
+asarUnpack:
+  - nfc-reader.ps1
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: true
+  # 全ユーザー共通の場所へ入れるため、インストール先の変更は許可しない。
+  # (v1.1.x で allowToChangeInstallationDirectory: true と perMachine 未指定を
+  #  併用した結果、意図せず実質per-machineになった経緯があるため明示しておく)
+  allowToChangeInstallationDirectory: false
+  shortcutName: TransBoard
+  # 通常配布(per-user)の成果物と取り違えないよう、ファイル名で明確に区別する
+  artifactName: TransBoard-Setup-${version}-per-machine.${ext}
