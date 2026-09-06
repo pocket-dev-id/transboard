@@ -205,6 +205,14 @@ const USER_DATA_DIR = app.getPath('userData');
 const COMMON_DATA_DIR = path.join(process.env.PROGRAMDATA || 'C:\\ProgramData', 'transboard');
 const GLOBAL_CONFIG_FILE = path.join(COMMON_DATA_DIR, 'storage_mode.json');
 const TERMINAL_ROLE_FILE = path.join(USER_DATA_DIR, 'terminal_role.json');
+// 配布管理ツールが端末へ事前配置する初期設定ファイル。APIトークンはsafeStorage
+// (Windows DPAPI)でユーザー+マシンに紐づけて暗号化されるため、管理PC側から
+// terminal-secrets.jsonを直接生成することは原理的にできない。そのため
+// 「平文のこのファイルを置く → 初回起動時に本体が取り込んで安全な形式へ変換し、
+// 元ファイルを削除する」という受け渡しにしている（下記 applyProvisioningFile）
+const PROVISIONING_FILE = path.join(USER_DATA_DIR, 'provisioning.json');
+// 管理配布された端末の目印。自己更新の案内文を「管理者が配布します」に切り替える
+const MANAGED_DEPLOYMENT_FILE = path.join(USER_DATA_DIR, 'managed_deployment.json');
 
 function checkCommonWritePermission() {
   try {
@@ -1380,6 +1388,9 @@ function readTerminalRole() {
       shareMode: normalizeShareMode(role.shareMode || role.share_mode),
       parentIp: String(role.parentIp || role.parent_ip || ''),
       terminalRole: normalizeTerminalRole(role.terminalRole || role.terminal_role),
+      // 配布管理ツールが投入した既定の病棟。端末ごとに異なる値のため、
+      // 全端末で共有されるsystem_settingsではなくこの端末ローカルのファイルに置く
+      wardId: String(role.wardId || role.ward_id || ''),
       updatedAt: Number(role.updatedAt || 0) || 0,
     };
   } catch (err) {
@@ -1388,13 +1399,16 @@ function readTerminalRole() {
   }
 }
 
-function writeTerminalRole({ shareMode, parentIp = '', terminalRole } = {}) {
+function writeTerminalRole({ shareMode, parentIp = '', terminalRole, wardId } = {}) {
   try {
     const existing = readTerminalRole();
     const role = {
       shareMode: normalizeShareMode(shareMode),
       parentIp: String(parentIp || ''),
       terminalRole: normalizeTerminalRole(terminalRole || existing?.terminalRole),
+      // terminalRoleと同様、明示的に渡されなければ既存値を引き継ぐ。
+      // 役割変更(set-terminal-role)のたびに配布時の病棟が消えないようにするため
+      wardId: String(wardId ?? existing?.wardId ?? ''),
       updatedAt: Date.now(),
     };
     safeWriteFile(TERMINAL_ROLE_FILE, JSON.stringify(role, null, 2));
@@ -1435,6 +1449,131 @@ function isLocalParentAddress(parentIp) {
     });
   });
   return localAddresses.has(value);
+}
+
+// 配布管理ツールが置いた provisioning.json を初回起動時に取り込む。
+//
+// 【この受け渡し方式にしている理由】
+// 子機のAPIトークンは terminal-secrets.json にsafeStorage(Windows DPAPI)で
+// 暗号化保存される。DPAPIの鍵は「そのユーザー・そのPC」に紐づくため、管理PC側で
+// 暗号化済みファイルを作って配ることは原理的にできない。そこで平文のJSONを一時的に
+// 置いてもらい、本体が起動時に読み取って安全な形式へ変換したうえで、
+// **平文ファイルを必ず削除する**という一方通行の受け渡しにしている。
+//
+// 【平文トークンがディスクに存在する時間を最小化する対策】
+//  1. 取り込み後（成功・失敗いずれでも）即座に削除する
+//  2. expiresAt を過ぎたファイルは取り込まずに破棄する（配布し損ねた古いファイルが
+//     いつまでも有効なトークンを晒したままにならないようにする）
+//  3. 監査ログに記録する（トークン本体はマスクし、値そのものは残さない）
+function applyProvisioningFile() {
+  if (!fs.existsSync(PROVISIONING_FILE)) return null;
+
+  const discard = (reason) => {
+    try {
+      fs.unlinkSync(PROVISIONING_FILE);
+    } catch (err) {
+      // 消せない場合は平文トークンが残るため、警告として明確に残す
+      console.error('[Provisioning] 初期設定ファイルを削除できませんでした。手動で削除してください:', err.message);
+    }
+    console.warn(`[Provisioning] 初期設定ファイルを取り込みませんでした: ${reason}`);
+    return { success: false, reason };
+  };
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(PROVISIONING_FILE, 'utf8'));
+  } catch (err) {
+    return discard(`JSONとして読み取れません(${err.message})`);
+  }
+  if (!raw || typeof raw !== 'object') return discard('内容がオブジェクトではありません');
+  if (Number(raw.version) !== 1) return discard(`未対応のversion(${raw.version})です`);
+
+  const expiresAt = Number(raw.expiresAt || 0);
+  if (expiresAt && Date.now() > expiresAt) {
+    return discard('有効期限を過ぎています');
+  }
+
+  const shareMode = normalizeShareMode(raw.shareMode);
+  const parentIp = String(raw.parentIp || '').trim();
+  if (shareMode === 'client' && !parentIp) {
+    return discard('子機として設定するには parentIp が必要です');
+  }
+  const terminalRole = normalizeTerminalRole(raw.terminalRole);
+  const wardId = String(raw.wardId || '').trim();
+  const apiToken = typeof raw.apiToken === 'string' ? raw.apiToken.trim() : '';
+  if (apiToken && !/^[A-Za-z0-9._-]{8,256}$/.test(apiToken)) {
+    return discard('apiTokenの形式が不正です');
+  }
+
+  const applied = { shareMode, parentIp, terminalRole, wardId, tokenSet: false, managed: raw.managed === true };
+
+  const savedRole = writeTerminalRole({ shareMode, parentIp, terminalRole, wardId });
+  if (!savedRole) return discard('端末役割の保存に失敗しました');
+
+  if (apiToken) {
+    const tokenResult = setTerminalApiToken(apiToken);
+    if (!tokenResult.success) {
+      // 役割は保存済みだが、トークンが入らないと子機は親機へ接続できない。
+      // 平文を残さず削除したうえで、何が起きたかを明確に残す
+      discard(`APIトークンを安全に保存できませんでした(${tokenResult.message || '不明なエラー'})`);
+      return { success: false, reason: 'token_store_failed', role: savedRole };
+    }
+    applied.tokenSet = true;
+  }
+
+  if (applied.managed) {
+    try {
+      safeWriteFile(MANAGED_DEPLOYMENT_FILE, JSON.stringify({ version: 1, appliedAt: Date.now() }, null, 2));
+    } catch (err) {
+      // 目印が書けなくても配布自体は成立する（更新案内の文言が変わらないだけ）
+      console.warn('[Provisioning] 管理配布マーカーの保存に失敗:', err.message);
+    }
+  }
+
+  try {
+    const db = readDB();
+    db.system_settings = db.system_settings || [];
+    const wizardSetting = getSettingRecord(db, 'wizard_completed');
+    if (wizardSetting) wizardSetting.value = 'true';
+    else db.system_settings.push({ id: 'wizard_completed', value: 'true' });
+    appendAuditLog(db, 'PROVISIONING_APPLIED', {
+      targetType: 'terminal',
+      actorType: 'system',
+      details: {
+        shareMode,
+        parentIp,
+        terminalRole,
+        wardId,
+        // トークンは値を残さず、投入されたかどうかだけを記録する
+        apiTokenProvisioned: applied.tokenSet,
+        managed: applied.managed,
+      },
+    });
+    if (!writeDB(db)) {
+      console.error('[Provisioning] 取り込み結果のDB保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+    }
+  } catch (err) {
+    console.error('[Provisioning] 取り込み結果のDB反映に失敗:', err.message);
+  }
+
+  // 平文トークンを含むファイルは、取り込みが済んだら必ず消す
+  try {
+    fs.unlinkSync(PROVISIONING_FILE);
+  } catch (err) {
+    console.error('[Provisioning] 初期設定ファイルを削除できませんでした。手動で削除してください:', err.message);
+  }
+
+  console.log(`[Provisioning] 初期設定を取り込みました (mode=${shareMode}, role=${terminalRole}, ward=${wardId || '未指定'}, token=${applied.tokenSet ? '設定済み' : '未指定'})`);
+  return { success: true, ...applied };
+}
+
+// 管理配布(配布管理ツール経由)で導入された端末か。自己更新の案内文の出し分けに使う
+function isManagedDeployment() {
+  try {
+    return fs.existsSync(MANAGED_DEPLOYMENT_FILE);
+  } catch {
+    return false;
+  }
 }
 
 function repairShareModeBeforeServerStart() {
@@ -5049,6 +5188,9 @@ handleTrusted('set-terminal-api-token', (event, token) => setTerminalApiToken(to
 handleTrusted('get-terminal-role', () => ({
   success: true,
   terminalRole: normalizeTerminalRole(readTerminalRole()?.terminalRole),
+  // 配布管理ツールが投入した既定の病棟。画面側は「まだ病棟を選んだことがない
+  // 初回のみ」この値を採用する（利用者がその後選び直した結果を上書きしない）
+  wardId: String(readTerminalRole()?.wardId || ''),
 }));
 handleTrusted('set-terminal-role', (event, value) => {
   const current = readTerminalRole() || {};
@@ -5580,9 +5722,14 @@ function isPerMachineInstall() {
 handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
   try {
     if (isPerMachineInstall()) {
+      // 同じ「Program Files配下で自己更新できない」状態でも、原因と取るべき行動は
+      // 正反対になる。管理配布された端末で「アンインストールして入れ直せ」と案内すると
+      // 利用者が管理外の操作をしてしまうため、配布元へ案内する
       return {
         success: false,
-        message: 'このインストールは旧バージョン(Program Files配下)のため自動更新できません。管理者権限のあるユーザーで、現在のバージョンをアンインストールしてから新しいインストーラを手動で実行してください(一度だけの作業です。以後は自動更新が有効になります)。',
+        message: isManagedDeployment()
+          ? 'この端末はシステム管理者によって配布・管理されています。更新は管理者が一括で配布しますので、担当者へご連絡ください。'
+          : 'このインストールは旧バージョン(Program Files配下)のため自動更新できません。管理者権限のあるユーザーで、現在のバージョンをアンインストールしてから新しいインストーラを手動で実行してください(一度だけの作業です。以後は自動更新が有効になります)。',
       };
     }
     const feedBase = buildUpdateFeedBase(parentIp);
@@ -7050,6 +7197,10 @@ if (!gotTheLock) {
   });
 
 app.whenReady().then(() => {
+  // 配布管理ツールが置いた初期設定の取り込みは、役割の自動修復より前に行う。
+  // 後だと、取り込んだ役割が同じ起動の repairShareModeBeforeServerStart() に
+  // 反映されず、初回起動が旧役割のまま動いてしまう
+  applyProvisioningFile();
   const shareMode = repairShareModeBeforeServerStart();
   createWindow();
   if (shareMode === 'parent') {
