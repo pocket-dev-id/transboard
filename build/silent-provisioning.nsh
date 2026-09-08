@@ -14,11 +14,15 @@
 ;      コマンドラインには一切載せずに済む、より安全な方法。
 ;
 ;   2) 個別引数: /PARENTIP= /ROLE= /WARDID= /APITOKEN= /MANAGED=
+;      /DEVICENAME= /PREVENTSLEEP=(1|0) /ALWAYSONTOP=(1|0)
 ;      その場でJSONを組み立てて配置する。ファイルを別途用意する手間が
 ;      省ける代わりに、/APITOKEN= を使うとAPIトークンがこのインストーラ
 ;      プロセスのコマンドラインとしてWin32_Process.CommandLine経由で
 ;      見える状態になる(main.jsのauthenticateSMBSync()と同じ既知の
 ;      トレードオフ。可能なら1)を使うこと)。
+;      /PREVENTSLEEP= /ALWAYSONTOP= は指定しなければ書き出さない
+;      (main.js側は「未指定」を「利用者が既に選んだ設定を上書きしない」
+;      という意味で扱うため、"0"を明示した場合とは区別している)。
 ;
 ; どちらのモードかは /PROVISIONING= の有無で自動判定する。
 ; 両方の引数セットが渡されなければ何もせず、通常のインストールと
@@ -76,8 +80,14 @@
     ${GetOptions} "$R0" "/APITOKEN=" $R6
     ClearErrors
     ${GetOptions} "$R0" "/MANAGED=" $R7
+    ClearErrors
+    ${GetOptions} "$R0" "/DEVICENAME=" $0
+    ClearErrors
+    ${GetOptions} "$R0" "/PREVENTSLEEP=" $1
+    ClearErrors
+    ${GetOptions} "$R0" "/ALWAYSONTOP=" $2
 
-    ${If} "$R3$R4$R5$R6$R7" != ""
+    ${If} "$R3$R4$R5$R6$R7$0$1$2" != ""
       CreateDirectory "$R9"
       FileOpen $R8 "$R9\provisioning.json" w
       FileWrite $R8 '{$\r$\n'
@@ -94,8 +104,21 @@
       ${If} "$R5" != ""
         FileWrite $R8 '  "wardId": "$R5",$\r$\n'
       ${EndIf}
+      ${If} "$0" != ""
+        FileWrite $R8 '  "deviceName": "$0",$\r$\n'
+      ${EndIf}
       ${If} "$R6" != ""
         FileWrite $R8 '  "apiToken": "$R6",$\r$\n'
+      ${EndIf}
+      ${If} "$1" == "1"
+        FileWrite $R8 '  "preventSleep": true,$\r$\n'
+      ${ElseIf} "$1" == "0"
+        FileWrite $R8 '  "preventSleep": false,$\r$\n'
+      ${EndIf}
+      ${If} "$2" == "1"
+        FileWrite $R8 '  "alwaysOnTop": true,$\r$\n'
+      ${ElseIf} "$2" == "0"
+        FileWrite $R8 '  "alwaysOnTop": false,$\r$\n'
       ${EndIf}
       ${If} "$R7" == "1"
         FileWrite $R8 '  "managed": true$\r$\n'

@@ -16,6 +16,7 @@ Object.assign(Settings, {
 
     const preventSleep = localStorage.getItem('cfg_prevent_sleep') === 'true';
     const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
+    const deviceName = localStorage.getItem('_device_name') || '';
     const isElectron = !!window.electronAPI;
     const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
     const terminalRole = localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward';
@@ -88,6 +89,13 @@ Object.assign(Settings, {
           <span class="settings-badge settings-badge--terminal">端末ごと</span>
         </div>
         <div style="display:flex; flex-direction:column; gap:12px;">
+          <div class="form-group" style="margin:0;">
+            <label style="font-size:12.5px; font-weight:700; color:#4a5568;">端末表示名</label>
+            <input type="text" id="cfg-device-name" value="${UI.escapeHTML(deviceName)}" maxlength="64" placeholder="例: 3F-PC1" style="width:100%; max-width:280px; padding:6px 8px; border:1px solid #cbd5e0; border-radius:6px; font-size:13px;">
+            <small style="font-size:11px; color:#718096; display:block; margin-top:2px;">
+              「接続機器一覧」に表示されるこの端末の名前です。空欄の場合はランダムなIDが表示されます。
+            </small>
+          </div>
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; font-weight:600; color:#2d3748;">
             <input type="checkbox" id="chk-prevent-sleep" ${preventSleep ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;">
             この端末でスリープを抑止する
@@ -186,6 +194,17 @@ Object.assign(Settings, {
         UI.toast('端末表示の保存に失敗しました: ' + err.message, 'danger');
       }
     };
+
+    const deviceNameInput = body.querySelector('#cfg-device-name');
+    if (deviceNameInput) {
+      deviceNameInput.onchange = () => {
+        const value = deviceNameInput.value.trim().slice(0, 64);
+        deviceNameInput.value = value;
+        if (value) localStorage.setItem('_device_name', value);
+        else localStorage.removeItem('_device_name');
+        UI.toast('端末表示名を保存しました', 'success');
+      };
+    }
 
     const preventSleepChk = body.querySelector('#chk-prevent-sleep');
     if (preventSleepChk) {

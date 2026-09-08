@@ -218,7 +218,10 @@
   "parentIp": "192.168.1.10",
   "terminalRole": "ward",
   "wardId": "ward-1",
+  "deviceName": "3F-PC1",
   "apiToken": "（親機の設定画面で確認できるAPIトークン）",
+  "preventSleep": true,
+  "alwaysOnTop": false,
   "managed": true,
   "expiresAt": 1767225600000
 }
@@ -231,9 +234,14 @@
 | `parentIp` | 子機のみ○ | 接続先の親機IPアドレス |
 | `terminalRole` | | `ward`（病棟端末）/ `exam`（検査室端末）。既定は `ward` |
 | `wardId` | | 既定で表示する病棟のID。**まだ一度も病棟を選んでいない端末でのみ**採用され、利用者が選び直した病棟を上書きすることはありません |
+| `deviceName` | | 「接続機器一覧」に表示するこの端末の名前（最大64文字）。**まだ設定されていない端末でのみ**採用されます |
 | `apiToken` | 子機は実質必須 | 親機との通信に使うトークン |
+| `preventSleep` | | `true`/`false`でスリープ抑止の初期値を指定。**未指定なら何もしません**（利用者が既に選んでいる場合はfalseで確定済みでも上書きしません） |
+| `alwaysOnTop` | | `true`/`false`で常に最前面表示の初期値を指定。`preventSleep`と同じく**未指定なら何もしません** |
 | `managed` | | `true` にすると「管理配布された端末」として記録され、更新時の案内が「管理者へ連絡してください」に変わります |
 | `expiresAt` | | 有効期限（Unixミリ秒）。過ぎたファイルは取り込まれずに破棄されます |
+
+> `wardId`/`deviceName`/`preventSleep`/`alwaysOnTop`は、キー自体を省略すると**既存の設定を維持**します（空文字や`false`を明示すると、その値で上書きします）。トークンの入れ替えだけを目的に`provisioning.json`を再投入する場合、他の項目を省略しても消えません。
 
 **セキュリティ上の重要な注意:**
 
@@ -266,7 +274,7 @@ APIトークンをこのインストーラ自身のコマンドラインには�
 **方法2: 個別引数でその場から投入する（手軽だが注意が必要）**
 
 ```
-TransBoard-Setup-1.2.83-per-machine.exe /S /ACCOUNT=commonuser /PARENTIP=192.168.1.10 /ROLE=ward /WARDID=3F /APITOKEN=xxxxxxxxxxxxxxxx /MANAGED=1
+TransBoard-Setup-1.2.83-per-machine.exe /S /ACCOUNT=commonuser /PARENTIP=192.168.1.10 /ROLE=ward /WARDID=3F /DEVICENAME=3F-PC1 /APITOKEN=xxxxxxxxxxxxxxxx /PREVENTSLEEP=1 /MANAGED=1
 ```
 
 | 引数 | 説明 |
@@ -275,7 +283,10 @@ TransBoard-Setup-1.2.83-per-machine.exe /S /ACCOUNT=commonuser /PARENTIP=192.168
 | `/PARENTIP=<IP>` | 指定すると子機として設定される。省略すると親機として設定される |
 | `/ROLE=ward\|exam` | 端末役割。省略時は`ward` |
 | `/WARDID=<ID>` | 既定で表示する病棟ID |
+| `/DEVICENAME=<名前>` | 「接続機器一覧」に表示するこの端末の名前 |
 | `/APITOKEN=<トークン>` | 親機との通信用トークン。**このインストーラのプロセスのコマンドラインとして一時的に見える状態になる**（タスクマネージャーの「コマンドライン」列やWMI経由）。可能な限り方法1を使うこと |
+| `/PREVENTSLEEP=1\|0` | スリープ抑止の初期値。省略時は何もしない（既存の設定を維持） |
+| `/ALWAYSONTOP=1\|0` | 常に最前面表示の初期値。省略時は何もしない（既存の設定を維持） |
 | `/MANAGED=1` | 管理配布端末として記録する（省略時は記録しない） |
 
 **注意（既知の制約）:**
@@ -284,6 +295,7 @@ TransBoard-Setup-1.2.83-per-machine.exe /S /ACCOUNT=commonuser /PARENTIP=192.168
 - `/WARDID=`や`/APITOKEN=`などの値に**二重引用符（`"`）を含めないでください**。個別引数モードはエスケープ処理を行っていないため、含まれているとJSON構文が壊れ、投入内容全体が起動時に破棄されます。
 - `/ACCOUNT=`で指定するアカウントは、対象端末に**一度以上ログオンしてプロファイルが作成済み**である必要があります（`C:\Users\<アカウント名>\`が存在しない場合は投入先が作成されません）。
 - 個別引数モードでは`expiresAt`（有効期限）は設定されません。有効期限を付けたい場合は方法1を使ってください。
+- `/PREVENTSLEEP=`/`/ALWAYSONTOP=`は`1`（有効にする）/`0`（無効にする）を明示した場合だけ書き込まれます。何も指定しなければその項目自体を投入せず、端末側で利用者が既に選んでいる設定（`false`で確定済みの場合を含む）を上書きしません。
 
 ### 端末間の連絡（通話・アナウンス・チャット）
 

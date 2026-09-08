@@ -1391,6 +1391,11 @@ function readTerminalRole() {
       // 配布管理ツールが投入した既定の病棟。端末ごとに異なる値のため、
       // 全端末で共有されるsystem_settingsではなくこの端末ローカルのファイルに置く
       wardId: String(role.wardId || role.ward_id || ''),
+      // 以下3件も配布管理ツールが投入する端末ごとの既定値。真偽値は「未指定」を
+      // falseと区別するためnullを使う(nullなら画面側は利用者の選択を上書きしない)
+      deviceName: String(role.deviceName || role.device_name || ''),
+      preventSleep: typeof role.preventSleep === 'boolean' ? role.preventSleep : null,
+      alwaysOnTop: typeof role.alwaysOnTop === 'boolean' ? role.alwaysOnTop : null,
       updatedAt: Number(role.updatedAt || 0) || 0,
     };
   } catch (err) {
@@ -1399,7 +1404,9 @@ function readTerminalRole() {
   }
 }
 
-function writeTerminalRole({ shareMode, parentIp = '', terminalRole, wardId } = {}) {
+function writeTerminalRole(
+  { shareMode, parentIp = '', terminalRole, wardId, deviceName, preventSleep, alwaysOnTop } = {}
+) {
   try {
     const existing = readTerminalRole();
     const role = {
@@ -1409,6 +1416,9 @@ function writeTerminalRole({ shareMode, parentIp = '', terminalRole, wardId } = 
       // terminalRoleと同様、明示的に渡されなければ既存値を引き継ぐ。
       // 役割変更(set-terminal-role)のたびに配布時の病棟が消えないようにするため
       wardId: String(wardId ?? existing?.wardId ?? ''),
+      deviceName: String(deviceName ?? existing?.deviceName ?? ''),
+      preventSleep: typeof preventSleep === 'boolean' ? preventSleep : (existing?.preventSleep ?? null),
+      alwaysOnTop: typeof alwaysOnTop === 'boolean' ? alwaysOnTop : (existing?.alwaysOnTop ?? null),
       updatedAt: Date.now(),
     };
     safeWriteFile(TERMINAL_ROLE_FILE, JSON.stringify(role, null, 2));
@@ -1499,16 +1509,31 @@ function applyProvisioningFile() {
     return discard('子機として設定するには parentIp が必要です');
   }
   const terminalRole = normalizeTerminalRole(raw.terminalRole);
-  const wardId = String(raw.wardId || '').trim();
+  // wardId/deviceNameは「未指定」なら既存値を引き継ぎたいので、absentの場合は
+  // undefinedのままwriteTerminalRoleへ渡す(空文字を渡すと既存値を消してしまう)。
+  // トークン入れ替えだけを目的にした再投入(更新時の再インストール等)で、
+  // 病棟や端末名がその都度リセットされないようにするため
+  const wardId = raw.wardId === undefined ? undefined : String(raw.wardId || '').trim();
   const apiToken = typeof raw.apiToken === 'string' ? raw.apiToken.trim() : '';
   if (apiToken && !/^[A-Za-z0-9._-]{8,256}$/.test(apiToken)) {
     return discard('apiTokenの形式が不正です');
   }
+  const deviceName = raw.deviceName === undefined ? undefined : String(raw.deviceName || '').trim().slice(0, 64);
+  // preventSleep/alwaysOnTopも同様に「未指定(=利用者の選択を尊重)」と「明示的に
+  // false」を区別する必要があるため、真偽値で来た場合だけ値として扱う
+  const preventSleep = typeof raw.preventSleep === 'boolean' ? raw.preventSleep : undefined;
+  const alwaysOnTop = typeof raw.alwaysOnTop === 'boolean' ? raw.alwaysOnTop : undefined;
 
-  const applied = { shareMode, parentIp, terminalRole, wardId, tokenSet: false, managed: raw.managed === true };
-
-  const savedRole = writeTerminalRole({ shareMode, parentIp, terminalRole, wardId });
+  const savedRole = writeTerminalRole({ shareMode, parentIp, terminalRole, wardId, deviceName, preventSleep, alwaysOnTop });
   if (!savedRole) return discard('端末役割の保存に失敗しました');
+
+  // 実際に保存された値(未指定なら既存値を引き継いだ結果)を以後の記録に使う
+  const applied = {
+    shareMode, parentIp, terminalRole,
+    wardId: savedRole.wardId, deviceName: savedRole.deviceName,
+    preventSleep: savedRole.preventSleep, alwaysOnTop: savedRole.alwaysOnTop,
+    tokenSet: false, managed: raw.managed === true,
+  };
 
   if (apiToken) {
     const tokenResult = setTerminalApiToken(apiToken);
@@ -1543,7 +1568,10 @@ function applyProvisioningFile() {
         shareMode,
         parentIp,
         terminalRole,
-        wardId,
+        wardId: applied.wardId,
+        deviceName: applied.deviceName,
+        preventSleep: applied.preventSleep,
+        alwaysOnTop: applied.alwaysOnTop,
         // トークンは値を残さず、投入されたかどうかだけを記録する
         apiTokenProvisioned: applied.tokenSet,
         managed: applied.managed,
@@ -1563,7 +1591,7 @@ function applyProvisioningFile() {
     console.error('[Provisioning] 初期設定ファイルを削除できませんでした。手動で削除してください:', err.message);
   }
 
-  console.log(`[Provisioning] 初期設定を取り込みました (mode=${shareMode}, role=${terminalRole}, ward=${wardId || '未指定'}, token=${applied.tokenSet ? '設定済み' : '未指定'})`);
+  console.log(`[Provisioning] 初期設定を取り込みました (mode=${shareMode}, role=${terminalRole}, ward=${applied.wardId || '未指定'}, token=${applied.tokenSet ? '設定済み' : '未指定'})`);
   return { success: true, ...applied };
 }
 
@@ -5185,13 +5213,19 @@ handleTrusted('verify-admin-passcode', (event, passcode) => (
 handleTrusted('set-admin-passcode', (event, passcode) => setAdminPasscode(passcode));
 handleTrusted('get-terminal-api-token', () => getTerminalApiToken());
 handleTrusted('set-terminal-api-token', (event, token) => setTerminalApiToken(token));
-handleTrusted('get-terminal-role', () => ({
-  success: true,
-  terminalRole: normalizeTerminalRole(readTerminalRole()?.terminalRole),
-  // 配布管理ツールが投入した既定の病棟。画面側は「まだ病棟を選んだことがない
-  // 初回のみ」この値を採用する（利用者がその後選び直した結果を上書きしない）
-  wardId: String(readTerminalRole()?.wardId || ''),
-}));
+handleTrusted('get-terminal-role', () => {
+  const role = readTerminalRole() || {};
+  return {
+    success: true,
+    terminalRole: normalizeTerminalRole(role.terminalRole),
+    // 配布管理ツールが投入した既定値。画面側は「まだ利用者が選んだ/変更した
+    // ことがない初回のみ」これらの値を採用する（利用者の選択を上書きしない）
+    wardId: String(role.wardId || ''),
+    deviceName: String(role.deviceName || ''),
+    preventSleep: typeof role.preventSleep === 'boolean' ? role.preventSleep : null,
+    alwaysOnTop: typeof role.alwaysOnTop === 'boolean' ? role.alwaysOnTop : null,
+  };
+});
 handleTrusted('set-terminal-role', (event, value) => {
   const current = readTerminalRole() || {};
   const db = readDB();
