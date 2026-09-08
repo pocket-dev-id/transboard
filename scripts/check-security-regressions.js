@@ -786,7 +786,8 @@ assert(
   // 縮小ボタンは範囲外セルを刈る_resizeGrid経由でなければならない
   /map-size-down-col'\)\.onclick\s*=\s*\(\)\s*=>\s*this\._resizeGrid\(/.test(masters) &&
   /map-size-down-row'\)\.onclick\s*=\s*\(\)\s*=>\s*this\._resizeGrid\(/.test(masters) &&
-  masters.includes('this._pruneOutOfRangeCells();\n    this._drawMapEditor();') &&
+  // \r?\n: Windows(CRLF)でチェックアウトされた場合でも一致させるため
+  /this\._pruneOutOfRangeCells\(\);\r?\n\s*this\._drawMapEditor\(\);/.test(masters) &&
   // 既存データ救済: エディタ起動時にも刈る
   masters.includes('const recovered = this._pruneOutOfRangeCells();'),
   'The bed map editor must drop out-of-range cells (on shrink and on open) and return those beds to the unplaced palette, otherwise they become permanently unreachable'
@@ -2200,7 +2201,8 @@ assert(
     const end = webrtcSignaling.indexOf("return { success: false, message: 'Not Found' };", idx);
     if (idx < 0 || end < idx) return false;
     const body = webrtcSignaling.slice(idx, end);
-    return body.includes('item.ackedBy[client]') && !body.includes('delete queue[id];\n      const ucMessages');
+    // \r?\n: Windows(CRLF)でチェックアウトされた場合でも一致させるため
+    return body.includes('item.ackedBy[client]') && !/delete queue\[id\];\r?\n\s*const ucMessages/.test(body);
   })(),
   'webrtc-signaling.js poll handler must deliver every message via per-client ack tracking, not a destructive queue[id] drain'
 );
