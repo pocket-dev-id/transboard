@@ -45,9 +45,18 @@ const nshSource = fs.readFileSync(path.join(ROOT, NSH_RELATIVE_PATH), 'utf8');
   assert.strictEqual(countOccurrences(/!macro\s+\w/g), countOccurrences(/!macroend/g), '!macroと!macroendの数が一致すること');
   assert.strictEqual(countOccurrences(/\$\{If(Not)?\}/g), countOccurrences(/\$\{EndIf\}/g), '${If}/${IfNot}と${EndIf}の数が一致すること');
   assert.ok(countOccurrences(/\$\{Else\}/g) >= 1, '${Else}分岐(モード判定)が存在すること');
-  for (const inc of ['FileFunc.nsh', 'GetOptions.nsh', 'LogicLib.nsh']) {
+  for (const inc of ['FileFunc.nsh', 'LogicLib.nsh']) {
     assert.ok(nshSource.includes(`!include "${inc}"`), `${inc}をincludeしていること`);
   }
+  // BUG FIX: 独立した"GetOptions.nsh"というヘッダはNSIS 3.xに存在しない
+  // (GetParameters/GetOptionsマクロは共にFileFunc.nsh内で定義されている)。
+  // !include "GetOptions.nsh" とすると実機ビルドで
+  // "!include: could not find: GetOptions.nsh" として失敗することを
+  // 実際のWindowsビルドで確認済み。再発を防ぐため存在しないことを固定する
+  assert.ok(
+    !nshSource.includes('!include "GetOptions.nsh"'),
+    'BUG FIX: 存在しない"GetOptions.nsh"をincludeしていないこと(実機ビルド失敗の原因だった)'
+  );
 }
 
 // 3) 個別引数モードのJSON組み立てを、.nshと同じロジックでJS側に再現し、
