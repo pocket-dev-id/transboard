@@ -54,7 +54,10 @@ const nshSource = fs.readFileSync(path.join(ROOT, NSH_RELATIVE_PATH), 'utf8');
 //    main.js側の本物の検証ロジック(applyProvisioningFile)を通す。
 //    .nshのFileWrite列と1対1で対応させているため、片方だけを変更すると
 //    このテストが構造的に古くなる(意図的な密結合)。
-function buildIndividualArgsJson({ parentIp = '', role = '', wardId = '', apiToken = '', managed = '' } = {}) {
+function buildIndividualArgsJson({
+  parentIp = '', role = '', wardId = '', deviceName = '', apiToken = '',
+  preventSleep = '', alwaysOnTop = '', managed = '',
+} = {}) {
   let out = '{\n';
   out += '  "version": 1,\n';
   if (parentIp !== '') {
@@ -65,7 +68,12 @@ function buildIndividualArgsJson({ parentIp = '', role = '', wardId = '', apiTok
   }
   if (role !== '') out += `  "terminalRole": "${role}",\n`;
   if (wardId !== '') out += `  "wardId": "${wardId}",\n`;
+  if (deviceName !== '') out += `  "deviceName": "${deviceName}",\n`;
   if (apiToken !== '') out += `  "apiToken": "${apiToken}",\n`;
+  if (preventSleep === '1') out += '  "preventSleep": true,\n';
+  else if (preventSleep === '0') out += '  "preventSleep": false,\n';
+  if (alwaysOnTop === '1') out += '  "alwaysOnTop": true,\n';
+  else if (alwaysOnTop === '0') out += '  "alwaysOnTop": false,\n';
   out += managed === '1' ? '  "managed": true\n' : '  "managed": false\n';
   out += '}\n';
   return out;
@@ -101,10 +109,12 @@ function runApply(jsonText) {
   return { result, state };
 }
 
-// 3a) 子機・役割・病棟・トークン・管理配布フラグをすべて指定 → 受理されること
+// 3a) 子機・役割・病棟・端末名・トークン・スリープ抑止・最前面・管理配布フラグを
+//     すべて指定 → 受理され、それぞれの値が正しくwriteTerminalRoleへ渡ること
 {
   const json = buildIndividualArgsJson({
-    parentIp: '192.168.1.10', role: 'ward', wardId: '3F', apiToken: 'a'.repeat(32), managed: '1',
+    parentIp: '192.168.1.10', role: 'ward', wardId: '3F', deviceName: '3F-PC1',
+    apiToken: 'a'.repeat(32), preventSleep: '1', alwaysOnTop: '0', managed: '1',
   });
   JSON.parse(json); // 構文として妥当なことを先に確認
   const { result, state } = runApply(json);
@@ -113,8 +123,23 @@ function runApply(jsonText) {
   assert.strictEqual(state.roleWrites[0].parentIp, '192.168.1.10');
   assert.strictEqual(state.roleWrites[0].terminalRole, 'ward');
   assert.strictEqual(state.roleWrites[0].wardId, '3F');
+  assert.strictEqual(state.roleWrites[0].deviceName, '3F-PC1');
+  assert.strictEqual(state.roleWrites[0].preventSleep, true);
+  assert.strictEqual(state.roleWrites[0].alwaysOnTop, false, '/ALWAYSONTOP=0(明示的な無効化)が反映されること');
   assert.deepStrictEqual(state.tokenWrites, ['a'.repeat(32)]);
   assert.strictEqual(result.managed, true);
+}
+
+// 3a-2) /PREVENTSLEEP=, /ALWAYSONTOP=を指定しない場合、undefinedのまま
+//       writeTerminalRoleへ渡ること(main.js側はundefinedを「利用者の選択を
+//       尊重し、既存値を引き継ぐ」の意味で扱うため、falseと混同してはいけない)
+{
+  const json = buildIndividualArgsJson({ parentIp: '192.168.1.10' });
+  const { state } = runApply(json);
+  assert.strictEqual(state.roleWrites[0].preventSleep, undefined, '未指定のpreventSleepはundefinedのまま渡ること(falseにしないこと)');
+  assert.strictEqual(state.roleWrites[0].alwaysOnTop, undefined, '未指定のalwaysOnTopはundefinedのまま渡ること(falseにしないこと)');
+  assert.strictEqual(state.roleWrites[0].deviceName, undefined, '未指定のdeviceNameはundefinedのまま渡ること(空文字で既存値を消さないこと)');
+  assert.strictEqual(state.roleWrites[0].wardId, undefined, '未指定のwardIdはundefinedのまま渡ること(空文字で既存値を消さないこと)');
 }
 
 // 3b) /PARENTIP=未指定(親機側の一括インストール) → shareMode:parentで受理されること
@@ -130,7 +155,7 @@ function runApply(jsonText) {
 //     ここではガード条件そのもの("$R3$R4$R5$R6$R7" != "")が.nsh内に存在することを確認する
 {
   assert.ok(
-    nshSource.includes('${If} "$R3$R4$R5$R6$R7" != ""'),
+    nshSource.includes('${If} "$R3$R4$R5$R6$R7$0$1$2" != ""'),
     '引数が1つも無い場合はprovisioning.jsonを作らないガードが.nsh内に存在すること(通常インストールへの影響ゼロを保証)'
   );
 }
