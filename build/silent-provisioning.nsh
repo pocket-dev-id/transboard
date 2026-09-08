@@ -44,8 +44,11 @@
 ; main.js の applyProvisioningFile() が起動時に検証する。不正な内容でも
 ; 起動時に安全に破棄されるだけなので、ここでは最小限の組み立てのみ行う。
 
+; GetParameters・GetOptionsマクロは共にFileFunc.nsh内で定義されている。
+; 独立したGetOptions用ヘッダファイルはNSIS 3.xには存在しないため、
+; それを別途includeしようとすると実機ビルドで
+; "!include: could not find" として失敗する
 !include "FileFunc.nsh"
-!include "GetOptions.nsh"
 !include "LogicLib.nsh"
 
 !macro customInstall
