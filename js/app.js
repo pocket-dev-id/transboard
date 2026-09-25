@@ -2058,11 +2058,15 @@ const App = {
       // 無条件に適用すると、院内の全端末でzoom書き換え・classList操作・
       // CSS変数書き換えが永久に走り続けてしまう。設定画面(status-customize.js/
       // terminal-access.js)からの直接呼び出しはこのガードを経由しないため、
-      // ローカルのズーム・フォント変更等は従来どおり即座に反映される
+      // ローカルのズーム・フォント変更等は従来どおり即座に反映される。
+      // 最終同期・最終取り込みの表示は設定が同じでも毎ポーリングで更新する。
+      // applySystemVisualSettings()に含めたまま省略すると、画面上の同期時刻が止まる。
       const systemSettingsSignature = JSON.stringify(systemSettings);
       if (systemSettingsSignature !== this._lastAppliedSystemSettingsSignature) {
         await this.applySystemVisualSettings();
         this._lastAppliedSystemSettingsSignature = systemSettingsSignature;
+      } else {
+        await this._applySyncTimeDisplay();
       }
       return true;
     } catch (e) {
