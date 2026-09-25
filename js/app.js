@@ -898,9 +898,11 @@ const App = {
   },
 
   _bindCardScanHandler() {
+    if (typeof this._unbindCardScan === 'function') this._unbindCardScan();
+    this._unbindCardScan = null;
     // ICカードスキャンのグローバルハンドラ（タブに関わらず常に受信）
-    if (window.electronAPI?.onCardScanned) {
-      window.electronAPI.onCardScanned((uid) => {
+    if (!window.electronAPI?.onCardScanned) return;
+    const unbind = window.electronAPI.onCardScanned((uid) => {
         // モーダルが実際に表示中かどうか確認
         const isModalOpen = !document.getElementById('bed-modal-overlay')?.classList.contains('hidden');
         if (isModalOpen) {
@@ -924,16 +926,32 @@ const App = {
           ExamRoom._handleScan(uid);
         }
       });
+    if (typeof unbind === 'function') this._unbindCardScan = unbind;
+  },
+
+  _clearImportIpcListeners() {
+    for (const unbind of this._importIpcUnsubscribers || []) {
+      try {
+        unbind();
+      } catch (e) {
+        console.warn('[Electron] 取り込み通知の購読解除に失敗しました:', e);
+      }
     }
+    this._importIpcUnsubscribers = [];
+  },
+
+  _rememberImportIpcUnsubscriber(unbind) {
+    if (typeof unbind === 'function') this._importIpcUnsubscribers.push(unbind);
   },
 
   _bindImportIpcListeners() {
+    this._clearImportIpcListeners();
     // デスクトップアプリ用自動インポートのリスナー登録
     if (window.electronAPI) {
       console.log('[Electron] 患者・在床情報のインポートリスナーを設定しています...');
       
       // 成功時
-      window.electronAPI.onDataImported((payload = {}) => {
+      this._rememberImportIpcUnsubscriber(window.electronAPI.onDataImported((payload = {}) => {
         // 監視と手動スキャンが同時に複数CSVを検出しても、病床マスターの更新を
         // 1ファイルずつ完了させる。並行更新によるrevision競合と取り込み失敗を防ぐ。
         this._dataImportPromise = this._dataImportPromise
@@ -1258,10 +1276,10 @@ const App = {
             }
             UI.toast('CSV取り込み処理に失敗しました。原本は監視フォルダに残しています。', 'danger', 8000);
           });
-      });
+      }));
 
       // 失敗時
-      window.electronAPI.onDataImportFailed(async ({ importId, fileName, error }) => {
+      this._rememberImportIpcUnsubscriber(window.electronAPI.onDataImportFailed(async ({ importId, fileName, error }) => {
         console.error(`[Electron] インポート失敗 (${fileName}):`, error);
         if (importId && window.electronAPI.completeDataImport) {
           await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
@@ -1287,10 +1305,10 @@ const App = {
         }
 
         UI.toast(`❌ CSVファイル ${fileName} の読み込みに失敗しました: ${error}`, 'danger', 6000);
-      });
+      }));
 
       if (window.electronAPI.onArchiveError) {
-        window.electronAPI.onArchiveError(async ({ fileName, archiveDir, error, code }) => {
+        this._rememberImportIpcUnsubscriber(window.electronAPI.onArchiveError(async ({ fileName, archiveDir, error, code }) => {
           console.error(`[Electron] アーカイブエラー (${fileName}):`, error);
           try {
             await API.create('import_logs', {
@@ -1312,7 +1330,7 @@ const App = {
             'warning',
             10000
           );
-        });
+        }));
       }
 
       window.electronAPI.getWatchDirectory().then(dir => {
@@ -1321,7 +1339,7 @@ const App = {
 
       // スケジュール取り込み成功時
       if (window.electronAPI.onScheduleImported) {
-        window.electronAPI.onScheduleImported(async ({ success = true, feedId, feedName, fileName, count, message }) => {
+        this._rememberImportIpcUnsubscriber(window.electronAPI.onScheduleImported(async ({ success = true, feedId, feedName, fileName, count, message }) => {
           if (success === false) {
             console.error(`[ScheduleFeed] "${feedName}" 取り込み失敗 (${fileName}): ${message || '保存に失敗しました'}`);
             UI.toast(`⚠️ ${feedName}: ${message || 'スケジュールの保存に失敗しました'}`, 'warning', 10000);
@@ -1344,7 +1362,7 @@ const App = {
           } else if (activePage && activePage.id === 'page-timeline') {
             Timeline._renderFullTimeline().catch(console.error);
           }
-        });
+        }));
       }
     }
   },
