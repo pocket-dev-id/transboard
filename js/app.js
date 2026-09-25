@@ -432,10 +432,13 @@ const App = {
   async _loadTerminalRole() {
     const storedRole = localStorage.getItem('cfg_terminal_role');
     const needsRole = storedRole !== 'exam' && storedRole !== 'ward';
-    // 配布管理ツールが投入した既定の病棟は「まだ一度も病棟を選んでいない端末」
-    // にだけ適用する。利用者が選び直した結果を毎起動で上書きしないため
+    // 配布管理ツールが投入した既定値は「まだ一度も利用者が選んでいない端末」
+    // にだけ適用する。利用者が選び直した/決めた結果を毎起動で上書きしないため
     const needsWard = !localStorage.getItem('current_ward_id');
-    if (!needsRole && !needsWard) return;
+    const needsDeviceName = !localStorage.getItem('_device_name');
+    const needsPreventSleep = localStorage.getItem('cfg_prevent_sleep') === null;
+    const needsAlwaysOnTop = localStorage.getItem('cfg_always_on_top') === null;
+    if (!needsRole && !needsWard && !needsDeviceName && !needsPreventSleep && !needsAlwaysOnTop) return;
     try {
       const result = await window.electronAPI?.getTerminalRole?.();
       if (needsRole) {
@@ -443,6 +446,15 @@ const App = {
       }
       if (needsWard && result?.wardId) {
         localStorage.setItem('current_ward_id', String(result.wardId));
+      }
+      if (needsDeviceName && result?.deviceName) {
+        localStorage.setItem('_device_name', String(result.deviceName));
+      }
+      if (needsPreventSleep && typeof result?.preventSleep === 'boolean') {
+        localStorage.setItem('cfg_prevent_sleep', String(result.preventSleep));
+      }
+      if (needsAlwaysOnTop && typeof result?.alwaysOnTop === 'boolean') {
+        localStorage.setItem('cfg_always_on_top', String(result.alwaysOnTop));
       }
     } catch (err) {
       console.warn('[TerminalRole] 端末役割の読み込みに失敗しました:', err);
@@ -1615,6 +1627,13 @@ const App = {
       window.electronAPI.getHostname().then(h => { _cachedHostname = h || null; }).catch(() => {});
     }
 
+    // Windows管理者権限(昇格)で起動されているか。起動中に変化しないため
+    // 1回だけ取得してキャッシュする。true/false/null(判定不能)
+    let _cachedIsElevated = null;
+    if (window.electronAPI?.isElevated) {
+      window.electronAPI.isElevated().then(v => { _cachedIsElevated = v; }).catch(() => {});
+    }
+
     const sendHeartbeat = async () => {
       if (this._heartbeatInFlight) return;
       this._heartbeatInFlight = true;
@@ -1629,7 +1648,8 @@ const App = {
           wardId,
           mode: localStorage.getItem('cfg_share_mode') || 'client',
           appVersion: AppState.appVersion || '',
-          page: document.querySelector('.tab-btn.active')?.dataset.page || ''
+          page: document.querySelector('.tab-btn.active')?.dataset.page || '',
+          isElevated: _cachedIsElevated === null ? undefined : String(_cachedIsElevated)
         });
         const ok = res !== null && res?.unauthorized !== true && res?.success !== false;
         this._setConnectionStatus(ok, res?.unauthorized ? 'unauthorized' : undefined);

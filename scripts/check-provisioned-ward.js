@@ -54,7 +54,12 @@ async function main() {
   // 2) 利用者が既に病棟を選び直している場合、配布時の値で上書きしないこと
   {
     const { obj, state } = buildHarness({
-      stored: { cfg_terminal_role: 'ward', current_ward_id: 'ward-9' },
+      stored: {
+        cfg_terminal_role: 'ward', current_ward_id: 'ward-9',
+        // 端末表示名・スリープ抑止・常に最前面もすべて確定済みという前提
+        // (未指定のままだと、この後のIPC呼び出し無し判定が崩れてしまう)
+        _device_name: 'PC1', cfg_prevent_sleep: 'false', cfg_always_on_top: 'false',
+      },
       roleResult: { terminalRole: 'ward', wardId: 'ward-3' },
     });
     await obj._loadTerminalRole();
@@ -64,7 +69,7 @@ async function main() {
     );
     assert.strictEqual(
       state.getTerminalRoleCalls, 0,
-      '役割・病棟とも確定済みなら、毎起動でIPCを呼ばないこと'
+      'すべての項目が確定済みなら、毎起動でIPCを呼ばないこと'
     );
   }
 
@@ -109,6 +114,60 @@ async function main() {
     const { obj, state } = buildHarness({ roleThrows: true });
     await assert.doesNotReject(() => obj._loadTerminalRole(), 'IPC失敗時に例外を投げないこと');
     assert.strictEqual(state.store.cfg_terminal_role, 'ward', 'IPC失敗時は端末役割を既定(ward)にすること');
+  }
+
+  // 6) 端末表示名・スリープ抑止・常に最前面: 初回起動(すべて未設定)なら採用されること
+  {
+    const { obj, state } = buildHarness({
+      stored: { cfg_terminal_role: 'ward', current_ward_id: 'ward-9' },
+      roleResult: {
+        terminalRole: 'ward', wardId: 'ward-9',
+        deviceName: '3F-PC1', preventSleep: true, alwaysOnTop: false,
+      },
+    });
+    await obj._loadTerminalRole();
+    assert.strictEqual(state.store._device_name, '3F-PC1', '端末表示名が初回起動で採用されること');
+    assert.strictEqual(state.store.cfg_prevent_sleep, 'true', 'スリープ抑止が初回起動で採用されること');
+    assert.strictEqual(state.store.cfg_always_on_top, 'false', '常に最前面(false)も初回起動で採用されること');
+  }
+
+  // 7) 端末表示名・スリープ抑止・常に最前面: 利用者が既に決めている場合は
+  //    上書きしないこと(スリープ抑止・常に最前面はfalseで確定済みの場合も含む)
+  {
+    const { obj, state } = buildHarness({
+      stored: {
+        cfg_terminal_role: 'ward', current_ward_id: 'ward-9',
+        _device_name: 'マイPC', cfg_prevent_sleep: 'false', cfg_always_on_top: 'false',
+      },
+      roleResult: {
+        terminalRole: 'ward', wardId: 'ward-9',
+        deviceName: '3F-PC1', preventSleep: true, alwaysOnTop: true,
+      },
+    });
+    await obj._loadTerminalRole();
+    assert.strictEqual(state.store._device_name, 'マイPC', 'BUG FIX: 利用者が設定済みの端末表示名を上書きしないこと');
+    assert.strictEqual(
+      state.store.cfg_prevent_sleep, 'false',
+      'BUG FIX: 利用者が明示的にfalseへ設定済みのスリープ抑止を上書きしないこと'
+    );
+    assert.strictEqual(
+      state.store.cfg_always_on_top, 'false',
+      'BUG FIX: 利用者が明示的にfalseへ設定済みの常に最前面を上書きしないこと'
+    );
+    assert.strictEqual(state.getTerminalRoleCalls, 0, 'すべての項目が確定済みなら、毎起動でIPCを呼ばないこと');
+  }
+
+  // 8) 配布側でpreventSleep/alwaysOnTop/deviceNameが指定されていなければ、
+  //    何も書き込まないこと(利用者に選ばせる)
+  {
+    const { obj, state } = buildHarness({
+      stored: { cfg_terminal_role: 'ward', current_ward_id: 'ward-9' },
+      roleResult: { terminalRole: 'ward', wardId: 'ward-9' },
+    });
+    await obj._loadTerminalRole();
+    assert.strictEqual(state.store._device_name, undefined, '端末表示名が未指定なら書き込まないこと');
+    assert.strictEqual(state.store.cfg_prevent_sleep, undefined, 'preventSleepが未指定なら書き込まないこと');
+    assert.strictEqual(state.store.cfg_always_on_top, undefined, 'alwaysOnTopが未指定なら書き込まないこと');
   }
 
   console.log('Provisioned ward checks passed.');

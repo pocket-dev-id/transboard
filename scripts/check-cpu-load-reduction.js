@@ -19,8 +19,15 @@ const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const appSource = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
-const examroomSource = fs.readFileSync(path.join(ROOT, 'js/examroom.js'), 'utf8');
+
+function readSource(filePath) {
+  // windows-latest の checkout は CRLF になる。'\n\n' のような
+  // 連続改行マーカーは \r が割り込むと一致しない。
+  return fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
+}
+
+const appSource = readSource(path.join(ROOT, 'js/app.js'));
+const examroomSource = readSource(path.join(ROOT, 'js/examroom.js'));
 
 function extract(source, startMarker, endMarker) {
   const idx = source.indexOf(startMarker);

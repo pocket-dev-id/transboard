@@ -50,6 +50,7 @@ win:
 nsis:
   oneClick: false
   perMachine: true
+  include: build/silent-provisioning.nsh
   # 全ユーザー共通の場所へ入れるため、インストール先の変更は許可しない。
   # (v1.1.x で allowToChangeInstallationDirectory: true と perMachine 未指定を
   #  併用した結果、意図せず実質per-machineになった経緯があるため明示しておく)
