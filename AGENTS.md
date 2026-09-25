@@ -47,6 +47,13 @@ Run this before committing JavaScript changes:
 npm run check
 ```
 
+Pull requests into `main` run that same command on `windows-latest`
+(Node 22, `npm ci`) via `.github/workflows/check.yml`. It matches the check
+step in `release.yml`, including CRLF checkout behavior that has failed
+Linux-only runs before. Syntax checks are already inside `npm run check`
+(`scripts/check-js-syntax.js`). The workflow does not make the check required;
+that is a branch protection setting.
+
 For network or parent/child changes, also inspect:
 
 ```bash
