@@ -59,6 +59,14 @@ function extractObjectLiteral(src, marker) {
 
 const main = read('main.js');
 const parentHttp = read('main-modules/parent-http.js');
+const scheduleCsv = read('main-modules/schedule-csv.js');
+const odbc = read('main-modules/odbc.js');
+const updater = read('main-modules/updater.js');
+const transferStatus = read('main-modules/transfer-status.js');
+// 振る舞いを変えずに main.js から切り出した関数は、検査対象を
+// main.js と各モジュールを連結したものにする。indexOf の相対順序は
+// 元の main.js（予定CSV → ODBC → 搬送 → 更新）と同じ並びを保つ。
+const mainSources = [main, scheduleCsv, odbc, transferStatus, updater].join('\n');
 const config = read('js/config.js');
 const indexHtml = read('index.html');
 const api = read('js/api.js');
@@ -83,7 +91,7 @@ const ui = read('js/ui.js');
 const webrtcSignaling = read('main-modules/webrtc-signaling.js');
 const devicePresence = read('js/device-presence.js');
 
-assert(!main.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
+assert(!mainSources.includes('LocalNetworkAccessChecks'), 'Chromium LNA protection must not be disabled');
 assert(!/\bexecSync\s*\(/.test(main), 'Shell command strings must not use execSync');
 assert(!call.includes('stun.l.google.com'), 'WebRTC must not depend on public STUN servers');
 assert(
@@ -98,19 +106,19 @@ assert(
   'All IPC handlers must be registered through handleTrusted'
 );
 
-const updateHandlerIdx = main.indexOf("handleTrusted('download-and-install-update'");
-const updateVerifyIndex = main.indexOf('verifyWindowsCodeSignature(installerPath)', updateHandlerIdx);
-const updateSpawnIndex = main.indexOf('spawnInstallerAfterOwnExit(installerPath)', updateHandlerIdx);
+const updateHandlerIdx = mainSources.indexOf("handleTrusted('download-and-install-update'");
+const updateVerifyIndex = mainSources.indexOf('verifyWindowsCodeSignature(installerPath)', updateHandlerIdx);
+const updateSpawnIndex = mainSources.indexOf('spawnInstallerAfterOwnExit(installerPath)', updateHandlerIdx);
 assert(
   updateHandlerIdx >= 0 && updateVerifyIndex >= 0 && updateSpawnIndex > updateVerifyIndex,
   'The updater must verify Authenticode before launching an installer'
 );
 assert(
-  main.includes("[Security] 更新ファイル配信のAPIトークン認証失敗") &&
-  main.includes('EXPECTED_UPDATE_PUBLISHER_THUMBPRINT') &&
-  main.includes('signature.thumbprint') &&
-  main.includes('confirmUnsignedUpdate') &&
-  main.includes('isUnsignedUpdateSourceAllowed'),
+  mainSources.includes("[Security] 更新ファイル配信のAPIトークン認証失敗") &&
+  mainSources.includes('EXPECTED_UPDATE_PUBLISHER_THUMBPRINT') &&
+  mainSources.includes('signature.thumbprint') &&
+  mainSources.includes('confirmUnsignedUpdate') &&
+  mainSources.includes('isUnsignedUpdateSourceAllowed'),
   'Updates must use API authentication, hash verification, source restrictions, and explicit unsigned confirmation'
 );
 // 現行ビルドは未署名のため、親機自身の更新は毎回confirmUnsignedUpdateの
@@ -143,10 +151,10 @@ assert(
 // ダイアログ確認を求める(更新自体がブロックされるわけではない)ことを保証する
 assert(
   (() => {
-    const idx = main.indexOf('async function confirmUnsignedUpdate({');
-    const end = main.indexOf('const result = await dialog.showMessageBox', idx);
+    const idx = mainSources.indexOf('async function confirmUnsignedUpdate({');
+    const end = mainSources.indexOf('const result = await dialog.showMessageBox', idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const allowedCheckIdx = body.indexOf('isUnsignedUpdateSourceAllowed(feedBase)');
     const autoAcceptIdx = body.indexOf('if (autoAcceptForChild && isStronglyTrustedUpdateSource(feedBase))');
     return allowedCheckIdx >= 0 && autoAcceptIdx > allowedCheckIdx &&
@@ -156,11 +164,11 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function isStronglyTrustedUpdateSource(feedBase) {');
+    const idx = mainSources.indexOf('function isStronglyTrustedUpdateSource(feedBase) {');
     if (idx < 0) return false;
-    const end = main.indexOf('async function confirmUnsignedUpdate', idx);
+    const end = mainSources.indexOf('async function confirmUnsignedUpdate', idx);
     if (end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     // ホスト名(ドット区切りIPv4でない値)を許可する分岐が無いこと、
     // つまりisUnsignedUpdateSourceAllowedのようなホスト名フォールバックが
     // 混入していないことを確認する
@@ -174,10 +182,10 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf("handleTrusted('download-and-install-update'");
-    const end = main.indexOf("handleTrusted('get-update-dist-info'", idx);
+    const idx = mainSources.indexOf("handleTrusted('download-and-install-update'");
+    const end = mainSources.indexOf("handleTrusted('get-update-dist-info'", idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('autoAcceptForChild: isChildTerminal') &&
       /isChildTerminal\s*=\s*isClientTerminal\(/.test(body);
   })(),
@@ -188,29 +196,29 @@ assert(
 // ドット区切りIPv4形式の判定自体が失われていないことを保証する
 assert(
   (() => {
-    const idx = main.indexOf('function isUnsignedUpdateSourceAllowed(feedBase) {');
-    const end = main.indexOf('async function confirmUnsignedUpdate', idx);
+    const idx = mainSources.indexOf('function isUnsignedUpdateSourceAllowed(feedBase) {');
+    const end = mainSources.indexOf('async function confirmUnsignedUpdate', idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('\\d{1,3}(\\.\\d{1,3}){3}');
   })(),
   'isUnsignedUpdateSourceAllowed must still reject plain-HTTP dotted-IPv4 literals that are not private/loopback'
 );
 assert(
-  !main.includes('[ScheduleFeed] "${feed.name}" CSVパース失敗'),
+  !mainSources.includes('[ScheduleFeed] "${feed.name}" CSVパース失敗'),
   'Main CSV import must not reference an out-of-scope schedule feed'
 );
 
-const apiAuthIndex = main.indexOf('if (!isValidApiToken(apiToken))');
-const apiBodyIndex = main.indexOf("req.on('data'", apiAuthIndex);
+const apiAuthIndex = mainSources.indexOf('if (!isValidApiToken(apiToken))');
+const apiBodyIndex = mainSources.indexOf("req.on('data'", apiAuthIndex);
 assert(
   apiAuthIndex >= 0 && apiBodyIndex > apiAuthIndex,
   'The parent API must authenticate before accepting a request body'
 );
 
 assert(
-  main.includes("'admin_passcode', 'api_token']") &&
-  main.includes("cleanUrl === 'auth/verify-passcode'"),
+  mainSources.includes("'admin_passcode', 'api_token']") &&
+  mainSources.includes("cleanUrl === 'auth/verify-passcode'"),
   'Admin passcode hashes must stay on the parent'
 );
 
@@ -222,8 +230,8 @@ assert(
   'Device endpoints must send the API token'
 );
 assert(
-  main.includes("handleTrusted('set-terminal-api-token'") &&
-  main.includes('safeStorage.encryptString(token)') &&
+  mainSources.includes("handleTrusted('set-terminal-api-token'") &&
+  mainSources.includes('safeStorage.encryptString(token)') &&
   !wizard.includes("localStorage.setItem('cfg_api_token'") &&
   !networkSettings.includes("localStorage.setItem('cfg_api_token'"),
   'Terminal API tokens must be stored with safeStorage instead of localStorage'
@@ -233,10 +241,10 @@ assert(
   'Parent availability checks must authenticate after the API is locked down'
 );
 assert(
-  main.includes("handleTrusted('complete-data-import'") &&
+  mainSources.includes("handleTrusted('complete-data-import'") &&
   preload.includes('completeDataImport') &&
   app.includes('completeDataImport({ importId, success: true })') &&
-  !main.slice(main.indexOf('async function importCSV'), main.indexOf('function cleanOldArchives')).includes('archiveFile(filePath)'),
+  !mainSources.slice(mainSources.indexOf('async function importCSV'), mainSources.indexOf('function cleanOldArchives')).includes('archiveFile(filePath)'),
   'CSV originals must be archived only after renderer DB update acknowledgement'
 );
 assert(
@@ -250,9 +258,9 @@ assert(
   'Child terminals must refresh shared masters and surface parent write failures'
 );
 assert(
-  main.includes('processMasterBulkUpsert') &&
-  main.includes('applyMasterRevision') &&
-  main.includes("if (table === 'wards')") &&
+  mainSources.includes('processMasterBulkUpsert') &&
+  mainSources.includes('applyMasterRevision') &&
+  mainSources.includes("if (table === 'wards')") &&
   api.includes('bulkUpsert'),
   'Master imports must be validated and committed as one parent-side operation'
 );
@@ -264,20 +272,20 @@ assert(
   'Master sync and legacy child mode handling must remain wired'
 );
 assert(
-  main.includes('function processStatusAcknowledgeRequest') &&
-  main.includes("String(event.ward_id || '') !== wardId") &&
-  main.includes('WARD_ACKNOWLEDGEMENT_STATUSES.has(log.to_status)') &&
-  main.includes("cleanUrl === 'status/ack'") &&
+  mainSources.includes('function processStatusAcknowledgeRequest') &&
+  mainSources.includes("String(event.ward_id || '') !== wardId") &&
+  mainSources.includes('WARD_ACKNOWLEDGEMENT_STATUSES.has(log.to_status)') &&
+  mainSources.includes("cleanUrl === 'status/ack'") &&
   api.includes('acknowledgeStatusLog(logId, wardId)'),
   'Notification acknowledgements must remain authenticated, ward-scoped, and status-limited'
 );
 
 assert(
-  main.includes('function normalizeTerminalRole(value)') &&
-  main.includes('検査室端末では移送を開始できません') &&
-  main.includes('検査室端末では病棟側の状態操作はできません') &&
-  main.includes('検査室端末では病棟通知を確認できません') &&
-  main.includes("handleTrusted('set-terminal-role'") &&
+  mainSources.includes('function normalizeTerminalRole(value)') &&
+  mainSources.includes('検査室端末では移送を開始できません') &&
+  mainSources.includes('検査室端末では病棟側の状態操作はできません') &&
+  mainSources.includes('検査室端末では病棟通知を確認できません') &&
+  mainSources.includes("handleTrusted('set-terminal-role'") &&
   preload.includes("setTerminalRole: (role) => ipcRenderer.invoke('set-terminal-role', role)"),
   'Exam terminals must have a persisted role and must not use ward transfer or acknowledgement operations'
 );
@@ -320,8 +328,8 @@ assert(
   'Import and ODBC values must be HTML-escaped'
 );
 assert(
-  main.includes('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8') &&
-  main.includes('$OutputEncoding = [System.Text.Encoding]::UTF8'),
+  mainSources.includes('[Console]::OutputEncoding = [System.Text.Encoding]::UTF8') &&
+  mainSources.includes('$OutputEncoding = [System.Text.Encoding]::UTF8'),
   'ODBC PowerShell output must be emitted as UTF-8 for Japanese errors and table names'
 );
 assert(
@@ -329,8 +337,8 @@ assert(
   !app.includes("API.getOne('system_settings', 'admin_passcode')") &&
   !app.includes('PasscodeHash.hash(') &&
   !app.includes('requiredPasscode') &&
-  main.includes('crypto.scryptSync') &&
-  main.includes("handleTrusted('set-admin-passcode'"),
+  mainSources.includes('crypto.scryptSync') &&
+  mainSources.includes("handleTrusted('set-admin-passcode'"),
   'Renderer must not retrieve or generate stored passcode hashes'
 );
 
@@ -349,7 +357,7 @@ assert(
   'WebRTC chat UI and signaling must remain removed'
 );
 assert(
-  !main.includes('show-os-notification') &&
+  !mainSources.includes('show-os-notification') &&
   !preload.includes('showOsNotification') &&
   !app.includes('showOsNotification') &&
   !importNotify.includes('showOsNotification') &&
@@ -359,10 +367,10 @@ assert(
 
 // ステータス遷移はmainプロセスの検証を必ず通し、クライアント入力の
 // maintenanceフラグで通常ルールを迂回できないようにする。
-const statusUpdateIndex = main.indexOf('async function processStatusUpdateRequest');
-const statusUpdateEnd = main.indexOf('\nfunction processStatusNoteRequest', statusUpdateIndex);
+const statusUpdateIndex = mainSources.indexOf('async function processStatusUpdateRequest');
+const statusUpdateEnd = mainSources.indexOf('\nfunction processStatusNoteRequest', statusUpdateIndex);
 assert(statusUpdateIndex >= 0 && statusUpdateEnd > statusUpdateIndex, 'Status update handler must remain present');
-const statusUpdateBody = main.slice(statusUpdateIndex, statusUpdateEnd);
+const statusUpdateBody = mainSources.slice(statusUpdateIndex, statusUpdateEnd);
 assert(
   statusUpdateBody.includes('Unknown status:') &&
   statusUpdateBody.includes('isScopedTransferStatusTransitionAllowed') &&
@@ -371,15 +379,15 @@ assert(
   'Status updates must reject unknown states and must not bypass transition validation via a client maintenance flag'
 );
 assert(
-  main.includes("const statusActor = isExternal") &&
-  main.includes("? 'child_api'") &&
-  main.includes("['ic_scan', 'maintenance'].includes(payload.source)") &&
-  main.includes('changedBy: statusActor') &&
-  main.includes('actorType: statusActor'),
+  mainSources.includes("const statusActor = isExternal") &&
+  mainSources.includes("? 'child_api'") &&
+  mainSources.includes("['ic_scan', 'maintenance'].includes(payload.source)") &&
+  mainSources.includes('changedBy: statusActor') &&
+  mainSources.includes('actorType: statusActor'),
   'Status history must preserve trusted local operation sources while forcing external requests to child_api'
 );
 assert(
-  main.includes("hidden.has('ARRIVED')") &&
+  mainSources.includes("hidden.has('ARRIVED')") &&
   !api.includes('maintenance: true'),
   'Arrival/exam-start integration must be conditional and the removed maintenance payload must not be sent'
 );
@@ -399,7 +407,7 @@ assert(
 // fs/chokidar に密結合した経路にあり実行ベースの単体テストが割に合わないため、
 // ガードが消えていないことをソース上で担保する。
 assert(
-  main.includes("if (table === 'beds') {") &&
+  mainSources.includes("if (table === 'beds') {") &&
   /transfer_events[\s\S]{0,200}ACTIVE_TRANSFER_STATUSES[\s\S]{0,400}進行中の移送があります/.test(main),
   'Bed deletion must stay blocked while an active transfer references the bed'
 );
@@ -411,10 +419,10 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const guardIdx = body.indexOf('totalRowCount > 0 && allItems.length === 0');
     const filterIdx = body.indexOf("db.schedule_items.filter(x => x.feed_id !== feed.id)");
     return guardIdx >= 0 && filterIdx > guardIdx;
@@ -431,10 +439,10 @@ assert(
 // share_mode/parent_ipを静かに上書きしてしまう落とし穴を防ぐガード
 assert(
   (() => {
-    const idx = main.indexOf("handleTrusted('restore-db'");
-    const end = main.indexOf("handleTrusted('get-database-storage-info'");
+    const idx = mainSources.indexOf("handleTrusted('restore-db'");
+    const end = mainSources.indexOf("handleTrusted('get-database-storage-info'");
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('writeTerminalRole(') &&
       body.indexOf('writeTerminalRole(') > body.indexOf('appendAuditLog(db,');
   })(),
@@ -445,13 +453,13 @@ assert(
 // 戻ると、リーダーが検出できない間PowerShellランタイム起動＋JITコンパイルの
 // 重い処理を延々と繰り返しCPU負荷が高止まりするため、指数バックオフを保証する
 assert(
-  main.includes('nfcConsecutiveQuickExits') &&
+  mainSources.includes('nfcConsecutiveQuickExits') &&
   /const delay = Math\.min\(\s*NFC_RESTART_MAX_DELAY_MS,\s*NFC_RESTART_BASE_DELAY_MS\s*\*\s*Math\.pow\(2,\s*nfcConsecutiveQuickExits\)\s*\);[\s\S]{0,200}nfcRestartTimer = setTimeout\([\s\S]{0,100}\}, delay\);/.test(main) &&
   (() => {
-    const idx = main.indexOf('function stopNfcWatcher');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function stopNfcWatcher');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < 0) return false;
-    return main.slice(idx, end).includes('nfcConsecutiveQuickExits = 0');
+    return mainSources.slice(idx, end).includes('nfcConsecutiveQuickExits = 0');
   })(),
   'NFC watcher restarts must back off exponentially instead of retrying on a fixed interval'
 );
@@ -462,15 +470,15 @@ assert(
 // （書き込み系がキャッシュと共有しない専用コピーを受け取れなくなる回帰を防ぐ）。
 assert(
   (() => {
-    const sharedStart = main.indexOf('function readDbShared()');
-    const sharedEnd = main.indexOf('function readDB()');
-    const readEnd = main.indexOf('function writeDB(');
-    const writeEnd = main.indexOf('function getSettingRecord(');
+    const sharedStart = mainSources.indexOf('function readDbShared()');
+    const sharedEnd = mainSources.indexOf('function readDB()');
+    const readEnd = mainSources.indexOf('function writeDB(');
+    const writeEnd = mainSources.indexOf('function getSettingRecord(');
     if (sharedStart < 0 || sharedEnd < 0 || readEnd < 0 || writeEnd < 0 ||
         sharedEnd <= sharedStart || readEnd <= sharedEnd || writeEnd <= readEnd) return false;
-    const sharedBody = main.slice(sharedStart, sharedEnd);
-    const readBody = main.slice(sharedEnd, readEnd);
-    const writeBody = main.slice(readEnd, writeEnd);
+    const sharedBody = mainSources.slice(sharedStart, sharedEnd);
+    const readBody = mainSources.slice(sharedEnd, readEnd);
+    const writeBody = mainSources.slice(readEnd, writeEnd);
     const hasJsonRoundTripClone = /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(sharedBody) ||
       /JSON\.parse\(JSON\.stringify\((dbCache|db|data|recovered)\)\)/.test(writeBody);
     return !hasJsonRoundTripClone &&
@@ -487,10 +495,10 @@ assert(
 // 保証する。ここが崩れると、audit_logsが再びdb.json経由の全件書き直しに戻る。
 assert(
   (() => {
-    const writeStart = main.indexOf('function writeDB(');
-    const writeEnd = main.indexOf('function getSettingRecord(');
+    const writeStart = mainSources.indexOf('function writeDB(');
+    const writeEnd = mainSources.indexOf('function getSettingRecord(');
     if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
-    const writeBody = main.slice(writeStart, writeEnd);
+    const writeBody = mainSources.slice(writeStart, writeEnd);
 
     return writeBody.includes('const { audit_logs, _pendingAuditLogEntries, ...dbWithoutAuditLogs } = data;') &&
       writeBody.includes('JSON.stringify(dbForDisk)') &&
@@ -508,15 +516,15 @@ assert(
 // フラッシュすることを保証する。
 assert(
   (() => {
-    const appendStart = main.indexOf('function appendAuditLog(db, action, {');
-    const appendEnd = main.indexOf('function appendParentActionAudit(');
+    const appendStart = mainSources.indexOf('function appendAuditLog(db, action, {');
+    const appendEnd = mainSources.indexOf('function appendParentActionAudit(');
     if (appendStart < 0 || appendEnd < 0 || appendEnd <= appendStart) return false;
-    const appendBody = main.slice(appendStart, appendEnd);
+    const appendBody = mainSources.slice(appendStart, appendEnd);
 
-    const writeStart = main.indexOf('function writeDB(');
-    const writeEnd = main.indexOf('function getSettingRecord(');
+    const writeStart = mainSources.indexOf('function writeDB(');
+    const writeEnd = mainSources.indexOf('function getSettingRecord(');
     if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
-    const writeBody = main.slice(writeStart, writeEnd);
+    const writeBody = mainSources.slice(writeStart, writeEnd);
 
     const safeWriteIdx = writeBody.indexOf('safeWriteFile(DB_FILE, encryptDbFileContent(JSON.stringify(dbForDisk)));');
     const flushIdx = writeBody.indexOf('appendAuditLogFile(entry)');
@@ -536,10 +544,10 @@ assert(
 // 参照をそのまま返すことを保証する。
 assert(
   (() => {
-    const sharedStart = main.indexOf('function readDbShared()');
-    const sharedEnd = main.indexOf('function readDB()');
+    const sharedStart = mainSources.indexOf('function readDbShared()');
+    const sharedEnd = mainSources.indexOf('function readDB()');
     if (sharedStart < 0 || sharedEnd < 0 || sharedEnd <= sharedStart) return false;
-    const sharedBody = main.slice(sharedStart, sharedEnd);
+    const sharedBody = mainSources.slice(sharedStart, sharedEnd);
     return sharedBody.includes('return dbCache;') &&
       !sharedBody.includes('return structuredClone(dbCache)');
   })(),
@@ -552,10 +560,10 @@ assert(
 // 親機のCPU負荷が飽和する回帰につながる。
 assert(
   (() => {
-    const idx = main.indexOf('async function processDbRequest(');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('async function processDbRequest(');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < 0) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return /const db = method === 'GET' \? readDbShared\(\) : readDB\(\);/.test(body) &&
       /if \(!db\[table\] && method !== 'GET'\) \{/.test(body);
   })(),
@@ -583,10 +591,10 @@ assert(
 // mergeAuditLogEntriesでマージしてから間引くことを保証する。
 assert(
   (() => {
-    const idx = main.indexOf('function writeDB(');
-    const end = main.indexOf('function getSettingRecord(');
+    const idx = mainSources.indexOf('function writeDB(');
+    const end = mainSources.indexOf('function getSettingRecord(');
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const compactIdx = body.indexOf('AUDIT_LOG_COMPACT_THRESHOLD');
     if (compactIdx < 0) return false;
     const compactBody = body.slice(compactIdx);
@@ -617,10 +625,10 @@ assert(
 // 消えかねない。完了済みイベントのログだけを間引く設計を維持することを保証する。
 assert(
   (() => {
-    const idx = main.indexOf('function pruneTransferStatusLogs(');
-    const end = main.indexOf('\nfunction encryptSensitiveValue(');
+    const idx = mainSources.indexOf('function pruneTransferStatusLogs(');
+    const end = mainSources.indexOf('\nfunction encryptSensitiveValue(');
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
       body.includes('!activeEventIds.has(String(log.transfer_event_id))') &&
       !/^\s*trimTable\(db\.transfer_status_logs/m.test(body);
@@ -635,10 +643,10 @@ assert(
 // 絞って取得することを保証する。
 assert(
   (() => {
-    const idx = main.indexOf("if (table === 'transfer_events') {", main.indexOf('async function processDbRequest'));
-    const end = main.indexOf('return { data: filtered };', idx);
+    const idx = mainSources.indexOf("if (table === 'transfer_events') {", mainSources.indexOf('async function processDbRequest'));
+    const end = mainSources.indexOf('return { data: filtered };', idx);
     if (idx < 0 || end < 0) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes("searchParams.get('active_only') === 'true'") &&
       body.includes('!activeOnly || ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
       app.includes("API.getAll('transfer_events', { active_only: 'true' })");
@@ -653,10 +661,10 @@ assert(
 // updatesDir containmentチェックも併せて保証する。
 assert(
   (() => {
-    const idx = main.indexOf("req.url.startsWith('/updates/')");
-    const end = main.indexOf('// "/api/"で始まるリクエストのみ処理');
+    const idx = mainSources.indexOf("req.url.startsWith('/updates/')");
+    const end = mainSources.indexOf('// "/api/"で始まるリクエストのみ処理');
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('decodeURIComponent(path.basename(') &&
       /path\.resolve\(filePath\)\.startsWith\(updatesDirWithSep\)/.test(body) &&
       body.indexOf('decodeURIComponent(path.basename(') < body.indexOf('const filePath = path.join(updatesDir, fileName)');
@@ -668,7 +676,7 @@ assert(
 // pretty-print(インデント付きJSON.stringify)へ戻ると無駄なCPUコストが復活する
 assert(
   !/JSON\.stringify\(dbForDisk,\s*null,\s*2\)/.test(main) &&
-  main.includes('JSON.stringify(dbForDisk)'),
+  mainSources.includes('JSON.stringify(dbForDisk)'),
   'writeDB must write compact JSON, not a pretty-printed (indented) JSON.stringify'
 );
 
@@ -678,10 +686,10 @@ assert(
 // ことを保証する（この最適化はDBが肥大化するほど効く）。
 assert(
   (() => {
-    const writeStart = main.indexOf('function writeDB(');
-    const writeEnd = main.indexOf('function getSettingRecord(');
+    const writeStart = mainSources.indexOf('function writeDB(');
+    const writeEnd = mainSources.indexOf('function getSettingRecord(');
     if (writeStart < 0 || writeEnd < 0 || writeEnd <= writeStart) return false;
-    const writeBody = main.slice(writeStart, writeEnd);
+    const writeBody = mainSources.slice(writeStart, writeEnd);
     const structuredCloneCalls = writeBody.match(/structuredClone\(/g) || [];
     return structuredCloneCalls.length === 1 &&
       writeBody.includes('structuredClone(dbWithoutAuditLogs)') &&
@@ -695,8 +703,8 @@ assert(
 // エンドポイントの走査コストが増え続ける。24時間毎の自動クリーンアップが
 // 存在することを保証する。
 assert(
-  main.includes('EVENT_RETENTION_CHECK_INTERVAL_MS') &&
-  main.includes('pruneExpiredTransferEventsFromDb(db)') &&
+  mainSources.includes('EVENT_RETENTION_CHECK_INTERVAL_MS') &&
+  mainSources.includes('pruneExpiredTransferEventsFromDb(db)') &&
   /setInterval\(\(\) => \{[\s\S]{0,400}pruneExpiredTransferEventsFromDb\(db\)/.test(main),
   'A periodic (daily) automatic cleanup of expired transfer events must exist so event_retention_days takes effect without manual action'
 );
@@ -706,10 +714,10 @@ assert(
 // イベントに絞り込んでからソートするよう順序が戻っていないことを保証する。
 assert(
   (() => {
-    const idx = main.indexOf("id === 'exam-room-status'");
-    const end = main.indexOf("if (id) {", idx);
+    const idx = mainSources.indexOf("id === 'exam-room-status'");
+    const end = mainSources.indexOf("if (id) {", idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const filterIdx = body.indexOf('.filter(log => scopedEventById.has(');
     const sortIdx = body.indexOf('.sort((a, b) => Number(b.changed_at');
     return filterIdx >= 0 && sortIdx >= 0 && filterIdx < sortIdx;
@@ -856,13 +864,13 @@ assert(
 // 秒も任意で拾えることを保証する(hh.mm.ss形式のみ通せなくなる退行を防ぐ)
 assert(
   (() => {
-    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr, format) {');
+    const idx = mainSources.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr, format) {');
     if (idx < 0) return false;
-    const constIdx = main.indexOf('const SCHEDULE_TIME_RE_SRC');
+    const constIdx = mainSources.indexOf('const SCHEDULE_TIME_RE_SRC');
     if (constIdx < 0 || constIdx > idx) return false;
-    const timeReLine = main.slice(constIdx, main.indexOf('\n', constIdx));
+    const timeReLine = mainSources.slice(constIdx, mainSources.indexOf('\n', constIdx));
     return /\[.*：.*:.*\.\s*\]/.test(timeReLine) &&
-      main.slice(idx).includes('SCHEDULE_TIME_RE_SRC');
+      mainSources.slice(idx).includes('SCHEDULE_TIME_RE_SRC');
   })(),
   'parseScheduleDatetimeMs must accept :, ：, and . as the time separator (e.g. hh.mm.ss) via SCHEDULE_TIME_RE_SRC'
 );
@@ -873,10 +881,10 @@ assert(
 // ず全く別の日時の予定として黙って取り込まれてしまう
 assert(
   (() => {
-    const idx = main.indexOf('function buildValidatedScheduleDateMs(y, mo, dy, h, mi, se) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function buildValidatedScheduleDateMs(y, mo, dy, h, mi, se) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('mo >= 1 && mo <= 12') &&
       body.includes('dy >= 1 && dy <= 31') &&
       body.includes('h >= 0 && h <= 23') &&
@@ -894,11 +902,11 @@ assert(
     // Mdy/Dmy)を呼ぶだけの薄い関数になったため、buildValidatedScheduleDateMsは
     // ヘルパー側で呼ばれる。ヘルパー定義(tryParseScheduleDatetimeYmdの開始)から
     // parseScheduleDatetimeMs自身の終端まで広く見て、経路全体を検証する
-    const startIdx = main.indexOf('function tryParseScheduleDatetimeYmd(combined) {');
-    const idx = main.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr, format) {');
-    const end = main.indexOf('\n}', idx);
+    const startIdx = mainSources.indexOf('function tryParseScheduleDatetimeYmd(combined) {');
+    const idx = mainSources.indexOf('function parseScheduleDatetimeMs(dateStr, timeStr, format) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (startIdx < 0 || idx < 0 || end < idx) return false;
-    const body = main.slice(startIdx, end);
+    const body = mainSources.slice(startIdx, end);
     return !body.includes('new Date(combined)') &&
       body.includes('buildValidatedScheduleDateMs(');
   })(),
@@ -913,11 +921,11 @@ assert(
 // 自プロセスの実際の終了を待ってからインストーラを起動することを保証する
 assert(
   (() => {
-    const idx = main.indexOf('function spawnInstallerAfterOwnExit(installerPath) {');
+    const idx = mainSources.indexOf('function spawnInstallerAfterOwnExit(installerPath) {');
     if (idx < 0) return false;
-    const end = main.indexOf('handleTrusted(\'download-and-install-update\'', idx);
+    const end = mainSources.indexOf('handleTrusted(\'download-and-install-update\'', idx);
     if (end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const waitIdx = body.indexOf('Wait-Process');
     const startIdx = body.indexOf('Start-Process');
     return waitIdx >= 0 && startIdx > waitIdx &&
@@ -928,7 +936,7 @@ assert(
   'spawnInstallerAfterOwnExit must wait for this process to actually exit (Wait-Process on its own PID) before launching the installer'
 );
 assert(
-  !main.includes('setTimeout(() => app.quit(), 500)'),
+  !mainSources.includes('setTimeout(() => app.quit(), 500)'),
   'The updater must not rely on a fixed 500ms delay before quitting; the installer launch must be sequenced after this process actually exits'
 );
 
@@ -975,11 +983,11 @@ assert(
 // 積み上がる退行になる
 assert(
   (() => {
-    const idx = main.indexOf('function isValidApiToken(apiToken) {');
+    const idx = mainSources.indexOf('function isValidApiToken(apiToken) {');
     if (idx < 0) return false;
-    const end = main.indexOf('async function processParentActionRequest', idx);
+    const end = mainSources.indexOf('async function processParentActionRequest', idx);
     if (end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('readDbShared()') && !/const db = readDB\(\)/.test(body);
   })(),
   'isValidApiToken must use the non-cloning readDbShared(), not readDB(), since it never mutates the returned object'
@@ -991,9 +999,9 @@ assert(
 // なる。書き込み系(低頻度・高診断価値)のみログすることを保証する
 assert(
   (() => {
-    const idx = main.indexOf('console.log(`[DB Request]');
+    const idx = mainSources.indexOf('console.log(`[DB Request]');
     if (idx < 0) return false;
-    const before = main.slice(Math.max(0, idx - 120), idx);
+    const before = mainSources.slice(Math.max(0, idx - 120), idx);
     return before.includes("if (method !== 'GET')");
   })(),
   'The [DB Request] log in processDbRequest must be gated to non-GET methods to avoid per-poll logging overhead scaling with connected terminals'
@@ -1156,12 +1164,12 @@ assert(
 // 発生しうる。isExternalを問わず一律拒否することを保証する
 assert(
   (() => {
-    const postIdx = main.indexOf("if (method === 'POST') {");
-    const patchIdx = main.indexOf("if (method === 'PUT' || method === 'PATCH') {", postIdx);
-    const deleteIdx = main.indexOf("if (method === 'DELETE') {", patchIdx);
+    const postIdx = mainSources.indexOf("if (method === 'POST') {");
+    const patchIdx = mainSources.indexOf("if (method === 'PUT' || method === 'PATCH') {", postIdx);
+    const deleteIdx = mainSources.indexOf("if (method === 'DELETE') {", patchIdx);
     if (postIdx < 0 || patchIdx < 0 || deleteIdx < 0) return false;
-    const postBody = main.slice(postIdx, patchIdx);
-    const patchBody = main.slice(patchIdx, deleteIdx);
+    const postBody = mainSources.slice(postIdx, patchIdx);
+    const patchBody = mainSources.slice(patchIdx, deleteIdx);
     const directGuard = /if\s*\(\s*table === 'transfer_events'\s*&&\s*Object\.prototype\.hasOwnProperty\.call\(data, 'current_status'\)\s*\)/;
     const postGuarded = directGuard.test(postBody) &&
       postBody.includes('Use status/update for status changes');
@@ -1182,10 +1190,10 @@ assert(
 // ルールにも合致せず永久に動かせないレコードが作られてしまう
 assert(
   (() => {
-    const idx = main.indexOf('const KNOWN_TRANSFER_STATUSES');
+    const idx = mainSources.indexOf('const KNOWN_TRANSFER_STATUSES');
     if (idx < 0) return false;
-    return main.includes("!KNOWN_TRANSFER_STATUSES.has(data.current_status)") &&
-      main.includes('Invalid current_status');
+    return mainSources.includes("!KNOWN_TRANSFER_STATUSES.has(data.current_status)") &&
+      mainSources.includes('Invalid current_status');
   })(),
   'transfer_events creation via generic POST must validate current_status against KNOWN_TRANSFER_STATUSES'
 );
@@ -1253,8 +1261,8 @@ assert(
 // 集合が完全に一致することを保証する
 assert(
   (() => {
-    const wardActions = extractObjectLiteral(main, 'const WARD_STATUS_ACTIONS = {');
-    const examActions = extractObjectLiteral(main, 'const EXAM_STATUS_ACTIONS = {');
+    const wardActions = extractObjectLiteral(transferStatus, 'const WARD_STATUS_ACTIONS = {');
+    const examActions = extractObjectLiteral(transferStatus, 'const EXAM_STATUS_ACTIONS = {');
     const actionButtons = extractObjectLiteral(config, 'ACTION_BUTTONS: {');
     const examRoomActions = extractObjectLiteral(config, 'EXAM_ROOM_ACTIONS: {');
     const toSets = obj => Object.fromEntries(
@@ -1279,10 +1287,10 @@ assert(
 // 不要。専用APIはexam_room_id/current_statusだけを返し、イベント本体を露出しない。
 assert(
   (() => {
-    const idx = main.indexOf("id === 'exam-room-grid-status'");
-    const end = main.indexOf("id === 'exam-room-status'", idx);
+    const idx = mainSources.indexOf("id === 'exam-room-grid-status'");
+    const end = mainSources.indexOf("id === 'exam-room-status'", idx);
     if (idx < 0 || end < 0) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
       body.includes('exam_room_id: event.exam_room_id') &&
       body.includes('current_status: event.current_status') &&
@@ -1337,28 +1345,28 @@ assert(
 // どれか一つでも完全一致リストへ後退すると、平文のまま保存・配信されてしまう
 assert(
   (() => {
-    const idx = main.indexOf('function isSensitiveSettingId(');
+    const idx = mainSources.indexOf('function isSensitiveSettingId(');
     if (idx < 0) return false;
-    return main.slice(idx, idx + 300).includes('isFeedSmbPasswordSettingId');
+    return mainSources.slice(idx, idx + 300).includes('isFeedSmbPasswordSettingId');
   })(),
   'isSensitiveSettingId must cover feed-scoped SMB password ids so they are encrypted at rest'
 );
 assert(
   (() => {
-    const writeIdx = main.indexOf('const dbForDisk');
-    const writeEnd = main.indexOf('safeWriteFile(DB_FILE', writeIdx);
-    const readIdx = main.indexOf('// センシティブな設定情報の復号化');
+    const writeIdx = mainSources.indexOf('const dbForDisk');
+    const writeEnd = mainSources.indexOf('safeWriteFile(DB_FILE', writeIdx);
+    const readIdx = mainSources.indexOf('// センシティブな設定情報の復号化');
     if (writeIdx < 0 || writeEnd < 0 || readIdx < 0) return false;
-    return main.slice(writeIdx, writeEnd).includes('isSensitiveSettingId(s.id)')
-      && main.slice(readIdx, readIdx + 400).includes('isSensitiveSettingId(s.id)');
+    return mainSources.slice(writeIdx, writeEnd).includes('isSensitiveSettingId(s.id)')
+      && mainSources.slice(readIdx, readIdx + 400).includes('isSensitiveSettingId(s.id)');
   })(),
   'readDB/writeDB must go through isSensitiveSettingId, not the exact-match SENSITIVE_SETTING_IDS list'
 );
 assert(
   (() => {
-    const idx = main.indexOf("if (isExternal && table === 'system_settings')");
+    const idx = mainSources.indexOf("if (isExternal && table === 'system_settings')");
     if (idx < 0) return false;
-    const body = main.slice(idx, idx + 2000);
+    const body = mainSources.slice(idx, idx + 2000);
     return body.includes('isFeedSmbPasswordSettingId')
       && body.includes('isBlockedSecret')
       && body.includes('isWriteBlocked');
@@ -1367,16 +1375,16 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function maskAuditValue(');
-    const end = main.indexOf('function summarizeAuditRecord', idx);
-    return idx >= 0 && end > idx && main.slice(idx, end).includes('isAuditSecretSettingId');
+    const idx = mainSources.indexOf('function maskAuditValue(');
+    const end = mainSources.indexOf('function summarizeAuditRecord', idx);
+    return idx >= 0 && end > idx && mainSources.slice(idx, end).includes('isAuditSecretSettingId');
   })(),
   'Audit masking must redact feed-scoped SMB passwords via isAuditSecretSettingId'
 );
 assert(
   (() => {
-    const idx = main.indexOf('function redactCredentials(');
-    return idx >= 0 && main.slice(idx, main.indexOf('\n}', idx)).includes('isExportRedactedSettingId');
+    const idx = mainSources.indexOf('function redactCredentials(');
+    return idx >= 0 && mainSources.slice(idx, mainSources.indexOf('\n}', idx)).includes('isExportRedactedSettingId');
   })(),
   'Redacted backups must strip feed-scoped SMB passwords via isExportRedactedSettingId'
 );
@@ -1384,19 +1392,19 @@ assert(
 // マスク文字列が実パスワードを上書きしてしまう(過去に実在した不具合)
 assert(
   (() => {
-    const idx = main.indexOf('function saveImportSettingsOnParent(');
-    const end = main.indexOf('\n}', idx);
-    return idx >= 0 && end > idx && main.slice(idx, end).includes('MASKED_SECRET_VALUE');
+    const idx = mainSources.indexOf('function saveImportSettingsOnParent(');
+    const end = mainSources.indexOf('\n}', idx);
+    return idx >= 0 && end > idx && mainSources.slice(idx, end).includes('MASKED_SECRET_VALUE');
   })(),
   'save-import-settings must ignore masked secret placeholders instead of storing them over the real password'
 );
 // UNC監視先のスケジュールフィードは認証しないと fs.existsSync で失敗し続ける
 assert(
   (() => {
-    const idx = main.indexOf('function setupScheduleFeedTriggers()');
-    const end = main.indexOf('function scanAndImportScheduleFolder', idx);
+    const idx = mainSources.indexOf('function setupScheduleFeedTriggers()');
+    const end = mainSources.indexOf('function scanAndImportScheduleFolder', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('authenticateSMBSync') && body.includes('readFeedSmbCredentials')
       && body.includes('pruneUnusedSmbSessions');
   })(),
@@ -1406,10 +1414,10 @@ assert(
 // イベントが二度と来ない無言故障になる。同一資格情報での再接続は行わないこと
 assert(
   (() => {
-    const idx = main.indexOf('function authenticateSMBSync(');
-    const end = main.indexOf('\n}', main.indexOf("'/persistent:no'", idx));
+    const idx = mainSources.indexOf('function authenticateSMBSync(');
+    const end = mainSources.indexOf('\n}', mainSources.indexOf("'/persistent:no'", idx));
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('smbSessionRegistry.plan')
       && body.includes("planned.action === 'skip'")
       && body.includes("planned.action === 'conflict'")
@@ -1425,9 +1433,9 @@ assert(
 // フィードを削除したら資格情報も残さない
 assert(
   (() => {
-    const idx = main.indexOf("if (table === 'schedule_feeds')");
+    const idx = mainSources.indexOf("if (table === 'schedule_feeds')");
     if (idx < 0) return false;
-    return main.slice(idx, idx + 400).includes('feedSmbPasswordSettingId');
+    return mainSources.slice(idx, idx + 400).includes('feedSmbPasswordSettingId');
   })(),
   'Deleting a schedule feed must also drop its stored SMB password setting'
 );
@@ -1438,10 +1446,10 @@ assert(
 // 先に消してしまう（親機が永久に取り込めなくなる無言のデータ損失）
 assert(
   (() => {
-    const idx = main.indexOf('function setupImportTrigger()');
-    const end = main.indexOf('\nfunction ', idx + 10);
+    const idx = mainSources.indexOf('function setupImportTrigger()');
+    const end = mainSources.indexOf('\nfunction ', idx + 10);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     // 停止処理より後、監視を張る前にガードがあること
     return body.includes('isClientTerminal(db)')
       && body.indexOf('isClientTerminal(db)') < body.indexOf('resolveWatchDir()');
@@ -1450,10 +1458,10 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function setupScheduleFeedTriggers()');
-    const end = main.indexOf('function scanAndImportScheduleFolder', idx);
+    const idx = mainSources.indexOf('function setupScheduleFeedTriggers()');
+    const end = mainSources.indexOf('function scanAndImportScheduleFolder', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('isClientTerminal(db)')
       && body.indexOf('isClientTerminal(db)') < body.indexOf('feeds.forEach');
   })(),
@@ -1504,7 +1512,7 @@ assert(
 );
 // B-3: 再起動を断られても3005が生き続けると、子機として振る舞いながら配信を続ける
 assert(
-  main.includes('function stopParentServer()') && main.includes("handleTrusted('stop-parent-server'"),
+  mainSources.includes('function stopParentServer()') && mainSources.includes("handleTrusted('stop-parent-server'"),
   'There must be a way to stop the parent HTTP server without a restart'
 );
 assert(
@@ -1514,10 +1522,10 @@ assert(
 // B-4: メインプロセスはlocalStorageを触れないため、復元後の役割をrendererへ返す
 assert(
   (() => {
-    const idx = main.indexOf("handleTrusted('restore-db'");
-    const end = main.indexOf("handleTrusted('get-local-ips'", idx);
+    const idx = mainSources.indexOf("handleTrusted('restore-db'");
+    const end = mainSources.indexOf("handleTrusted('get-local-ips'", idx);
     return idx >= 0 && end > idx
-      && main.slice(idx, end).includes('return { success: true, shareMode: restoredShareMode, parentIp: restoredParentIp };');
+      && mainSources.slice(idx, end).includes('return { success: true, shareMode: restoredShareMode, parentIp: restoredParentIp };');
   })(),
   'restore-db must report the restored role so the renderer can sync localStorage before relaunching'
 );
@@ -1527,16 +1535,16 @@ assert(
 );
 // B-5: 別マシンが親機になっても子機は無警告で追従してしまう
 assert(
-  main.includes('function ensureParentInstanceId()') && app.includes('_checkParentIdentity('),
+  mainSources.includes('function ensureParentInstanceId()') && app.includes('_checkParentIdentity('),
   'Children must be able to notice that the parent they talk to has been replaced'
 );
 // C-1: 子機の指定した任意のUNCパスへ親機が保存済み資格情報で net use しに行かないこと
 assert(
   (() => {
-    const idx = main.indexOf('function validateWatchDirectoryOnParent(');
-    const end = main.indexOf('function updateWatchDirectoryOnParent(', idx);
+    const idx = mainSources.indexOf('function validateWatchDirectoryOnParent(');
+    const end = mainSources.indexOf('function updateWatchDirectoryOnParent(', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('isExternal')
       && body.includes('getConfiguredSmbServerKeys')
       && body.indexOf('getConfiguredSmbServerKeys') < body.indexOf('authenticateSMBSync(resolved)');
@@ -1546,19 +1554,19 @@ assert(
 // C-2: 他のODBC操作と同じくDSN必須。無いと任意ホストへ接続させられる
 assert(
   (() => {
-    const idx = main.indexOf('async function getOdbcTablesOnParent(');
-    const end = main.indexOf('execOdbcPowerShell', idx);
-    return idx >= 0 && end > idx && main.slice(idx, end).includes("includes('DSN=')");
+    const idx = mainSources.indexOf('async function getOdbcTablesOnParent(');
+    const end = mainSources.indexOf('execOdbcPowerShell', idx);
+    return idx >= 0 && end > idx && mainSources.slice(idx, end).includes("includes('DSN=')");
   })(),
   'getOdbcTablesOnParent must require a DSN like the other ODBC actions do'
 );
 // C-3: 共有トークンしかないため、HTTP経由では他端末になりすまして切断できてしまう
 assert(
   (() => {
-    const idx = main.indexOf("} else if (cleanUrl.startsWith('device/')) {");
-    const end = main.indexOf('Unknown device action', idx);
+    const idx = mainSources.indexOf("} else if (cleanUrl.startsWith('device/')) {");
+    const end = mainSources.indexOf('Unknown device action', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes("action === 'disconnect'") && !body.includes('delete connectedDevices[info.deviceId]');
   })(),
   'device/disconnect must not be reachable over HTTP (any child could evict any other terminal)'
@@ -1699,19 +1707,19 @@ assert(
 // patient_id_scan_modeが'barcode'のときは起動してはならない
 // (バーコードスキャナーはキーボード入力型のためカード監視自体が不要)。
 assert(
-  main.includes("function isNfcWatcherEnabled(db)") &&
+  mainSources.includes("function isNfcWatcherEnabled(db)") &&
   (() => {
-    const idx = main.indexOf('function isNfcWatcherEnabled(db) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function isNfcWatcherEnabled(db) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes("'patient_id_scan_mode'") && body.includes("scanMode !== 'barcode'");
   })(),
   'isNfcWatcherEnabled must gate the NFC watcher on patient_id_scan_mode !== "barcode"'
 );
 assert(
-  main.includes('isNfcWatcherEnabled(db)') &&
-  (main.match(/isNfcWatcherEnabled\(/g) || []).length >= 3,
+  mainSources.includes('isNfcWatcherEnabled(db)') &&
+  (mainSources.match(/isNfcWatcherEnabled\(/g) || []).length >= 3,
   'startup and restart-scheduling NFC watcher checks must both use isNfcWatcherEnabled (not a raw enable_patient_ic_association check)'
 );
 
@@ -1805,10 +1813,10 @@ assert(
 // 常に空表示になる)
 assert(
   (() => {
-    const idx = main.indexOf("id === 'exam-room-status'");
-    const end = main.indexOf('\n    }', idx);
+    const idx = mainSources.indexOf("id === 'exam-room-status'");
+    const end = mainSources.indexOf('\n    }', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('examRoomId') && body.includes('!!event.exam_room_id');
   })(),
   'exam-room-status handler must fall back to all rooms with an assigned exam_room_id when examRoomId is empty'
@@ -1843,10 +1851,10 @@ assert(
 // 将来の呼び出し元で監視が古いまま取り残される静かな不整合を生む
 assert(
   (() => {
-    const idx = main.indexOf('function saveImportSettingsOnParent(');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function saveImportSettingsOnParent(');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const writeIdx = body.indexOf('writeDB(db)');
     const setupIdx = body.indexOf('setupImportTrigger();', writeIdx);
     if (writeIdx < 0 || setupIdx < 0) return false;
@@ -1920,10 +1928,10 @@ assert(
 // 移動に時間がかかった移送ほど「検査終了の目安」が実際より早い側にずれ続ける。
 assert(
   (() => {
-    const idx = main.indexOf("if (newStatus === 'IN_EXAM') {");
-    const nearlyIdx = main.indexOf("if (newStatus === 'NEARLY_DONE') {");
+    const idx = mainSources.indexOf("if (newStatus === 'IN_EXAM') {");
+    const nearlyIdx = mainSources.indexOf("if (newStatus === 'NEARLY_DONE') {");
     if (idx < 0 || nearlyIdx < 0 || nearlyIdx <= idx) return false;
-    const body = main.slice(idx, nearlyIdx);
+    const body = mainSources.slice(idx, nearlyIdx);
     return body.includes('current.expected_duration_min') &&
       body.includes('patch.estimated_pickup_at = now +');
   })(),
@@ -1939,15 +1947,15 @@ assert(
 // 運用者が複数ファイルを同時投入等)、後から処理されたファイルが先に処理された
 // ファイル分の予定を消してしまう
 assert(
-  !main.includes('importScheduleFeedCSV'),
+  !mainSources.includes('importScheduleFeedCSV'),
   'the standalone importScheduleFeedCSV(filePath, feed) helper (single-file replace-then-insert) must not exist any more; the realtime add handler must route through scanAndImportScheduleFolder so multiple CSVs in one watch folder are committed together, not one file at a time'
 );
 assert(
   (() => {
-    const idx = main.indexOf("watcher.on('add', filePath => {");
-    const end = main.indexOf('\n      });', idx);
+    const idx = mainSources.indexOf("watcher.on('add', filePath => {");
+    const end = mainSources.indexOf('\n      });', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('scheduleFeedRealtimeDebounceTimers') &&
       body.includes('setTimeout(') &&
       body.includes('scanAndImportScheduleFolder(watchDir, feed)');
@@ -1961,10 +1969,10 @@ assert(
 // と表示された直後にまだ反映されていないことがある
 assert(
   (() => {
-    const idx = main.indexOf('async function triggerScheduleFeedImportOnParent(feedId) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('async function triggerScheduleFeedImportOnParent(feedId) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('await scanAndImportScheduleFolder(') &&
       body.includes('result.success');
   })(),
@@ -1975,12 +1983,12 @@ assert(
 // awaitされる前提のため、コールバックベースのfs.readdirのままでは
 // 呼び出し元が完了を待てない
 assert(
-  main.includes('async function scanAndImportScheduleFolder(watchDir, feed) {') &&
+  mainSources.includes('async function scanAndImportScheduleFolder(watchDir, feed) {') &&
   (() => {
-    const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('await fs.promises.readdir(watchDir)');
   })(),
   'scanAndImportScheduleFolder must be async and await fs.promises.readdir, or its caller cannot await actual completion'
@@ -2097,10 +2105,10 @@ assert(
 // サーバー側で黙って落とされる
 assert(
   (() => {
-    const idx = main.indexOf('function sanitizeStatusExtraFields');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function sanitizeStatusExtraFields');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes("'pickup_assistance_type_id'") && body.includes("'pickup_assistance_note'");
   })(),
   'sanitizeStatusExtraFields must allow pickup_assistance_type_id and pickup_assistance_note, or the pickup-assistance selection made at the exam room is silently discarded on save'
@@ -2111,17 +2119,17 @@ assert(
 // 登録されていないと、設定画面のマスター管理が保存できない/衝突検知が働かない
 assert(
   (() => {
-    const idx = main.indexOf('const ALLOWED_TABLES = new Set([');
-    const end = main.indexOf(']);', idx);
-    return idx >= 0 && end > idx && main.slice(idx, end).includes("'pickup_assistance_types'");
+    const idx = mainSources.indexOf('const ALLOWED_TABLES = new Set([');
+    const end = mainSources.indexOf(']);', idx);
+    return idx >= 0 && end > idx && mainSources.slice(idx, end).includes("'pickup_assistance_types'");
   })(),
   'ALLOWED_TABLES must include pickup_assistance_types, or the master management screen cannot save via the generic table CRUD'
 );
 assert(
   (() => {
-    const idx = main.indexOf('const MASTER_REVISION_TABLES = new Set([');
-    const end = main.indexOf(']);', idx);
-    return idx >= 0 && end > idx && main.slice(idx, end).includes("'pickup_assistance_types'");
+    const idx = mainSources.indexOf('const MASTER_REVISION_TABLES = new Set([');
+    const end = mainSources.indexOf(']);', idx);
+    return idx >= 0 && end > idx && mainSources.slice(idx, end).includes("'pickup_assistance_types'");
   })(),
   'MASTER_REVISION_TABLES must include pickup_assistance_types, or concurrent edits from multiple terminals silently overwrite each other'
 );
@@ -2253,7 +2261,7 @@ assert(
 // 画面が実務端末として使われている場合に他の子機から見えるようにするため)
 assert(
   api.includes("window.electronAPI.dbRequest({ url: 'device/heartbeat'") &&
-  main.includes("if (url === 'device/heartbeat') {"),
+  mainSources.includes("if (url === 'device/heartbeat') {"),
   'both API.deviceHeartbeat (client) and the local db-request handler (main.js) must support a device/heartbeat path for the parent terminal itself, or the parent can never appear in another terminal\'s presence list'
 );
 
@@ -2261,8 +2269,8 @@ assert(
 // 送信側は「接続中」と表示し続けるのに、実際はレジストリへ書き込まれておらず
 // 他端末からは永久に見えなくなるという、気付けない障害だった
 assert(
-  main.includes('function applyHeartbeat(info, ip) {') &&
-  main.includes("if (!sanitizedInfo) return { success: false, message: 'Invalid device heartbeat payload' };"),
+  mainSources.includes('function applyHeartbeat(info, ip) {') &&
+  mainSources.includes("if (!sanitizedInfo) return { success: false, message: 'Invalid device heartbeat payload' };"),
   'applyHeartbeat must return success:false for an invalid payload instead of unconditionally acking, or a corrupted device id becomes a silent, undetectable presence outage'
 );
 assert(
@@ -2273,7 +2281,7 @@ assert(
 // deviceIdの長さ上限はMAX_DEVICE_ID_LENGTH(64)文字ちょうどまで許可しなければ
 // ならない(以前は>=で63文字が実質上限というオフバイワンだった)
 assert(
-  main.includes('if (!deviceId || deviceId.length > MAX_DEVICE_ID_LENGTH) return null;'),
+  mainSources.includes('if (!deviceId || deviceId.length > MAX_DEVICE_ID_LENGTH) return null;'),
   'sanitizeHeartbeatInfo must reject only ids longer than MAX_DEVICE_ID_LENGTH (using >), not >=, or the documented 64-char max is actually enforced as 63'
 );
 
@@ -2304,7 +2312,7 @@ assert(
 // ならない。各端末が自分の時計で計算し直すと、端末間の時計のずれがそのまま
 // 誤った「応答なし」表示(またはその見逃し)につながる
 assert(
-  main.includes('.map(d => ({ ...d, secondsAgo: Math.max(0, Math.floor((now - d.lastSeen) / 1000)) }));'),
+  mainSources.includes('.map(d => ({ ...d, secondsAgo: Math.max(0, Math.floor((now - d.lastSeen) / 1000)) }));'),
   'getActiveDevices must attach a server-computed secondsAgo to each device, or every viewer recomputes elapsed time from its own (possibly skewed) clock'
 );
 assert(
@@ -2350,10 +2358,10 @@ assert(
 // 集計(全ファイルの合計)とDBの実際の中身(最後のファイル分のみ)が食い違う
 assert(
   (() => {
-    const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('const parsedFiles = []') &&
       body.includes('commitScheduleFeedImport(feed, parsedFiles)');
   })(),
@@ -2361,10 +2369,10 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('const allItems = succeeded.flatMap(p => p.items)') &&
       body.includes('db.schedule_items.push(...allItems)') &&
       body.indexOf("db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id)") ===
@@ -2378,10 +2386,10 @@ assert(
 // ファイル削除等が誰にも気づかれない)。記録した上で処理を継続しなければならない
 assert(
   (() => {
-    const idx = main.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
-    const end = main.indexOf('const parsedFiles = []', idx);
+    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const end = mainSources.indexOf('const parsedFiles = []', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('fileErrors.push(') && body.includes('console.warn(') && !/catch \(e\) \{\}/.test(body);
   })(),
   'scanAndImportScheduleFolder must record per-file stat errors (fileErrors + console.warn) instead of silently swallowing them with an empty catch block'
@@ -2392,12 +2400,12 @@ assert(
 // トグルとは別に、期待状態を明示的に指定できるIPCブリッジが要る
 // (ビデオ通話の全画面ボタンは「必ずこの状態にしたい」を指定する)
 assert(
-  main.includes("handleTrusted('set-fullscreen', (event, value) => {") &&
-  main.includes('mainWindow.setFullScreen(Boolean(value));'),
+  mainSources.includes("handleTrusted('set-fullscreen', (event, value) => {") &&
+  mainSources.includes('mainWindow.setFullScreen(Boolean(value));'),
   'main.js must expose a set-fullscreen IPC handler that calls BrowserWindow.setFullScreen() with an explicit desired state, separate from the existing toggle'
 );
 assert(
-  main.includes("handleTrusted('is-fullscreen'"),
+  mainSources.includes("handleTrusted('is-fullscreen'"),
   'main.js must expose an is-fullscreen IPC handler so a dialog opened while already fullscreen can sync its initial button state'
 );
 assert(
@@ -2655,10 +2663,10 @@ assert(
 // 続けてインターバル/時刻指定モードで同じCSVを繰り返し取り込んでしまう
 assert(
   (() => {
-    const idx = main.indexOf('function archiveScheduleFeedFile(filePath, feed, policy) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function archiveScheduleFeedFile(filePath, feed, policy) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     const deleteCatchIdx = body.indexOf("if (policy.action === 'delete') {");
     if (deleteCatchIdx < 0) return false;
     const afterDelete = body.slice(deleteCatchIdx);
@@ -2671,10 +2679,10 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function commitScheduleFeedImport(feed, parsedFiles)');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('archiveResult.success === false') &&
       body.includes('archiveWarning') &&
       body.includes("return { success: true, importedCount: allItems.length, message: null, archiveWarning };");
@@ -2682,7 +2690,7 @@ assert(
   'commitScheduleFeedImport must collect archiveScheduleFeedFile failures into an archiveWarning and return it (success stays true since the DB write itself succeeded), or a failed post-import archive/delete is silently dropped instead of being reported as a partial success'
 );
 assert(
-  !main.includes("retention_policy || { action: 'archive', retentionDays: '30' }"),
+  !mainSources.includes("retention_policy || { action: 'archive', retentionDays: '30' }"),
   "commitScheduleFeedImport's retention policy default must not claim a retentionDays that archiveScheduleFeedFile never reads and the per-feed settings form never saves, or the unused default misleadingly implies archived CSVs are pruned when they in fact accumulate indefinitely"
 );
 assert(
@@ -2846,10 +2854,10 @@ assert(
 // パネルに何もアナウンスが出なくなる。to_id一致(受信)だけを対象にすることも保証する
 assert(
   (() => {
-    const idx = main.indexOf("id === 'ward-status'");
-    const end = main.indexOf("\n    }", idx);
+    const idx = mainSources.indexOf("id === 'ward-status'");
+    const end = mainSources.indexOf("\n    }", idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes("m.kind === 'announce' && m.to_id === wardId") &&
       body.includes('recentAnnouncements');
   })(),
@@ -2857,10 +2865,10 @@ assert(
 );
 assert(
   (() => {
-    const idx = main.indexOf("id === 'exam-room-status'");
-    const end = main.indexOf("\n    }", idx);
+    const idx = mainSources.indexOf("id === 'exam-room-status'");
+    const end = mainSources.indexOf("\n    }", idx);
     if (idx < 0 || end < idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes("m.kind === 'announce' && m.to_id === examRoomId") &&
       body.includes('recentAnnouncements');
   })(),
@@ -2925,10 +2933,10 @@ assert(
 // 再発する(以前の不具合)
 assert(
   (() => {
-    const idx = main.indexOf('function parseScheduleFeedCsvFile(filePath, feed) {');
-    const end = main.indexOf('resolve({ success: true, items, rowCount: rows.length', idx);
+    const idx = mainSources.indexOf('function parseScheduleFeedCsvFile(filePath, feed) {');
+    const end = mainSources.indexOf('resolve({ success: true, items, rowCount: rows.length', idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('new RegExp(SCHEDULE_TIME_RE_SRC).test(String(timeSource))') &&
       body.includes('has_time: hasTime');
   })(),
@@ -2982,10 +2990,10 @@ assert(
 // 常に非表示のまま(判定不能)になってしまう
 assert(
   (() => {
-    const idx = main.indexOf('function readScheduleCsvHeaders(');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function readScheduleCsvHeaders(');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('sampleRow') &&
       /return\s*\{\s*success:\s*true,\s*ok:\s*true,\s*headers,\s*filename:\s*files\[0\],\s*encoding,\s*sampleRow\s*\}/.test(body);
   })(),
@@ -2993,21 +3001,21 @@ assert(
 );
 // IPCハンドラと子機用アクション分岐の両方が存在すること
 assert(
-  main.includes("handleTrusted('preview-schedule-datetime', async (event, request) => {"),
+  mainSources.includes("handleTrusted('preview-schedule-datetime', async (event, request) => {"),
   'BUG: main.jsにpreview-schedule-datetimeのIPCハンドラが見つかりません。親機での設定画面プレビューが機能しません'
 );
 assert(
-  main.includes("case 'schedule-feed-datetime-preview':"),
+  mainSources.includes("case 'schedule-feed-datetime-preview':"),
   'BUG: main.jsに子機用アクション分岐schedule-feed-datetime-previewが見つかりません。子機での設定画面プレビューが機能しません'
 );
 // 高頻度呼び出し(入力のたびに走る純粋計算)のため、schedule-feed-headersとは
 // 異なりappendParentActionAuditを経由しない意図的な設計であることを確認する
 assert(
   (() => {
-    const idx = main.indexOf("case 'schedule-feed-datetime-preview':");
-    const end = main.indexOf('case ', idx + 1);
+    const idx = mainSources.indexOf("case 'schedule-feed-datetime-preview':");
+    const end = mainSources.indexOf('case ', idx + 1);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('return previewScheduleDatetime(') && !body.includes('appendParentActionAudit(');
   })(),
   'BUG: main.jsのschedule-feed-datetime-previewがappendParentActionAuditを経由しています。高頻度の純粋計算のはずが、キー入力のたびに監査ログへ書き込んでしまいます'
@@ -3037,10 +3045,10 @@ assert(
 // 反映されず、実際の取り込み結果と食い違って見える
 assert(
   (() => {
-    const idx = main.indexOf('function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat) {');
-    const end = main.indexOf('\n}', idx);
+    const idx = mainSources.indexOf('function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat) {');
+    const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('parseScheduleDatetimeMs(dateVal, timeVal, dateFormat)');
   })(),
   'BUG: main.jsのpreviewScheduleDatetimeがdateFormatをparseScheduleDatetimeMsへ渡していません'
@@ -3051,10 +3059,10 @@ assert(
 // 無視され、自動判定のみで処理されてしまう(プレビューとの結果不一致)
 assert(
   (() => {
-    const idx = main.indexOf('function parseScheduleFeedCsvFile(filePath, feed) {');
-    const end = main.indexOf('function ', idx + 1);
+    const idx = mainSources.indexOf('function parseScheduleFeedCsvFile(filePath, feed) {');
+    const end = mainSources.indexOf('function ', idx + 1);
     if (idx < 0 || end < 0 || end <= idx) return false;
-    const body = main.slice(idx, end);
+    const body = mainSources.slice(idx, end);
     return body.includes('parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal, mapping.date_format)');
   })(),
   'BUG: main.jsのparseScheduleFeedCsvFileがfeed.mapping.date_formatをparseScheduleDatetimeMsへ渡していません'
@@ -3062,12 +3070,12 @@ assert(
 
 // IPCハンドラ・子機用アクション分岐の両方がdateFormatを転送していること
 assert(
-  main.includes('const { sampleRow, mode, dateCol, timeCol, dateFormat } = request || {};') &&
-    main.includes('return previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat);'),
+  mainSources.includes('const { sampleRow, mode, dateCol, timeCol, dateFormat } = request || {};') &&
+    mainSources.includes('return previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat);'),
   'BUG: main.jsのpreview-schedule-datetime IPCハンドラがdateFormatを転送していません'
 );
 assert(
-  main.includes('return previewScheduleDatetime(payload?.sampleRow, payload?.mode, payload?.dateCol, payload?.timeCol, payload?.dateFormat);'),
+  mainSources.includes('return previewScheduleDatetime(payload?.sampleRow, payload?.mode, payload?.dateCol, payload?.timeCol, payload?.dateFormat);'),
   'BUG: main.jsのschedule-feed-datetime-preview子機アクション分岐がdateFormatを転送していません'
 );
 
