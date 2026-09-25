@@ -11,6 +11,15 @@ const ExamRoom = {
   _roomGridStatusCache: [],
   _viewAllRoomsPatients: false,
 
+  // キュー本体(サマリー・カード一覧)の再構築省略に使う前回描画状態。
+  // 検査室端末はこの画面に24時間固定表示され、5秒ごとのポーリング・30秒ごとの
+  // マスタ再同期の両方から_renderQueue()が呼ばれ続けるため、データが変化して
+  // いなければ再構築を省略する(js/app.jsのWardDashboard.renderIfChangedと同じ考え方)
+  _lastQueueRoomKey: null,
+  _lastQueueSignature: null,
+  _lastQueueRenderAt: 0,
+  FULL_RENDER_FALLBACK_MS: 25000,
+
   async render() {
     // 検査室セレクト初期化
     const select = document.getElementById('exam-room-select');
@@ -486,17 +495,30 @@ const ExamRoom = {
           this._updateScanInputState();
         });
       });
+      // グリッド表示に戻ったら、次に検査室を選び直したときに必ずキューを
+      // 再構築できるよう、再構築省略に使う前回描画状態をリセットする
+      this._lastQueueRoomKey = null;
+      this._lastQueueSignature = null;
       return;
     }
 
-    container.innerHTML = UI.loadingSpinnerHtml();
-    if (historyArea) historyArea.hidden = false;
-    if (historyList) historyList.innerHTML = UI.loadingSpinnerHtml();
+    // 新規に検査室を選んだ/全患者表示に切り替えた場合だけローディング表示を
+    // 挟む。同じ対象へのポーリングでの再取得(値が変わらないことが多い)では
+    // 直前の表示をそのまま維持し、スピナーの点滅を避ける
+    const queueKey = showingAllRooms ? '__all__' : roomId;
+    const isFreshSelection = queueKey !== this._lastQueueRoomKey;
+    if (isFreshSelection) {
+      container.innerHTML = UI.loadingSpinnerHtml();
+      if (historyArea) historyArea.hidden = false;
+      if (historyList) historyList.innerHTML = UI.loadingSpinnerHtml();
+    }
 
     try {
       const { events, recentStatusLogs, recentAnnouncements } = await API.getExamRoomStatus(roomId);
       const relevant = events.filter(e => CONFIG.ACTIVE_STATUSES.includes(e.current_status));
       this._eventWardById = new Map(relevant.map(event => [String(event.id), String(event.ward_id || '')]));
+      // 病棟の確認状態通知(トースト)は表示中の内容と無関係に、ポーリングの
+      // たびに必ず判定する(ここを省略すると確認通知が届かなくなる)
       this._notifyWardAcknowledgementChanges(relevant);
       this._renderNotificationHistory(recentStatusLogs, recentAnnouncements);
 
@@ -507,6 +529,23 @@ const ExamRoom = {
       } else {
         container.classList.add('hide-patient-names');
       }
+
+      // キュー本体(サマリー・カード一覧)のDOM再構築は、対象・表示中の
+      // 患者一覧が前回描画時から変化していなければ省略する。ただし
+      // 「経過時間」表示が古いまま固まらないよう、一定時間ごとには
+      // 強制的に再構築する(WardDashboard.renderIfChangedと同じ考え方)
+      const queueSignature = JSON.stringify([queueKey, relevant]);
+      const now = Date.now();
+      if (
+        !isFreshSelection &&
+        queueSignature === this._lastQueueSignature &&
+        (now - this._lastQueueRenderAt) < this.FULL_RENDER_FALLBACK_MS
+      ) {
+        return;
+      }
+      this._lastQueueRoomKey = queueKey;
+      this._lastQueueSignature = queueSignature;
+      this._lastQueueRenderAt = now;
 
       if (relevant.length === 0) {
         if (summaryContainer) {
