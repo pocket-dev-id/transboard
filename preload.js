@@ -1,20 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+function subscribe(channel, callback) {
+  const listener = (_event, value) => callback(value);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
-  // メインプロセスからのデータ受信イベントハンドラを登録
-  onDataImported: (callback) => {
-    ipcRenderer.removeAllListeners('data-imported');
-    ipcRenderer.on('data-imported', (event, value) => callback(value));
-  },
-  onDataImportFailed: (callback) => {
-    ipcRenderer.removeAllListeners('data-import-failed');
-    ipcRenderer.on('data-import-failed', (event, value) => callback(value));
-  },
+  // メインプロセスからのデータ受信イベントハンドラを登録。
+  // 解除関数を返す。removeAllListeners だと後から付けた購読まで消える。
+  onDataImported: (callback) => subscribe('data-imported', callback),
+  onDataImportFailed: (callback) => subscribe('data-import-failed', callback),
   completeDataImport: (payload) => ipcRenderer.invoke('complete-data-import', payload),
-  onArchiveError: (callback) => {
-    ipcRenderer.removeAllListeners('archive-error');
-    ipcRenderer.on('archive-error', (event, value) => callback(value));
-  },
+  onArchiveError: (callback) => subscribe('archive-error', callback),
   
   // 監視フォルダパスの取得
   getWatchDirectory: () => ipcRenderer.invoke('get-watch-directory'),
@@ -82,10 +80,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportDiagnosticsBundle: () => ipcRenderer.invoke('export-diagnostics-bundle'),
 
   // NFC カードスキャン
-  onCardScanned: (callback) => {
-    ipcRenderer.removeAllListeners('card-scanned');
-    ipcRenderer.on('card-scanned', (event, uid) => callback(uid));
-  },
+  onCardScanned: (callback) => subscribe('card-scanned', callback),
 
   // アプリバージョン取得
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
@@ -116,10 +111,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setStartupSetting: (settings) => ipcRenderer.invoke('set-startup-setting', settings),
 
   // 汎用スケジュール取り込み
-  onScheduleImported: (callback) => {
-    ipcRenderer.removeAllListeners('schedule-imported');
-    ipcRenderer.on('schedule-imported', (event, value) => callback(value));
-  },
+  onScheduleImported: (callback) => subscribe('schedule-imported', callback),
   triggerScheduleFeedImport: (feedId) => ipcRenderer.invoke('trigger-schedule-feed-import', feedId),
   reloadScheduleFeedTriggers: () => ipcRenderer.invoke('reload-schedule-feed-triggers'),
 

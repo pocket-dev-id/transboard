@@ -58,6 +58,7 @@ function extractObjectLiteral(src, marker) {
 }
 
 const main = read('main.js');
+const parentHttp = read('main-modules/parent-http.js');
 const config = read('js/config.js');
 const indexHtml = read('index.html');
 const api = read('js/api.js');
@@ -566,10 +567,10 @@ assert(
 // このリクエストのたびにDB全体をディープコピーすることになる
 assert(
   (() => {
-    const idx = main.indexOf('function normalizeParentHttpRequest(');
-    const end = main.indexOf('\n}', idx);
+    const idx = parentHttp.indexOf('function normalizeParentHttpRequest(');
+    const end = parentHttp.indexOf('\n}', idx);
     if (idx < 0 || end < 0) return false;
-    const body = main.slice(idx, end);
+    const body = parentHttp.slice(idx, end);
     return body.includes('const db = readDbShared();') && !body.includes('const db = readDB();');
   })(),
   'normalizeParentHttpRequest must use readDbShared() (no full-DB clone) since it only reads share_mode/parent_ip on every parent-relayed request'
@@ -2418,6 +2419,22 @@ assert(
     return body.includes('ipcRenderer.on(') && /return \(\) => /.test(body);
   })(),
   'preload.js onFullscreenChanged must return an unsubscribe function, or per-dialog subscribers (video call) cannot clean up their own listener independently on call end'
+);
+for (const channel of ['data-imported', 'data-import-failed', 'archive-error', 'card-scanned', 'schedule-imported']) {
+  assert(
+    !preload.includes(`ipcRenderer.removeAllListeners('${channel}')`),
+    `preload.js must not removeAllListeners('${channel}'), or a later subscriber silently drops the earlier one`
+  );
+}
+assert(
+  preload.includes('function subscribe(channel, callback)') &&
+  preload.includes('ipcRenderer.removeListener(channel, listener)'),
+  'preload.js subscribe() must remove only the listener it added'
+);
+assert(
+  app.includes("if (typeof this._unbindCardScan === 'function') this._unbindCardScan();") &&
+  app.includes('this._clearImportIpcListeners();'),
+  'js/app.js must unsubscribe import and card-scan listeners before registering them again'
 );
 
 // js/call.jsはビデオ通話の全画面表示にHTML要素のFullscreen APIを使っては
