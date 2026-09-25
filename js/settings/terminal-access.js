@@ -18,7 +18,7 @@ Object.assign(Settings, {
     const alwaysOnTop = localStorage.getItem('cfg_always_on_top') === 'true';
     const deviceName = localStorage.getItem('_device_name') || '';
     const isElectron = !!window.electronAPI;
-    const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const currentMode = readLocalShareMode();
     const terminalRole = localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward';
 
     body.innerHTML = `
@@ -116,7 +116,7 @@ Object.assign(Settings, {
         </div>
         <p class="settings-hint" style="margin-top:10px;">
           <i class="fas fa-info-circle"></i>
-          端末動作の切り替えはこの端末だけに保存されます。稼働モード: ${currentMode === 'parent' ? '親機' : '子機'}
+          端末動作の切り替えはこの端末だけに保存されます。稼働モード: ${currentMode === 'parent' ? '親機' : currentMode === 'client' ? '子機' : '未設定'}
         </p>
       </div>
     `;

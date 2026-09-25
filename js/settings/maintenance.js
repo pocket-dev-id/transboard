@@ -15,7 +15,8 @@ Object.assign(Settings, {
   },
 
   async _renderMaintenanceSettings(body) {
-    const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const currentMode = readLocalShareMode();
+    const modeLabel = currentMode === 'parent' ? '親機' : currentMode === 'client' ? '子機' : '未設定';
 
     const storageInfo = window.electronAPI && window.electronAPI.getDatabaseStorageInfo
       ? await window.electronAPI.getDatabaseStorageInfo()
@@ -41,7 +42,7 @@ Object.assign(Settings, {
         </div>
         <div class="maint-info-grid">
           <div class="maint-info-item"><span class="maint-info-label">バージョン</span><span class="maint-info-value">v${AppState.appVersion || '-'}</span></div>
-          <div class="maint-info-item"><span class="maint-info-label">稼働モード</span><span class="maint-info-value">${currentMode === 'parent' ? '親機' : '子機'}</span></div>
+          <div class="maint-info-item"><span class="maint-info-label">稼働モード</span><span class="maint-info-value">${modeLabel}</span></div>
           ${dbInfo ? `
           <div class="maint-info-item"><span class="maint-info-label">DBファイルサイズ</span><span class="maint-info-value">${this._formatBytes(dbInfo.fileSizeBytes)}</span></div>
           <div class="maint-info-item"><span class="maint-info-label">移送履歴件数</span><span class="maint-info-value">${dbInfo.counts.transfer_events}件</span></div>

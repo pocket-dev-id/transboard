@@ -13,7 +13,7 @@ Object.assign(Settings, {
       ? await window.electronAPI.getEncryptionStatus().catch(() => null)
       : null;
 
-    const currentMode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const currentMode = readLocalShareMode();
     const currentParentIp = localStorage.getItem('cfg_parent_ip') || '';
     const currentApiToken = await API.getTerminalApiToken();
     const isStandaloneMode = currentMode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true';
@@ -443,7 +443,12 @@ Object.assign(Settings, {
     // 保存ボタンイベント
     const saveNetworkBtn = body.querySelector('#btn-save-network');
     if (saveNetworkBtn) saveNetworkBtn.onclick = async () => {
-      const mode = body.querySelector('input[name="network-mode"]:checked').value;
+      const selectedMode = body.querySelector('input[name="network-mode"]:checked');
+      if (!selectedMode) {
+        UI.toast('親機か子機を選んでください', 'warning');
+        return;
+      }
+      const mode = selectedMode.value;
       const parentIp = body.querySelector('#cfg-parent-ip')?.value.trim() || '';
       const apiToken = body.querySelector('#cfg-api-token')?.value.trim() || '';
       const enableWebRtcCall = body.querySelector('#cfg-enable-webrtc-call')?.checked ? 'true' : 'false';

@@ -2285,16 +2285,19 @@ assert(
 );
 
 // 親機も、単独運用モードでない限りハートビートを送らなければならない
-// (以前は子機モードのみで、親機の画面が実務端末でも他端末から永久に見えなかった)
+// (以前は子機モードのみで、親機の画面が実務端末でも他端末から永久に見えなかった)。
+// 稼働モード未設定のときだけ送らない。親機を isClientMode() で除外してはならない。
 assert(
   (() => {
-    const idx = app.indexOf('await this._repairLocalShareMode();');
+    const idx = app.indexOf('ハートビート送信（子機は必ず、親機も単独運用モードでなければ');
     const end = app.indexOf('_applyStandaloneMode', idx);
     if (idx < 0 || end < idx) return false;
     const body = app.slice(idx, end);
-    return body.includes('if (!this.isStandalone()) {') && body.includes('this._startHeartbeat();');
+    return body.includes('if (readLocalShareMode() && !this.isStandalone())') &&
+      body.includes('this._startHeartbeat();') &&
+      !body.includes('if (isClientMode())');
   })(),
-  'initialize() must start the heartbeat for parent terminals too (gated only on isStandalone), not only for child mode'
+  'initialize() must start the heartbeat for parent terminals too (not only child mode); unset share mode may skip it'
 );
 
 // lastSeenの経過秒数はサーバー(親機)の時計で計算した値を優先しなければ
@@ -2830,7 +2833,7 @@ assert(
     const end = app.indexOf('.catch(() => {});', idx);
     if (idx < 0 || end < idx) return false;
     const block = app.slice(idx, end);
-    const declIdx = block.indexOf("const shareMode = localStorage.getItem('cfg_share_mode')");
+    const declIdx = block.indexOf('const shareMode = readLocalShareMode()');
     const useIdx = block.indexOf('cfg_share_mode=${shareMode}');
     return declIdx >= 0 && useIdx >= 0 && declIdx < useIdx;
   })(),
