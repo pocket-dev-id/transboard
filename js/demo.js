@@ -1,53 +1,15 @@
 /**
- * デモデータ投入スクリプト
- * ページ初回ロード時に既存イベントがない場合のみ投入
+ * 検査室の電話番号と病床マップ位置が空のときの補完。
+ * デモ移送の自動投入は行わない。
  */
 
 const DemoData = {
-
   async setup() {
     try {
-      // 検査室の電話番号を設定（なければ更新）
       await this._ensureExamRoomPhones();
-
-      // 病床の map_col/map_row を設定（なければ更新）
       await this._ensureBedMapPositions();
-
-      // すでにデモデータ投入フラグが立っているかチェック
-      let isDemoInserted = false;
-      try {
-        const settingsRes = await API.getAll('system_settings');
-        const demoSetting = settingsRes.data?.find(s => s.id === 'demo_inserted');
-        if (demoSetting && demoSetting.value === 'true') {
-          isDemoInserted = true;
-        }
-      } catch (e) {
-        console.warn('[Demo] 設定の取得に失敗:', e);
-      }
-
-      if (isDemoInserted) {
-        console.log('[Demo] デモデータ投入済みフラグ(true)のため、スキップ');
-        return;
-      }
-
-      const existing = await API.getAllEventsForWard('ward-1');
-      if (existing.length > 0) {
-        console.log('[Demo] 既存データあり、スキップ');
-        return;
-      }
-      console.log('[Demo] デモデータ投入...');
-      await this._insertDemoEvents();
-
-      // デモデータ投入完了フラグを設定
-      try {
-        await API.patch('system_settings', 'demo_inserted', { value: 'true' });
-      } catch (e) {
-        console.warn('[Demo] フラグ更新に失敗:', e);
-      }
-
-      console.log('[Demo] 完了');
     } catch (e) {
-      console.error('[Demo] 投入失敗:', e);
+      console.error('[Demo] マスタ補完に失敗:', e);
     }
   },
 
@@ -110,137 +72,6 @@ const DemoData = {
     for (const bed of beds) {
       if ((bed.map_col === undefined || bed.map_col === null) && layoutMap[bed.id]) {
         await API.patch('beds', bed.id, layoutMap[bed.id]);
-      }
-    }
-  },
-
-  async _insertDemoEvents() {
-    const now = Date.now();
-    const min = 60 * 1000;
-
-    const events = [
-      // 701: 検査中（CT、30分前出棟）
-      {
-        id: `demo-evt-701`,
-        bed_id: 'bed-701',
-        ward_id: 'ward-1',
-        exam_type_id: 'exam-ct',
-        exam_room_id: 'room-ct',
-        escort_staff_id: 'staff-2',
-        current_status: 'IN_EXAM',
-        expected_duration_min: 30,
-        departed_at: now - 35 * min,
-        arrived_at: now - 30 * min,
-        exam_started_at: now - 25 * min,
-        nearly_done_at: null,
-        pickup_ready_at: null,
-        returned_at: null,
-        estimated_pickup_at: now + 5 * min,
-        note: '車椅子使用',
-      },
-      // 703: あと10分（MRI）
-      {
-        id: `demo-evt-703`,
-        bed_id: 'bed-703',
-        ward_id: 'ward-1',
-        exam_type_id: 'exam-mri',
-        exam_room_id: 'room-mri',
-        escort_staff_id: 'staff-3',
-        current_status: 'NEARLY_DONE',
-        expected_duration_min: 60,
-        departed_at: now - 65 * min,
-        arrived_at: now - 60 * min,
-        exam_started_at: now - 55 * min,
-        nearly_done_at: now - 2 * min,
-        pickup_ready_at: null,
-        returned_at: null,
-        estimated_pickup_at: now + 8 * min,
-        note: '',
-      },
-      // 705: 迎え要（XP）
-      {
-        id: `demo-evt-705`,
-        bed_id: 'bed-705',
-        ward_id: 'ward-1',
-        exam_type_id: 'exam-xp',
-        exam_room_id: 'room-xp',
-        escort_staff_id: null,
-        current_status: 'PICKUP_REQUIRED',
-        expected_duration_min: 20,
-        departed_at: now - 30 * min,
-        arrived_at: now - 25 * min,
-        exam_started_at: now - 20 * min,
-        nearly_done_at: now - 12 * min,
-        pickup_ready_at: now - 5 * min,
-        returned_at: null,
-        estimated_pickup_at: now - 5 * min,
-        note: 'ストレッチャー使用',
-      },
-      // 707: 移動中（内視鏡）
-      {
-        id: `demo-evt-707`,
-        bed_id: 'bed-707',
-        ward_id: 'ward-1',
-        exam_type_id: 'exam-endo',
-        exam_room_id: 'room-endo',
-        escort_staff_id: 'staff-4',
-        current_status: 'MOVING',
-        expected_duration_min: 90,
-        departed_at: now - 10 * min,
-        arrived_at: null,
-        exam_started_at: null,
-        nearly_done_at: null,
-        pickup_ready_at: null,
-        returned_at: null,
-        estimated_pickup_at: now + 90 * min,
-        note: '',
-      },
-      // 710: 移動中（エコー）
-      {
-        id: `demo-evt-710`,
-        bed_id: 'bed-710',
-        ward_id: 'ward-1',
-        exam_type_id: 'exam-echo',
-        exam_room_id: 'room-echo',
-        escort_staff_id: 'staff-5',
-        current_status: 'MOVING',
-        expected_duration_min: 40,
-        departed_at: now - 5 * min,
-        arrived_at: null,
-        exam_started_at: null,
-        nearly_done_at: null,
-        pickup_ready_at: null,
-        returned_at: null,
-        estimated_pickup_at: now + 35 * min,
-        note: '',
-      },
-      // 712: 帰棟済（CT、1時間前）
-      {
-        id: `demo-evt-712`,
-        bed_id: 'bed-712',
-        ward_id: 'ward-1',
-        exam_type_id: 'exam-ct',
-        exam_room_id: 'room-ct',
-        escort_staff_id: 'staff-6',
-        current_status: 'RETURNED',
-        expected_duration_min: 30,
-        departed_at: now - 90 * min,
-        arrived_at: now - 85 * min,
-        exam_started_at: now - 80 * min,
-        nearly_done_at: now - 60 * min,
-        pickup_ready_at: now - 55 * min,
-        returned_at: now - 50 * min,
-        estimated_pickup_at: now - 60 * min,
-        note: '',
-      },
-    ];
-
-    for (const evt of events) {
-      try {
-        await API.createEvent(evt);
-        await API.addStatusLog(evt.id, null, evt.current_status, 'demo');
-      } catch (e) {
-        console.warn('[Demo] イベント投入失敗:', evt.id, e.message);
       }
     }
   },

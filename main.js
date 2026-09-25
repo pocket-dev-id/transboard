@@ -3359,14 +3359,6 @@ handleTrusted('reset-database', () => {
   // ※ 患者情報 (beds の patient_name, patient_id, is_present) は消去しません。
   // ※ 通話履歴 (calls) や 取り込み履歴 (import_logs) も消去しません。
 
-  // デモデータ挿入フラグを true にして、再起動時にデモデータが読み込まれないようにする
-  const flagIndex = db.system_settings.findIndex(s => s.id === 'demo_inserted');
-  if (flagIndex !== -1) {
-    db.system_settings[flagIndex].value = 'true';
-  } else {
-    db.system_settings.push({ id: 'demo_inserted', value: 'true' });
-  }
-  
   if (!writeDB(db)) {
     return { success: false, message: 'データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。' };
   }

@@ -417,7 +417,7 @@ const App = {
   // 接続端末表示・病棟間通話・検査室タブなど多端末前提のUIを隠す。share_mode の
   // 接続ルーティングには影響しない端末ローカルの表示フラグ。
   isStandalone() {
-    const mode = localStorage.getItem('cfg_share_mode') || 'parent';
+    const mode = readLocalShareMode();
     return mode === 'parent' && localStorage.getItem('cfg_standalone_mode') === 'true' && !this.isExamTerminal();
   },
 
@@ -542,6 +542,9 @@ const App = {
   async init() {
     console.log('[App] 初期化開始...');
     await this._loadTerminalRole();
+    // マスタ取得・ポーリングより前に直す。空の localStorage を親機とみなしたまま
+    // 先に同期を始めると、子機がその起動のあいだ親機のデータを見ない。
+    await this._repairLocalShareMode();
     this._applyTerminalRoleMode({ navigate: false });
  
     this._bindWindowControls();
@@ -564,7 +567,7 @@ const App = {
     // 病棟セレクトの動的同期
     this.syncWardSelect();
 
-    // デモデータ投入（初回のみ）＆マスタ更新
+    // 検査室の電話番号と病床マップ位置が空なら補完する
     await DemoData.setup();
 
     // マスタ再読み込み（デモデータがmap_col等を更新した可能性があるため）
@@ -588,10 +591,14 @@ const App = {
     if (this.isExamTerminal()) UI.switchPage('exam-room');
     else WardDashboard.render();
 
-    // ポーリング開始
-    this.startPolling();
-    // 子機では親機側の病床マスター変更（追加・変更・削除）を定期的に反映する。
-    this.startMasterSync();
+    // ポーリング開始。稼働モード未設定のまま始めると、ローカルDBを親機として見続ける。
+    if (readLocalShareMode()) {
+      this.startPolling();
+      // 子機では親機側の病床マスター変更（追加・変更・削除）を定期的に反映する。
+      this.startMasterSync();
+    } else {
+      UI.toast('稼働モードが未設定です。設定から親機か子機を選んでください', 'warning', 10000);
+    }
 
     // 初期設定ウィザードの自動起動チェック
     const wizardSetting = AppState.systemSettings?.find(s => s.id === 'wizard_completed');
@@ -634,13 +641,10 @@ const App = {
       }
     }
 
-    // 稼働モード設定の整合性チェック（ローカルDBとlocalStorageの不整合を自動修復）
-    await this._repairLocalShareMode();
-
     // ハートビート送信（子機は必ず、親機も単独運用モードでなければ自身の
     // 在席を他端末から見えるようにする。以前は子機モードのみ送っており、
     // 親機の画面を実務端末として使っていても他の子機から永久に見えなかった）
-    if (!this.isStandalone()) {
+    if (readLocalShareMode() && !this.isStandalone()) {
       this._startHeartbeat();
     }
 
@@ -648,7 +652,7 @@ const App = {
     if (window.electronAPI?.appendDebugLog) {
       const token = await API.getTerminalApiToken();
       const tokenSummary = token ? '設定あり' : '未設定';
-      const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
+      const shareMode = readLocalShareMode() || '未設定';
       window.electronAPI.appendDebugLog(
         `[App起動] version=${AppState.appVersion || '?'} cfg_share_mode=${shareMode} ` +
         `cfg_parent_ip=${localStorage.getItem('cfg_parent_ip') || '(未設定)'} cfg_api_token=${tokenSummary}`
@@ -1664,7 +1668,7 @@ const App = {
           name: localStorage.getItem('_device_name') || deviceId,
           hostname: _cachedHostname || undefined,
           wardId,
-          mode: localStorage.getItem('cfg_share_mode') || 'client',
+          mode: readLocalShareMode() || '',
           appVersion: AppState.appVersion || '',
           page: document.querySelector('.tab-btn.active')?.dataset.page || '',
           isElevated: _cachedIsElevated === null ? undefined : String(_cachedIsElevated)
@@ -1941,7 +1945,6 @@ const App = {
       } else {
         AppState.systemSettings = AppState.systemSettings || [];
       }
-      AppState.stickyNotes = [];
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: AppState.systemSettings.length });
       return true;
 
@@ -2058,7 +2061,6 @@ const App = {
       AppState.systemSettings = systemSettings;
       AppState.scheduleFeeds = scheduleFeeds || [];
       AppState.scheduleItems = scheduleItems || [];
-      AppState.stickyNotes = [];
       AppState.lastUpdated = Date.now();
 
       this._setConnectionStatus(true);

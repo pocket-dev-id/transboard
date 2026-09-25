@@ -70,11 +70,17 @@ async function parentFetch(url, options = {}, timeoutMs = API_DEFAULT_TIMEOUT_MS
   return fetchWithTimeout(url, options, timeoutMs);
 }
 
-// 子機/単独モードかどうかの判定。localStorageの'cfg_share_mode'を直接読む
-// 箇所がAPI各メソッドに散在していたため、一箇所にまとめる。
+// この端末の稼働モード。未設定は null で、親機にも子機にもしない。
+// 子機の AppState.systemSettings には親機の share_mode が入るため、ここでは見ない。
+function readLocalShareMode() {
+  const shareMode = localStorage.getItem('cfg_share_mode');
+  if (shareMode === 'client' || shareMode === 'child') return 'client';
+  if (shareMode === 'parent') return 'parent';
+  return null;
+}
+
 function isClientMode() {
-  const shareMode = localStorage.getItem('cfg_share_mode') || 'parent';
-  return shareMode === 'client' || shareMode === 'child';
+  return readLocalShareMode() === 'client';
 }
 
 // 親機のAPIベースURL(http://<parentIp>:3005/api/<path>)の組み立て。

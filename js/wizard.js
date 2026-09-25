@@ -11,11 +11,9 @@ const Wizard = {
     const gs = id => AppState.systemSettings?.find(s => s.id === id)?.value;
     const terminalApiToken = await API.getTerminalApiToken();
     this.config = {
-      // 稼働モード・親機IPはこの端末自身のローカル設定。子機では AppState.systemSettings が
-      // 親機からリモート取得した値（＝常に'parent'）になるため、gs()を使うとウィザードを
-      // 再度開いたときに子機なのに親機が選択された状態で表示されてしまう。
-      // localStorageの値（未設定なら初回起動とみなしローカルDBのgs()にフォールバック）を優先する。
-      share_mode:                   localStorage.getItem('cfg_share_mode') || gs('share_mode') || 'parent',
+      // 未設定のときの画面上の初期値だけ親機にする。localStorage とローカルDBへは
+      // 利用者が完了するまで書かない。AppState の share_mode は親機の値なので使わない。
+      share_mode:                   readLocalShareMode() || 'parent',
       standalone:                   localStorage.getItem('cfg_standalone_mode') === 'true',
       terminal_role:                localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward',
       parent_ip:                    localStorage.getItem('cfg_parent_ip')  || gs('parent_ip')  || '',
@@ -34,7 +32,6 @@ const Wizard = {
       font_style:                   gs('font_style')                   || 'ud',
       default_zoom:                 gs('default_zoom')                 || '1.0',
       enable_patient_ic_association: gs('enable_patient_ic_association') || 'false',
-      insert_demo: false
     };
 
     this.currentStep = 1;
@@ -382,12 +379,6 @@ const Wizard = {
         </div>
       </div>` : '';
 
-    const demoCheck = this.config.share_mode === 'parent' ? `
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:700; margin-top:14px; color:var(--clr-text);">
-        <input type="checkbox" id="wizard-insert-demo" ${this.config.insert_demo ? 'checked' : ''}>
-        病床・検査室・スタッフのサンプルデモデータを追加する（初回向け）
-      </label>` : '';
-
     return `
       <h4 class="wiz-step-title">4. 設定内容の確認と完了</h4>
       <p class="wiz-step-desc">設定に間違いがないかご確認ください。既存の移送履歴や登録データはそのまま維持されます。</p>
@@ -396,7 +387,6 @@ const Wizard = {
       </table>
       ${clientWarning}
       ${standaloneNote}
-      ${demoCheck}
     `;
   },
 
@@ -570,11 +560,6 @@ const Wizard = {
         this._renderModal();
       });
     });
-
-    // Step 4: デモデータ
-    document.getElementById('wizard-insert-demo')?.addEventListener('change', e => {
-      this.config.insert_demo = e.target.checked;
-    });
   },
 
   // ODBCビルダー → 接続文字列を自動生成してテキストボックスに反映
@@ -731,15 +716,6 @@ const Wizard = {
       const failedCount = results.filter(r => r.status === 'rejected').length;
       if (failedCount > 0) {
         console.warn('[Wizard] 一部の設定を共有DBへ反映できませんでした:', results.filter(r => r.status === 'rejected'));
-      }
-
-      if (this.config.share_mode === 'parent' && this.config.insert_demo) {
-        try {
-          await API.patch('system_settings', 'demo_inserted', { value: 'false' });
-          await DemoData.setup();
-        } catch (e) {
-          console.warn('[Wizard] デモデータの投入に失敗しました:', e);
-        }
       }
 
       if (failedCount > 0) {
