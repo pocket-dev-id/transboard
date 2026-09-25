@@ -13,7 +13,14 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const mainSource = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+
+function readSource(filePath) {
+  // windows-latest の checkout は core.autocrlf で CRLF になる。
+  // 終端マーカーの「直前の文字 + 改行」を照合すると \r が割り込んで失敗する。
+  return fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
+}
+
+const mainSource = readSource(path.join(ROOT, 'main.js'));
 
 function extract(source, startMarker, endMarker) {
   const idx = source.indexOf(startMarker);
@@ -87,9 +94,9 @@ async function main() {
   }
 
   // ── 関連ファイルの結線を source-text で確認 ──
-  const preloadSource = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
-  const appSource = fs.readFileSync(path.join(ROOT, 'js/app.js'), 'utf8');
-  const networkSource = fs.readFileSync(path.join(ROOT, 'js/settings/network.js'), 'utf8');
+  const preloadSource = readSource(path.join(ROOT, 'preload.js'));
+  const appSource = readSource(path.join(ROOT, 'js/app.js'));
+  const networkSource = readSource(path.join(ROOT, 'js/settings/network.js'));
 
   assert(
     mainSource.includes("HEARTBEAT_TEXT_FIELDS = ['name', 'hostname', 'wardId', 'mode', 'page', 'appVersion', 'isElevated']") ||
