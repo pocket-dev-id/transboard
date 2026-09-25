@@ -12,6 +12,9 @@ let summarizeAuditRecord = null;
 let trimTable = null;
 let writeDB = null;
 let writeDbOrThrow = null;
+// 状態変更に伴う音声通知の送出に使う。注入し忘れると、DBへの書き込みは
+// 成功しているのに通知の送出でエラーになり、呼び出し元には失敗が返る
+let processWebrtcRequest = null;
 let BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = 7;
 let BED_OCCUPANCY_LOG_MAX_ENTRIES = 20000;
 let TRANSFER_EVENTS_MAX_ENTRIES = 50000;
@@ -27,6 +30,7 @@ function configureTransferStatus(deps) {
   trimTable = deps.trimTable;
   writeDB = deps.writeDB;
   writeDbOrThrow = deps.writeDbOrThrow;
+  processWebrtcRequest = deps.processWebrtcRequest;
   BED_OCCUPANCY_RETENTION_DAYS_DEFAULT = deps.BED_OCCUPANCY_RETENTION_DAYS_DEFAULT;
   BED_OCCUPANCY_LOG_MAX_ENTRIES = deps.BED_OCCUPANCY_LOG_MAX_ENTRIES;
   TRANSFER_EVENTS_MAX_ENTRIES = deps.TRANSFER_EVENTS_MAX_ENTRIES;

@@ -1,6 +1,21 @@
 'use strict';
 
-// 予定CSVの日時解釈。ファイルI/OとDBには触れない。
+// 予定CSVの日時解釈と、監視フォルダからのヘッダ読み取り。
+// DBの読み書きは行わない(呼び出し元が読んだdbを引数で受け取る)。
+
+const fs = require('fs');
+const path = require('path');
+
+// 文字コード判定とSMB認証はmain.js側に残っているため注入で受け取る。
+// 既定はどちらも「判定しない/認証しない」= ローカルフォルダのUTF-8以外として
+// 扱う保守的な動作にしておき、configureScheduleCsv()で本物に差し替える
+let isUtf8 = () => false;
+let authenticateSMBSync = () => null;
+
+function configureScheduleCsv(deps) {
+  isUtf8 = deps.isUtf8;
+  authenticateSMBSync = deps.authenticateSMBSync;
+}
 
 // 時刻部分の区切り文字は現場のCSV/機器出力によって : (半角/全角) と . が
 // 混在するため、いずれも許容する（例: 13:05:30 / 13：05 / 13.05.30 / 13.05）
@@ -200,16 +215,18 @@ function previewScheduleDatetime(sampleRow, mode, dateCol, timeCol, dateFormat) 
   return { success: true, ms };
 }
 
-// CSV1件を読み込み・パースし、アイテム配列を組み立てるだけの純粋な処理。
-// DBへの書き込み・アーカイブ・通知は一切行わない(commitScheduleFeedImportが
-// 複数ファイル分をまとめて1回で行う)。この関数は失敗時も例外をthrow/rejectせず、
-// 常に{success, items, rowCount, message, encoding}で解決する
-
 module.exports = {
+  configureScheduleCsv,
   SCHEDULE_TIME_RE_SRC,
-  scheduleDateError,
   parseScheduleDatetimeMs,
   buildValidatedScheduleDateMs,
-  schedulePreviewStatus,
   previewScheduleDatetime,
+  MAX_CSV_FILE_BYTES,
+  MAX_CSV_ROWS,
+  MAX_BACKUP_FILE_BYTES,
+  assertCsvFileSize,
+  normalizeScheduleCsvEncoding,
+  decodeScheduleCsvBuffer,
+  findFeedForFolder,
+  readScheduleCsvHeaders,
 };

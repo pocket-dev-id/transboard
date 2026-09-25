@@ -5,7 +5,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { isPrivateOrLoopbackIpv4 } = require('./net-address');
 
 const POWERSHELL_EXE = process.env.SystemRoot
@@ -21,6 +21,9 @@ let appendAuditLog = null;
 let dialog = null;
 let app = null;
 let getTerminalApiToken = null;
+// 親機側は自分のトークンを必要に応じて発行する。子機側のgetTerminalApiTokenと
+// 対になる依存で、どちらか片方だけが欠けると親子で挙動が食い違う
+let ensureApiToken = null;
 let getMainWindow = () => null;
 let getDbFile = () => '';
 let isManagedDeployment = () => false;
@@ -37,6 +40,7 @@ function configureUpdater(deps) {
   dialog = deps.dialog;
   app = deps.app;
   getTerminalApiToken = deps.getTerminalApiToken;
+  ensureApiToken = deps.ensureApiToken;
   getMainWindow = deps.getMainWindow;
   getDbFile = deps.getDbFile;
   isManagedDeployment = deps.isManagedDeployment;
