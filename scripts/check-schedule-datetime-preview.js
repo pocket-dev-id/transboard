@@ -5,7 +5,7 @@
 const assert = require('assert');
 const { readRoot, extractThroughFunctionEnd } = require('./lib/extract-source');
 
-const source = readRoot('main.js');
+const source = readRoot('main-modules/schedule-csv.js');
 
 const snippet = extractThroughFunctionEnd(source, 'const SCHEDULE_TIME_RE_SRC', 'function previewScheduleDatetime');
 assert(snippet, 'SCHEDULE_TIME_RE_SRC〜previewScheduleDatetimeの抽出に失敗しました(main.jsの構造が変わった可能性があります)');
