@@ -325,8 +325,9 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
   }
 
-  if (mainWindow) {
-    getMainWindow().webContents.send('data-imported', {
+  const win = getMainWindow();
+  if (win) {
+    win.webContents.send('data-imported', {
       fileName: `ODBC同期 (${new Date().toLocaleString('ja-JP')})`,
       rows
     });
@@ -364,9 +365,6 @@ async function previewOdbcQueryOnParent({ connectionString, sqlQuery } = {}) {
     return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
   }
 }
-
-// IPC通信でODBCクエリのプレビューを取得する。本番データには書き込まない。
-handleTrusted('preview-odbc-query', (event, config) => previewOdbcQueryOnParent(config || {}));
 
 module.exports = {
   configureOdbc,

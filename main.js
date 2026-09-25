@@ -29,9 +29,16 @@ const {
   previewOdbcQueryOnParent,
 } = require('./main-modules/odbc');
 const {
+  configureScheduleCsv,
   parseScheduleDatetimeMs,
   previewScheduleDatetime,
   SCHEDULE_TIME_RE_SRC,
+  MAX_CSV_ROWS,
+  MAX_BACKUP_FILE_BYTES,
+  assertCsvFileSize,
+  decodeScheduleCsvBuffer,
+  findFeedForFolder,
+  readScheduleCsvHeaders,
 } = require('./main-modules/schedule-csv');
 const {
   configureTransferStatus,
@@ -600,6 +607,7 @@ configureTransferStatus({
   trimTable,
   writeDB,
   writeDbOrThrow,
+  processWebrtcRequest,
   BED_OCCUPANCY_RETENTION_DAYS_DEFAULT,
   BED_OCCUPANCY_LOG_MAX_ENTRIES,
   TRANSFER_EVENTS_MAX_ENTRIES,
@@ -1300,6 +1308,7 @@ function normalizeShareMode(value) {
 
 configureParentHttp({ readDbShared, getSettingRecord, normalizeShareMode });
 configureOdbc({ getMainWindow: () => mainWindow });
+configureScheduleCsv({ isUtf8, authenticateSMBSync });
 configureUpdater({
   readDB,
   writeDB,
@@ -1310,6 +1319,7 @@ configureUpdater({
   dialog,
   app,
   getTerminalApiToken,
+  ensureApiToken,
   getMainWindow: () => mainWindow,
   getDbFile: () => DB_FILE,
   isManagedDeployment,
