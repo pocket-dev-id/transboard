@@ -56,6 +56,10 @@ async function main() {
       methodBody.includes('_lastAppliedSystemSettingsSignature'),
       '_refreshDataOnce内にsystemSettingsのsignature比較によるapplySystemVisualSettings省略ロジックが見当たりません'
     );
+    assert(
+      /\} else \{\s*await this\._applySyncTimeDisplay\(\);\s*\}/.test(methodBody),
+      '設定が同じときは applySystemVisualSettings を呼ばず _applySyncTimeDisplay だけ呼ぶこと(同期時刻の更新を止めない)'
+    );
 
     function buildHarness(state) {
       const sandbox = {
@@ -71,6 +75,7 @@ async function main() {
         isExamTerminal() { return __state.isExamTerminal; },
         _setConnectionStatus() {},
         async applySystemVisualSettings() { __state.applyCalls++; },
+        async _applySyncTimeDisplay() { __state.syncTimeCalls++; },
         async _refreshDataOnce(wardId, todayMs) {${methodBody}
         },
       })`, Object.assign(sandbox, { __state: state }));
@@ -96,6 +101,7 @@ async function main() {
     const state = {
       isExamTerminal: true,
       applyCalls: 0,
+      syncTimeCalls: 0,
       initialSignature: undefined,
       AppState: makeAppState(),
       API: {
@@ -112,6 +118,7 @@ async function main() {
     let ok = await harness._refreshDataOnce('ward-1', 0);
     assert.strictEqual(ok, true);
     assert.strictEqual(state.applyCalls, 1, '初回は適用されること');
+    assert.strictEqual(state.syncTimeCalls, 0, '初回の同期時刻更新はapplySystemVisualSettings側に含まれるため、別呼び出しはしないこと');
 
     // 2回目: 内容が同一(参照は別オブジェクト)なら、BUG FIX: 適用が省略されること
     state._nextSettings = settingsV1Copy;
@@ -120,6 +127,10 @@ async function main() {
     assert.strictEqual(
       state.applyCalls, 1,
       'BUG FIX: systemSettingsの内容が変化していなければapplySystemVisualSettings()を再度呼ばないこと(5秒ごとのポーリングでzoom書き換え等が無駄に走り続けるのを防ぐ)'
+    );
+    assert.strictEqual(
+      state.syncTimeCalls, 1,
+      '設定が同じポーリングでも最終同期・最終取り込みの表示は更新すること'
     );
     // データ自体は省略時も更新されること(表示設定の適用だけを省略し、値の反映は妨げない)
     assert.strictEqual(state.AppState.systemSettings.length, 1);
@@ -133,6 +144,7 @@ async function main() {
       state.applyCalls, 2,
       'systemSettingsの内容が変化していれば必ずapplySystemVisualSettings()を呼ぶこと'
     );
+    assert.strictEqual(state.syncTimeCalls, 1, '設定変化時は同期時刻更新を二重に呼ばないこと');
     assert.strictEqual(state.AppState.systemSettings[0].value, '1.2', '変化したsystemSettingsは反映されること');
   }
 
