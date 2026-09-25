@@ -416,7 +416,7 @@ DBファイル自体もsafeStorageが利用可能な環境では`ENCDB1:`プレ�
 
 | ファイル | 内容 | 備考 |
 |---|---|---|
-| `terminal_role.json` | `{shareMode, parentIp, terminalRole, wardId, updatedAt}` | 平文。起動時にこのファイルを正としてDBの`share_mode`/`parent_ip`を修復する。`wardId`は配布時に投入される既定の病棟で、利用者が未選択の初回のみ採用される |
+| `terminal_role.json` | `{shareMode, parentIp, terminalRole, wardId, deviceName, preventSleep, alwaysOnTop, updatedAt}` | 平文。起動時にこのファイルを正としてDBの`share_mode`/`parent_ip`を修復する。`wardId`/`deviceName`/`preventSleep`/`alwaysOnTop`は配布時に投入される既定値で、利用者がまだ選択/変更していない場合のみ画面側に採用される |
 | `terminal-secrets.json` | `{version, encryptedApiToken}` | safeStorage（Windows DPAPI）で暗号化。**ユーザー+PCに紐づくため他PCで作成・複製できない** |
 | `provisioning.json` | 配布管理ツールが置く初期設定（下記） | **平文**。起動時に取り込まれ、成否に関わらず**必ず削除される** |
 | `managed_deployment.json` | `{version, appliedAt}` | 管理配布された端末の目印。自動更新時の案内文の出し分けに使う |

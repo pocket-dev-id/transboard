@@ -24,6 +24,15 @@ assert(fnSource, 'applyProvisioningFile()の抽出に失敗しました(main.js�
 const managedFnSource = extractByBraceEnd(source, 'function isManagedDeployment() {');
 assert(managedFnSource, 'isManagedDeployment()の抽出に失敗しました');
 
+// 「未指定のフィールドは既存値を引き継ぐ」の実際の永続化を確認するため、
+// この3つだけは実物(readTerminalRole/writeTerminalRole/safeWriteFile)を使う
+const safeWriteFileSource = extractByBraceEnd(source, 'function safeWriteFile(targetPath, content) {');
+assert(safeWriteFileSource, 'safeWriteFile()の抽出に失敗しました');
+const readTerminalRoleSource = extractByBraceEnd(source, 'function readTerminalRole() {');
+assert(readTerminalRoleSource, 'readTerminalRole()の抽出に失敗しました');
+const writeTerminalRoleSource = extractByBraceEnd(source, 'function writeTerminalRole(');
+assert(writeTerminalRoleSource, 'writeTerminalRole()の抽出に失敗しました');
+
 function makeContext({ tokenResult = { success: true }, writeDbOk = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-provisioning-'));
   const state = {
@@ -72,6 +81,54 @@ function makeContext({ tokenResult = { success: true }, writeDbOk = true } = {})
 
   const ctx = vm.runInNewContext(
     `${fnSource}\n${managedFnSource}\n({ applyProvisioningFile, isManagedDeployment })`,
+    sandbox
+  );
+  return { state, ...ctx };
+}
+
+// makeContext()はwriteTerminalRoleをモックして「何が渡されたか」だけを見る。
+// 「未指定のフィールドを既存値のまま引き継ぐ」という永続化そのものを確認するには
+// 実物のreadTerminalRole/writeTerminalRoleを使い、実ファイルへ2回投入する必要がある
+function makeRealRoleContext({ tokenResult = { success: true } } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-provisioning-role-'));
+  const state = {
+    dir,
+    provisioningFile: path.join(dir, 'provisioning.json'),
+    managedFile: path.join(dir, 'managed_deployment.json'),
+    roleFile: path.join(dir, 'terminal_role.json'),
+    tokenWrites: [],
+    auditLogs: [],
+    db: { system_settings: [] },
+  };
+
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} },
+    fs,
+    process,
+    Date,
+    JSON,
+    Number,
+    String,
+    PROVISIONING_FILE: state.provisioningFile,
+    MANAGED_DEPLOYMENT_FILE: state.managedFile,
+    TERMINAL_ROLE_FILE: state.roleFile,
+    normalizeShareMode: (v) => (v === 'client' || v === 'child' ? 'client' : 'parent'),
+    normalizeTerminalRole: (v) => (v === 'exam' ? 'exam' : 'ward'),
+    setTerminalApiToken(token) {
+      state.tokenWrites.push(token);
+      return tokenResult;
+    },
+    readDB: () => state.db,
+    writeDB: () => true,
+    getSettingRecord: (db, id) => (db.system_settings || []).find((s) => s.id === id),
+    appendAuditLog(db, action, opts) {
+      state.auditLogs.push({ action, ...opts });
+    },
+  };
+
+  const ctx = vm.runInNewContext(
+    `${safeWriteFileSource}\n${readTerminalRoleSource}\n${writeTerminalRoleSource}\n${fnSource}\n`
+    + '({ applyProvisioningFile, readTerminalRole, writeTerminalRole })',
     sandbox
   );
   return { state, ...ctx };
@@ -237,6 +294,68 @@ function main() {
     applyProvisioningFile();
     assert.strictEqual(fs.existsSync(state.managedFile), false, 'managed未指定ならマーカーを作らないこと');
     assert.strictEqual(isManagedDeployment(), false, '管理配布とは判定されないこと');
+  }
+
+  // 11) 端末表示名・スリープ抑止・常に最前面が反映されること。preventSleep/
+  //     alwaysOnTopは文字列など真偽値以外で来た場合は無視すること
+  {
+    const { state, applyProvisioningFile } = makeContext();
+    writeProvisioning(state, {
+      version: 1, shareMode: 'parent', parentIp: '', terminalRole: 'ward',
+      deviceName: '  3F-PC1  ', preventSleep: true, alwaysOnTop: 'true',
+    });
+    const result = applyProvisioningFile();
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(state.roleWrites[0].deviceName, '3F-PC1', '端末表示名は前後の空白を除いて反映されること');
+    assert.strictEqual(state.roleWrites[0].preventSleep, true, '真偽値のpreventSleepは反映されること');
+    assert.strictEqual(
+      state.roleWrites[0].alwaysOnTop, undefined,
+      '文字列"true"など真偽値でないalwaysOnTopは無視され、既存値を上書きしないこと'
+    );
+  }
+
+  // 12) 端末表示名が長すぎる場合は64文字に切り詰めること(暴走した値でUIが壊れないように)
+  {
+    const { state, applyProvisioningFile } = makeContext();
+    writeProvisioning(state, {
+      version: 1, shareMode: 'parent', parentIp: '', terminalRole: 'ward',
+      deviceName: 'x'.repeat(200),
+    });
+    applyProvisioningFile();
+    assert.strictEqual(state.roleWrites[0].deviceName.length, 64, '端末表示名は64文字に切り詰められること');
+  }
+
+  // 13) BUG FIX: トークン入れ替えだけを目的にした再投入で、wardId/deviceName/
+  //     preventSleep/alwaysOnTopを省略しても、既存の値を消さずに引き継ぐこと。
+  //     (実物のreadTerminalRole/writeTerminalRoleを使い、実ファイルへの
+  //     永続化を含めて確認する。省略値に空文字を渡すと既存値が消えるバグが
+  //     一度実際に混入したため、モックではなく実物で固定する)
+  {
+    const { state, applyProvisioningFile, readTerminalRole } = makeRealRoleContext();
+    writeProvisioning(state, {
+      version: 1, shareMode: 'client', parentIp: '10.0.0.9', terminalRole: 'ward',
+      wardId: 'ward-7', deviceName: '3F-PC1', preventSleep: true, alwaysOnTop: false,
+    });
+    let result = applyProvisioningFile();
+    assert.strictEqual(result.success, true);
+    let role = readTerminalRole();
+    assert.strictEqual(role.wardId, 'ward-7');
+    assert.strictEqual(role.deviceName, '3F-PC1');
+    assert.strictEqual(role.preventSleep, true);
+    assert.strictEqual(role.alwaysOnTop, false);
+
+    // 2回目の投入(トークンの入れ替えだけが目的で、wardId等は指定しない)
+    writeProvisioning(state, {
+      version: 1, shareMode: 'client', parentIp: '10.0.0.9', terminalRole: 'ward',
+      apiToken: 'z'.repeat(32),
+    });
+    result = applyProvisioningFile();
+    assert.strictEqual(result.success, true);
+    role = readTerminalRole();
+    assert.strictEqual(role.wardId, 'ward-7', 'BUG FIX: 再投入でwardIdを省略しても消えないこと');
+    assert.strictEqual(role.deviceName, '3F-PC1', 'BUG FIX: 再投入でdeviceNameを省略しても消えないこと');
+    assert.strictEqual(role.preventSleep, true, 'BUG FIX: 再投入でpreventSleepを省略しても消えないこと');
+    assert.strictEqual(role.alwaysOnTop, false, 'BUG FIX: 再投入でalwaysOnTopを省略しても消えないこと');
   }
 
   console.log('Provisioning checks passed.');
