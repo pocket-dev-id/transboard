@@ -774,15 +774,28 @@ function decryptDbFileContent(raw) {
   }
 }
 
-// 監査ログ専用ファイル(AUDIT_LOG_FILE)を1行ずつ読み込む。1行=暗号化された
+// 監査ログ専用ファイル(AUDIT_LOG_FILE)の末尾を読み込む。1行=暗号化された
 // JSON1件で、既存のdb.json暗号化(encryptDbFileContent/decryptDbFileContent)と
 // 同じ方式を1件単位に適用する。行単位で壊れていても他の行は読み続ける
 function loadAuditLogFile() {
   try {
     if (!fs.existsSync(AUDIT_LOG_FILE)) return [];
-    const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf8');
+    // 起動時に巨大な監査ログ全体を文字列化・splitすると、数GBの一時メモリを
+    // 消費してElectronが画面を出す前に終了する。表示対象の末尾だけを読む。
+    const fd = fs.openSync(AUDIT_LOG_FILE, 'r');
+    let raw;
+    try {
+      const size = fs.fstatSync(fd).size;
+      const bytes = Math.min(size, 64 * 1024 * 1024);
+      const buffer = Buffer.alloc(bytes);
+      const read = fs.readSync(fd, buffer, 0, bytes, size - bytes);
+      raw = buffer.subarray(0, read).toString('utf8');
+      if (size > bytes) raw = raw.slice(raw.indexOf('\n') + 1);
+    } finally {
+      fs.closeSync(fd);
+    }
     const entries = [];
-    for (const line of raw.split('\n')) {
+    for (const line of raw.split('\n').slice(-AUDIT_LOG_MAX_ENTRIES - 1)) {
       if (!line.trim()) continue;
       try {
         entries.push(JSON.parse(decryptDbFileContent(line)));
@@ -812,6 +825,12 @@ function appendAuditLogFile(entry) {
 function rewriteAuditLogFile(entries) {
   try {
     const list = Array.isArray(entries) ? entries : [];
+    // 巨大化した履歴は既存の保持上限に従って整理する前に、元ファイルを保全する。
+    if (fs.existsSync(AUDIT_LOG_FILE) && fs.statSync(AUDIT_LOG_FILE).size > 64 * 1024 * 1024) {
+      const archive = `${AUDIT_LOG_FILE}.oversized-${Date.now()}`;
+      fs.copyFileSync(AUDIT_LOG_FILE, archive, fs.constants.COPYFILE_EXCL);
+      console.warn(`[AuditLog] 巨大な監査ログを保全しました: ${archive}`);
+    }
     const content = list.map(e => encryptDbFileContent(JSON.stringify(e))).join('\n') + (list.length ? '\n' : '');
     safeWriteFile(AUDIT_LOG_FILE, content);
   } catch (err) {
