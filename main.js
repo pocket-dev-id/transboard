@@ -556,6 +556,8 @@ function isAuditSecretSettingId(id) {
 }
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 20000;
+const AUDIT_LOG_MAX_FILE_BYTES = 64 * 1024 * 1024;
+const AUDIT_LOG_TARGET_FILE_BYTES = 32 * 1024 * 1024;
 // 監査ログ専用ファイルの間引き(rewriteAuditLogFile、O(n))は追記のたびではなく、
 // この閾値を超えたときだけ実行する。MAX_ENTRIESぴったりで間引くと、上限到達後は
 // 追記のたびに全件書き直しが走ってしまうため、猶予を持たせて頻度を抑える
@@ -786,7 +788,7 @@ function loadAuditLogFile() {
     let raw;
     try {
       const size = fs.fstatSync(fd).size;
-      const bytes = Math.min(size, 64 * 1024 * 1024);
+      const bytes = Math.min(size, AUDIT_LOG_MAX_FILE_BYTES);
       const buffer = Buffer.alloc(bytes);
       const read = fs.readSync(fd, buffer, 0, bytes, size - bytes);
       raw = buffer.subarray(0, read).toString('utf8');
@@ -820,21 +822,44 @@ function appendAuditLogFile(entry) {
   }
 }
 
+function getAuditLogFileSize() {
+  try { return fs.statSync(AUDIT_LOG_FILE).size; } catch { return 0; }
+}
+
 // 監査ログ専用ファイルをentriesの内容で丸ごと置き換える(O(n))。
 // 上限超過時の間引き・DBリストア時の反映・旧形式からの一度きりの移行で使う
 function rewriteAuditLogFile(entries) {
   try {
     const list = Array.isArray(entries) ? entries : [];
-    // 巨大化した履歴は既存の保持上限に従って整理する前に、元ファイルを保全する。
-    if (fs.existsSync(AUDIT_LOG_FILE) && fs.statSync(AUDIT_LOG_FILE).size > 64 * 1024 * 1024) {
+    // 既に大幅に肥大化した旧ファイルだけ原本を保全する。通常の64MiB到達ごとに
+    // アーカイブを作ると、アーカイブ側が無制限に増えるため行わない。
+    if (getAuditLogFileSize() > AUDIT_LOG_MAX_FILE_BYTES * 2) {
       const archive = `${AUDIT_LOG_FILE}.oversized-${Date.now()}`;
       fs.copyFileSync(AUDIT_LOG_FILE, archive, fs.constants.COPYFILE_EXCL);
       console.warn(`[AuditLog] 巨大な監査ログを保全しました: ${archive}`);
     }
-    const content = list.map(e => encryptDbFileContent(JSON.stringify(e))).join('\n') + (list.length ? '\n' : '');
+    // 件数が少なくても1件が大きいとファイルは際限なく増える。暗号化後の
+    // 実際のバイト数で上限を掛け、直近の履歴を残す。
+    const retained = [];
+    const lines = [];
+    let bytes = 0;
+    for (let i = list.length - 1; i >= 0 && retained.length < AUDIT_LOG_MAX_ENTRIES; i--) {
+      const line = encryptDbFileContent(JSON.stringify(list[i]));
+      const lineBytes = Buffer.byteLength(line, 'utf8') + 1;
+      if (bytes + lineBytes > AUDIT_LOG_TARGET_FILE_BYTES) break;
+      bytes += lineBytes;
+      retained.push(list[i]);
+      lines.push(line);
+    }
+    if (retained.length < list.length) {
+      console.warn(`[AuditLog] 保存対象を直近${retained.length}件 (${bytes} bytes) に整理しました`);
+    }
+    const content = lines.reverse().join('\n') + (lines.length ? '\n' : '');
     safeWriteFile(AUDIT_LOG_FILE, content);
+    return retained.reverse();
   } catch (err) {
     console.warn('[AuditLog] ファイルの再構築に失敗しました:', err.message);
+    return null;
   }
 }
 
@@ -1278,14 +1303,15 @@ function writeDB(data) {
     for (const entry of pendingAuditEntries) {
       appendAuditLogFile(entry);
     }
-    if (pendingAuditEntries.length > 0 && Array.isArray(audit_logs) && audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD) {
+    if (pendingAuditEntries.length > 0 && Array.isArray(audit_logs) &&
+        (audit_logs.length > AUDIT_LOG_COMPACT_THRESHOLD || getAuditLogFileSize() > AUDIT_LOG_MAX_FILE_BYTES)) {
       // 圧縮前にディスクの最新内容を読み直してマージする。共有DBフォルダ運用で
       // 他プロセスが追記済みのエントリを、このプロセスの古いメモリ状態で
       // 上書き消去してしまわないようにするため(このプロセスのメモリだけを
       // 正として丸ごと書き換えると、他プロセスの追記分がサイレントに失われる)
       const merged = mergeAuditLogEntries(audit_logs, loadAuditLogFile());
-      data.audit_logs = merged.slice(Math.max(0, merged.length - AUDIT_LOG_MAX_ENTRIES));
-      rewriteAuditLogFile(data.audit_logs);
+      const candidates = merged.slice(Math.max(0, merged.length - AUDIT_LOG_MAX_ENTRIES));
+      data.audit_logs = rewriteAuditLogFile(candidates) || candidates;
     }
 
     // 書き込み成功後にローリングバックアップを更新する
