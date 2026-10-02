@@ -163,11 +163,15 @@ async function testParentConnection(parentIp, token, logPrefix) {
 // 使う共通処理。呼び出し元の既存のエラー処理方針(投げるか警告に留めるか)は
 // そのまま呼び出し元に委ねる。
 async function saveLocalShareModeSettings(mode, parentIp) {
-  if (!window.electronAPI?.dbRequest) return;
-  await Promise.all([
-    window.electronAPI.dbRequest({ url: 'tables/system_settings/share_mode', options: { method: 'PATCH', body: JSON.stringify({ value: mode }) } }),
-    window.electronAPI.dbRequest({ url: 'tables/system_settings/parent_ip', options: { method: 'PATCH', body: JSON.stringify({ value: parentIp }) } }),
-  ]);
+  if (!window.electronAPI?.dbRequest) throw new Error('ローカル設定の保存機能を利用できません');
+  // Resolve IPC responses as well as rejected promises: disk errors use success:false.
+  for (const [id, value] of [['share_mode', mode], ['parent_ip', parentIp]]) {
+    const result = await window.electronAPI.dbRequest({
+      url: `tables/system_settings/${id}`,
+      options: { method: 'PATCH', body: JSON.stringify({ value }) },
+    });
+    if (!result?.success) throw new Error(result?.message || 'ローカル設定を保存できませんでした');
+  }
 }
 
 let terminalApiTokenCache = null;

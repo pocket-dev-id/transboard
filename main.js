@@ -1530,6 +1530,8 @@ function readTerminalRole() {
       deviceName: String(role.deviceName || role.device_name || ''),
       preventSleep: typeof role.preventSleep === 'boolean' ? role.preventSleep : null,
       alwaysOnTop: typeof role.alwaysOnTop === 'boolean' ? role.alwaysOnTop : null,
+      setupCompleted: typeof role.setupCompleted === 'boolean' ? role.setupCompleted : null,
+      provisioningError: String(role.provisioningError || ''),
       updatedAt: Number(role.updatedAt || 0) || 0,
     };
   } catch (err) {
@@ -1539,7 +1541,7 @@ function readTerminalRole() {
 }
 
 function writeTerminalRole(
-  { shareMode, parentIp = '', terminalRole, wardId, deviceName, preventSleep, alwaysOnTop } = {}
+  { shareMode, parentIp = '', terminalRole, wardId, deviceName, preventSleep, alwaysOnTop, setupCompleted, provisioningError } = {}
 ) {
   try {
     const existing = readTerminalRole();
@@ -1553,6 +1555,8 @@ function writeTerminalRole(
       deviceName: String(deviceName ?? existing?.deviceName ?? ''),
       preventSleep: typeof preventSleep === 'boolean' ? preventSleep : (existing?.preventSleep ?? null),
       alwaysOnTop: typeof alwaysOnTop === 'boolean' ? alwaysOnTop : (existing?.alwaysOnTop ?? null),
+      setupCompleted: typeof setupCompleted === 'boolean' ? setupCompleted : (existing?.setupCompleted ?? null),
+      provisioningError: provisioningError === undefined ? (existing?.provisioningError || '') : String(provisioningError),
       updatedAt: Date.now(),
     };
     safeWriteFile(TERMINAL_ROLE_FILE, JSON.stringify(role, null, 2));
@@ -1609,6 +1613,8 @@ function isLocalParentAddress(parentIp) {
 //  2. expiresAt を過ぎたファイルは取り込まずに破棄する（配布し損ねた古いファイルが
 //     いつまでも有効なトークンを晒したままにならないようにする）
 //  3. 監査ログに記録する（トークン本体はマスクし、値そのものは残さない）
+let provisioningResult = null;
+
 function applyProvisioningFile() {
   if (!fs.existsSync(PROVISIONING_FILE)) return null;
 
@@ -1627,7 +1633,7 @@ function applyProvisioningFile() {
   try {
     raw = JSON.parse(fs.readFileSync(PROVISIONING_FILE, 'utf8'));
   } catch (err) {
-    return discard(`JSONとして読み取れません(${err.message})`);
+    return discard('JSONとして読み取れません。配布設定を作成し直してください');
   }
   if (!raw || typeof raw !== 'object') return discard('内容がオブジェクトではありません');
   if (Number(raw.version) !== 1) return discard(`未対応のversion(${raw.version})です`);
@@ -1637,6 +1643,7 @@ function applyProvisioningFile() {
     return discard('有効期限を過ぎています');
   }
 
+  if (!['parent', 'client', 'child'].includes(raw.shareMode)) return discard('shareModeが不正です');
   const shareMode = normalizeShareMode(raw.shareMode);
   const parentIp = String(raw.parentIp || '').trim();
   if (shareMode === 'client' && !parentIp) {
@@ -1658,8 +1665,13 @@ function applyProvisioningFile() {
   const preventSleep = typeof raw.preventSleep === 'boolean' ? raw.preventSleep : undefined;
   const alwaysOnTop = typeof raw.alwaysOnTop === 'boolean' ? raw.alwaysOnTop : undefined;
 
-  const savedRole = writeTerminalRole({ shareMode, parentIp, terminalRole, wardId, deviceName, preventSleep, alwaysOnTop });
-  if (!savedRole) return discard('端末役割の保存に失敗しました');
+  const savedRole = writeTerminalRole({ shareMode, parentIp, terminalRole, wardId, deviceName, preventSleep, alwaysOnTop, setupCompleted: false, provisioningError: '' });
+  if (!savedRole) return discard('端末役割の保存に失敗しました。初期設定から再設定してください');
+  const failPartial = (reason) => {
+    writeTerminalRole({ ...savedRole, setupCompleted: false, provisioningError: reason });
+    discard(reason);
+    return { success: false, partial: true, reason, role: savedRole };
+  };
 
   // 実際に保存された値(未指定なら既存値を引き継いだ結果)を以後の記録に使う
   const applied = {
@@ -1672,10 +1684,7 @@ function applyProvisioningFile() {
   if (apiToken) {
     const tokenResult = setTerminalApiToken(apiToken);
     if (!tokenResult.success) {
-      // 役割は保存済みだが、トークンが入らないと子機は親機へ接続できない。
-      // 平文を残さず削除したうえで、何が起きたかを明確に残す
-      discard(`APIトークンを安全に保存できませんでした(${tokenResult.message || '不明なエラー'})`);
-      return { success: false, reason: 'token_store_failed', role: savedRole };
+      return failPartial('APIトークンの保存に失敗しました。初期設定からトークンを再入力してください');
     }
     applied.tokenSet = true;
   }
@@ -1690,7 +1699,7 @@ function applyProvisioningFile() {
   }
 
   try {
-    const db = readDB();
+    const db = JSON.parse(JSON.stringify(readDB()));
     db.system_settings = db.system_settings || [];
     const wizardSetting = getSettingRecord(db, 'wizard_completed');
     if (wizardSetting) wizardSetting.value = 'true';
@@ -1712,12 +1721,13 @@ function applyProvisioningFile() {
       },
     });
     if (!writeDB(db)) {
-      console.error('[Provisioning] 取り込み結果のDB保存に失敗しました。ディスク容量や書き込み権限を確認してください。');
+      return failPartial('初期設定のDB保存に失敗しました。ディスク容量や権限を確認して再設定してください');
     }
   } catch (err) {
-    console.error('[Provisioning] 取り込み結果のDB反映に失敗:', err.message);
+    return failPartial('初期設定のDB反映に失敗しました。初期設定から再設定してください');
   }
 
+  // 保存済みと利用準備完了を分ける。接続・担当病棟の確認は端末の初期設定で行う。
   // 平文トークンを含むファイルは、取り込みが済んだら必ず消す
   try {
     fs.unlinkSync(PROVISIONING_FILE);
@@ -3869,7 +3879,7 @@ handleTrusted('db-request', async (event, { url, options }) => {
       return processTransferStartRequest(method, options.body || '', false, null, { terminalRole });
     }
     const result = await processDbRequest(method, url, options.body || '', false);
-    syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
+    if (result?.success !== false) syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
     return result;
   } catch (err) {
     console.error('[DB Request] 予期しないエラー:', err);
@@ -3924,6 +3934,8 @@ handleTrusted('get-terminal-role', () => {
   return {
     success: true,
     terminalRole: normalizeTerminalRole(role.terminalRole),
+    setupCompleted: role.setupCompleted ?? null,
+    provisioningError: provisioningResult?.success === false ? provisioningResult.reason : (role.provisioningError || ''),
     // 配布管理ツールが投入した既定値。画面側は「まだ利用者が選んだ/変更した
     // ことがない初回のみ」これらの値を採用する（利用者の選択を上書きしない）
     wardId: String(role.wardId || ''),
@@ -3938,8 +3950,12 @@ handleTrusted('set-terminal-role', (event, value) => {
   const saved = writeTerminalRole({
     shareMode: current.shareMode || getSettingRecord(db, 'share_mode')?.value,
     parentIp: current.parentIp ?? getSettingRecord(db, 'parent_ip')?.value ?? '',
-    terminalRole: value,
+    ...(value && typeof value === 'object' ? {
+      ...value,
+      terminalRole: normalizeTerminalRole(value.terminalRole),
+    } : { terminalRole: value }),
   });
+  if (saved?.setupCompleted === true) provisioningResult = null;
   return saved
     ? { success: true, terminalRole: saved.terminalRole }
     : { success: false, message: '端末役割を保存できませんでした' };
@@ -5324,7 +5340,7 @@ app.whenReady().then(() => {
   // 配布管理ツールが置いた初期設定の取り込みは、役割の自動修復より前に行う。
   // 後だと、取り込んだ役割が同じ起動の repairShareModeBeforeServerStart() に
   // 反映されず、初回起動が旧役割のまま動いてしまう
-  applyProvisioningFile();
+  provisioningResult = applyProvisioningFile();
   const shareMode = repairShareModeBeforeServerStart();
   createWindow();
   if (shareMode === 'parent') {
