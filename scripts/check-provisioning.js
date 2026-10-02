@@ -69,8 +69,9 @@ function makeContext({ tokenResult = { success: true }, writeDbOk = true } = {})
       fs.writeFileSync(target, content, 'utf8');
     },
     readDB: () => state.db,
-    writeDB: () => {
+    writeDB: db => {
       state.dbWrites++;
+      if (writeDbOk) state.db = db;
       return writeDbOk;
     },
     getSettingRecord: (db, id) => (db.system_settings || []).find((s) => s.id === id),
@@ -139,6 +140,37 @@ function writeProvisioning(state, payload) {
 }
 
 function main() {
+  // DB failure is never reported as complete; plaintext still removed.
+  {
+    const { state, applyProvisioningFile } = makeContext({ writeDbOk: false });
+    writeProvisioning(state, { version: 1, shareMode: 'parent' });
+    const result = applyProvisioningFile();
+    assert.strictEqual(result.success, false, 'DB failure must remain incomplete');
+    assert.strictEqual(result.partial, true, 'Partial application must be explicit');
+    assert.strictEqual(state.db.system_settings[0].value, 'false', 'Failed DB write must not change cached completion');
+    assert.strictEqual(state.roleWrites.at(-1).setupCompleted, false);
+    assert.ok(state.roleWrites.at(-1).provisioningError);
+    assert.strictEqual(fs.existsSync(state.provisioningFile), false);
+  }
+
+  // After a partial token failure, re-provisioning succeeds without losing defaults.
+  {
+    const tokenResult = { success: false };
+    const { state, applyProvisioningFile, readTerminalRole } = makeRealRoleContext({ tokenResult });
+    const payload = { version: 1, shareMode: 'client', parentIp: '10.0.0.9', terminalRole: 'ward', wardId: 'ward-7', apiToken: 'z'.repeat(32) };
+    writeProvisioning(state, payload);
+    assert.strictEqual(applyProvisioningFile().success, false);
+    assert.strictEqual(readTerminalRole().setupCompleted, false);
+    assert.ok(readTerminalRole().provisioningError);
+    tokenResult.success = true;
+    writeProvisioning(state, payload);
+    assert.strictEqual(applyProvisioningFile().success, true);
+    assert.strictEqual(readTerminalRole().wardId, 'ward-7');
+    assert.strictEqual(readTerminalRole().provisioningError, '');
+    assert.strictEqual(readTerminalRole().setupCompleted, false, 'Saved provisioning still needs readiness verification');
+    assert.strictEqual(fs.existsSync(state.provisioningFile), false);
+  }
+
   // 1) 正常系(子機): 役割・トークンが保存され、平文ファイルが削除されること
   {
     const { state, applyProvisioningFile } = makeContext();

@@ -429,6 +429,20 @@ const App = {
     return this.getTerminalRole() === 'exam';
   },
 
+  async _isInitialSetupReady() {
+    const mode = readLocalShareMode();
+    if (!mode || this._terminalSetupPending) return false;
+    const localDone = localStorage.getItem('cfg_wizard_completed') === 'true';
+    // Preserve existing parents. Shared completion never applies to a new client.
+    const legacyParentDone = mode === 'parent' && AppState.systemSettings?.some(s => s.id === 'wizard_completed' && s.value === 'true');
+    if (!localDone && !legacyParentDone) return false;
+    if (mode === 'client') {
+      return !!localStorage.getItem('cfg_parent_ip') && !!await API.getTerminalApiToken() &&
+        ['ward', 'exam'].includes(localStorage.getItem('cfg_terminal_role'));
+    }
+    return true;
+  },
+
   async _loadTerminalRole() {
     const storedRole = localStorage.getItem('cfg_terminal_role');
     const needsRole = storedRole !== 'exam' && storedRole !== 'ward';
@@ -438,9 +452,10 @@ const App = {
     const needsDeviceName = !localStorage.getItem('_device_name');
     const needsPreventSleep = localStorage.getItem('cfg_prevent_sleep') === null;
     const needsAlwaysOnTop = localStorage.getItem('cfg_always_on_top') === null;
-    if (!needsRole && !needsWard && !needsDeviceName && !needsPreventSleep && !needsAlwaysOnTop) return;
     try {
       const result = await window.electronAPI?.getTerminalRole?.();
+      this._terminalSetupPending = result?.setupCompleted === false || !!result?.provisioningError;
+      if (result?.provisioningError) UI.toast('配布設定は未完了です: ' + result.provisioningError, 'warning', 12000);
       if (needsRole) {
         localStorage.setItem('cfg_terminal_role', result?.terminalRole === 'exam' ? 'exam' : 'ward');
       }
@@ -457,6 +472,7 @@ const App = {
         localStorage.setItem('cfg_always_on_top', String(result.alwaysOnTop));
       }
     } catch (err) {
+      this._terminalSetupPending = true;
       console.warn('[TerminalRole] 端末役割の読み込みに失敗しました:', err);
       if (needsRole) localStorage.setItem('cfg_terminal_role', 'ward');
     }
@@ -601,8 +617,7 @@ const App = {
     }
 
     // 初期設定ウィザードの自動起動チェック
-    const wizardSetting = AppState.systemSettings?.find(s => s.id === 'wizard_completed');
-    if (!wizardSetting || wizardSetting.value !== 'true') {
+    if (!await this._isInitialSetupReady()) {
       setTimeout(() => {
         Wizard.open();
       }, 500);

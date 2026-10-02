@@ -16,8 +16,10 @@ const Wizard = {
       share_mode:                   readLocalShareMode() || 'parent',
       standalone:                   localStorage.getItem('cfg_standalone_mode') === 'true',
       terminal_role:                localStorage.getItem('cfg_terminal_role') === 'exam' ? 'exam' : 'ward',
-      parent_ip:                    localStorage.getItem('cfg_parent_ip')  || gs('parent_ip')  || '',
+      parent_ip:                    localStorage.getItem('cfg_parent_ip') || '',
       api_token:                    terminalApiToken,
+      ward_id: localStorage.getItem('current_ward_id') || '',
+      device_name: localStorage.getItem('_device_name') || '',
       import_connection_type:       gs('import_connection_type')       || 'csv',
       import_directory:             gs('import_directory')             || '',
       odbc_connection_string:       gs('odbc_connection_string')       || '',
@@ -29,8 +31,8 @@ const Wizard = {
       smb_username:                 gs('smb_username')                 || '',
       smb_password:                 gs('smb_password')                 || '',
       admission_mode:               gs('admission_mode') === 'hybrid' ? 'hybrid' : 'csv',
-      font_style:                   gs('font_style')                   || 'ud',
-      default_zoom:                 gs('default_zoom')                 || '1.0',
+      font_style:                   localStorage.getItem('cfg_font_style') || gs('font_style') || 'ud',
+      default_zoom:                 localStorage.getItem('cfg_app_zoom') || gs('default_zoom') || '1.0',
       enable_patient_ic_association: gs('enable_patient_ic_association') || 'false',
     };
 
@@ -48,12 +50,17 @@ const Wizard = {
     }
     overlay.classList.remove('hidden');
 
-    const stepLabels = ['稼働モード', '連携設定', '表示・管理', '確認と完了'];
+    const stepLabels = this.config.share_mode === 'client'
+      ? ['接続設定', '端末・表示設定', '確認と完了']
+      : ['稼働モード', '連携設定', '端末・表示設定', '確認と完了'];
+    const steps = this.config.share_mode === 'client' ? [1, 3, 4] : [1, 2, 3, 4];
+    this.totalSteps = steps.length;
+    const stepIndex = steps.indexOf(this.currentStep);
 
     const progressDots = stepLabels.map((label, i) => {
       const n = i + 1;
-      const done    = n < this.currentStep;
-      const current = n === this.currentStep;
+      const done    = i < stepIndex;
+      const current = i === stepIndex;
       return `
         <div class="wiz-step-item ${done ? 'done' : ''} ${current ? 'current' : ''}">
           <div class="wiz-step-circle">${done ? '<i class="fas fa-check"></i>' : n}</div>
@@ -86,7 +93,7 @@ const Wizard = {
           </div>
           <div style="display:flex; gap:8px;">
             <button class="btn btn-outline" id="wizard-cancel">スキップ</button>
-            ${this.currentStep < this.totalSteps
+            ${this.currentStep !== 4
               ? `<button class="btn btn-primary" id="wizard-next">次へ <i class="fas fa-chevron-right"></i></button>`
               : `<button class="btn btn-success" id="wizard-finish"><i class="fas fa-check-circle"></i> 設定を適用して完了</button>`
             }
@@ -288,8 +295,16 @@ const Wizard = {
   _step3() {
     const admSel = v => this.config.admission_mode === v;
     return `
-      <h4 class="wiz-step-title">3. 表示・管理設定</h4>
-      <p class="wiz-step-desc">画面の表示スタイルと在室管理の運用モードを設定します。あとから設定画面でいつでも変更できます。</p>
+      <h4 class="wiz-step-title">端末・表示設定</h4>
+      <p class="wiz-step-desc">病棟・端末名・表示設定はこの端末に保存します。共有の管理設定は親機で設定します。</p>
+      <label class="wiz-label">端末表示名 <span style="color:#dc2626">*</span></label>
+      <input id="wizard-device-name" class="wiz-input" maxlength="64" value="${UI.escapeHTML(this.config.device_name || '')}" placeholder="例: 3階ナースステーション">
+      ${this.config.terminal_role === 'ward' ? `
+      <label class="wiz-label">担当病棟 <span style="color:#dc2626">*</span></label>
+      <select id="wizard-ward" class="wiz-input">
+        <option value="">病棟を選択してください</option>
+        ${(this.config.wards || AppState.wards || []).map(w => `<option value="${UI.escapeHTML(String(w.id))}" ${String(w.id) === this.config.ward_id ? 'selected' : ''}>${UI.escapeHTML(w.name)}</option>`).join('')}
+      </select>` : ''}
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
         <div>
@@ -325,10 +340,10 @@ const Wizard = {
       <div class="wiz-hint" style="margin-bottom:16px;"><i class="fas fa-info-circle"></i> 在室管理モードは親機の設定に従います。</div>
       `}
 
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:700; color:var(--clr-text);">
+      ${this.config.share_mode === 'parent' ? `<label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; font-weight:700; color:var(--clr-text);">
         <input type="checkbox" id="wizard-ic-association" ${this.config.enable_patient_ic_association === 'true' ? 'checked' : ''}>
         患者ICカード（RFID）連携機能を有効化する
-      </label>
+      </label>` : ''}
     `;
   },
 
@@ -343,14 +358,17 @@ const Wizard = {
     const rows = [
       ['稼働モード',     modeLabel],
       this.config.share_mode === 'client' ? ['接続先親機IP', this.config.parent_ip || '（未設定）'] : null,
-      ['外部連携方式',   connLabels[this.config.import_connection_type]],
-      this.config.import_connection_type === 'csv'  ? ['CSV監視フォルダ', this.config.import_directory || '（未設定）'] : null,
-      this.config.import_connection_type === 'odbc' ? ['ODBC接続文字列', this.config.odbc_connection_string ? '✅ 設定済み' : '⚠ 未設定'] : null,
-      this.config.import_connection_type === 'odbc' ? ['SQLクエリ',       this.config.odbc_sql_query ? '✅ 設定済み' : '⚠ 未設定'] : null,
-      ['在室管理モード', admLabels[this.config.admission_mode]],
+      ['画面役割', this.config.terminal_role === 'exam' ? '検査室' : '病棟'],
+      ['端末表示名', this.config.device_name],
+      this.config.terminal_role === 'ward' ? ['担当病棟', (this.config.wards || AppState.wards || []).find(w => String(w.id) === this.config.ward_id)?.name || this.config.ward_id] : null,
+      this.config.share_mode === 'parent' ? ['外部連携方式', connLabels[this.config.import_connection_type]] : null,
+      this.config.share_mode === 'parent' && this.config.import_connection_type === 'csv'  ? ['CSV監視フォルダ', this.config.import_directory || '（未設定）'] : null,
+      this.config.share_mode === 'parent' && this.config.import_connection_type === 'odbc' ? ['ODBC接続文字列', this.config.odbc_connection_string ? '✅ 設定済み' : '⚠ 未設定'] : null,
+      this.config.share_mode === 'parent' && this.config.import_connection_type === 'odbc' ? ['SQLクエリ',       this.config.odbc_sql_query ? '✅ 設定済み' : '⚠ 未設定'] : null,
+      this.config.share_mode === 'parent' ? ['在室管理モード', admLabels[this.config.admission_mode]] : null,
       ['表示倍率',       parseFloat(this.config.default_zoom) * 100 + '%'],
       ['フォント',       this.config.font_style === 'ud' ? 'UDフォント' : '標準ゴシック'],
-      ['ICカード連携',   this.config.enable_patient_ic_association === 'true' ? '有効' : '無効'],
+      this.config.share_mode === 'parent' ? ['ICカード連携', this.config.enable_patient_ic_association === 'true' ? '有効' : '無効'] : null,
     ].filter(Boolean);
 
     const tableRows = rows.map(([k, v]) => `
@@ -380,7 +398,7 @@ const Wizard = {
       </div>` : '';
 
     return `
-      <h4 class="wiz-step-title">4. 設定内容の確認と完了</h4>
+      <h4 class="wiz-step-title">設定内容の確認と完了</h4>
       <p class="wiz-step-desc">設定に間違いがないかご確認ください。既存の移送履歴や登録データはそのまま維持されます。</p>
       <table style="width:100%; border-collapse:collapse; font-size:12px; background:rgba(0,0,0,.02); border-radius:8px; overflow:hidden; border:1px solid var(--clr-border);">
         ${tableRows}
@@ -422,16 +440,27 @@ const Wizard = {
     // 戻る
     document.getElementById('wizard-prev')?.addEventListener('click', () => {
       this._saveCurrentStepState();
-      this.currentStep--;
+      this.currentStep = this.config.share_mode === 'client' && this.currentStep === 3 ? 1 : this.currentStep - 1;
       this._renderModal();
     });
 
     // 次へ
-    document.getElementById('wizard-next')?.addEventListener('click', () => {
-      if (this._validateStep()) {
+    document.getElementById('wizard-next')?.addEventListener('click', async () => {
+      const btn = document.getElementById('wizard-next');
+      if (this._advancing) return;
+      this._advancing = true;
+      if (btn) btn.disabled = true;
+      try {
         this._saveCurrentStepState();
-        this.currentStep++;
-        this._renderModal();
+        if (this._validateStep() && (this.currentStep !== 1 || await this._verifyClientConnection())) {
+          this.currentStep = this.config.share_mode === 'client' && this.currentStep === 1 ? 3 : this.currentStep + 1;
+          this._renderModal();
+        }
+      } catch (err) {
+        UI.toast('接続確認に失敗しました: ' + err.message, 'danger');
+      } finally {
+        this._advancing = false;
+        if (btn) btn.disabled = false;
       }
     });
 
@@ -623,6 +652,10 @@ const Wizard = {
       if (query) this.config.odbc_sql_query = query.value.trim();
     }
     if (this.currentStep === 3) {
+      const ward = document.getElementById('wizard-ward');
+      if (ward) this.config.ward_id = ward.value;
+      const name = document.getElementById('wizard-device-name');
+      if (name) this.config.device_name = name.value.trim();
       const zoom  = document.getElementById('wizard-zoom');
       if (zoom)  this.config.default_zoom = zoom.value;
       const font  = document.getElementById('wizard-font');
@@ -638,11 +671,38 @@ const Wizard = {
     if (this.currentStep === 1 && this.config.share_mode === 'client') {
       const ip = document.getElementById('wizard-parent-ip')?.value.trim();
       if (!ip) { UI.toast('子機モードでは親機IPアドレスを入力してください', 'warning'); return false; }
+      const token = document.getElementById('wizard-api-token')?.value.trim();
+      if (!token) { UI.toast('APIトークンを入力してください', 'warning'); return false; }
     }
     if (this.currentStep === 2 && this.config.share_mode === 'parent' && this.config.import_connection_type === 'odbc') {
       const cs = document.getElementById('wiz-odbc-connstr')?.value.trim();
       if (!cs) { UI.toast('ODBC接続文字列を入力してください', 'warning'); return false; }
     }
+    if (this.currentStep === 3) {
+      this._saveCurrentStepState();
+      if (!this.config.device_name) { UI.toast('端末表示名を入力してください', 'warning'); return false; }
+      if (this.config.terminal_role === 'ward' && !(this.config.wards || AppState.wards || []).some(w => String(w.id) === this.config.ward_id)) {
+        UI.toast('担当病棟を選択してください', 'warning'); return false;
+      }
+    }
+    return true;
+  },
+
+  async _verifyClientConnection() {
+    if (this.config.share_mode !== 'client') return true;
+    if (!this.config.parent_ip || !this.config.api_token) {
+      UI.toast('親機IPアドレスとAPIトークンを入力してください', 'warning'); return false;
+    }
+    const result = await testParentConnection(this.config.parent_ip, this.config.api_token, 'Wizard完了前検証');
+    if (result.outcome !== 'ok') {
+      UI.toast('親機への接続・認証を確認できませんでした。接続テストで設定を確認してください', 'danger'); return false;
+    }
+    // Fetch choices from the selected parent, not the previously loaded local DB.
+    const res = await parentFetch(`http://${this.config.parent_ip}:3005/api/tables/wards`, {
+      headers: { 'X-API-Token': this.config.api_token }, purpose: 'connection-test',
+    }, 4000);
+    if (!res.ok) throw new Error('親機の病棟一覧を取得できませんでした');
+    this.config.wards = (await res.json()).data || [];
     return true;
   },
 
@@ -651,78 +711,65 @@ const Wizard = {
   // ─────────────────────────────────────────────────────
 
   async finish() {
+    if (this._finishing) return;
+    this._finishing = true;
     const finishBtn = document.getElementById('wizard-finish');
     if (finishBtn) { finishBtn.disabled = true; finishBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 適用中...'; }
 
     try {
       this._saveCurrentStepState();
 
-      // 接続設定（このデバイス自身の役割・接続先）はローカル保存のみで完結させる。
-      // ネットワークに一切依存しないため必ず成功し、子機の場合はこれだけで
-      // 「次回起動時に親機へ接続する」ために必要な情報が揃う。
-      // share_mode/parent_ip/api_token を共有DBテーブルへ書き込んではいけない
-      // （子機が誤って"親機自身の"稼働モードを上書きしてしまう事故になるため）。
-      localStorage.setItem('cfg_share_mode', this.config.share_mode);
-      localStorage.setItem('cfg_parent_ip', this.config.parent_ip || '');
-      localStorage.setItem('cfg_terminal_role', this.config.terminal_role === 'exam' ? 'exam' : 'ward');
-      if (window.electronAPI?.setTerminalRole) {
-        const roleSave = await window.electronAPI.setTerminalRole(this.config.terminal_role === 'exam' ? 'exam' : 'ward');
-        if (roleSave?.success === false) {
-          throw new Error(roleSave.message || '端末役割を保存できませんでした');
-        }
+      if (!await this._verifyClientConnection()) return;
+      if (!this.config.device_name || (this.config.terminal_role === 'ward' &&
+          !(this.config.wards || AppState.wards || []).some(w => String(w.id) === this.config.ward_id))) {
+        throw new Error('端末表示名と担当病棟を確認してください');
       }
+      localStorage.removeItem('cfg_wizard_completed');
+      // Persist pending first: any later failure must remain visibly incomplete.
+      const role = {
+        shareMode: this.config.share_mode, parentIp: this.config.parent_ip || '',
+        terminalRole: this.config.terminal_role === 'exam' ? 'exam' : 'ward',
+        wardId: this.config.ward_id || '', deviceName: this.config.device_name,
+        setupCompleted: false, provisioningError: '',
+      };
+      const pending = await window.electronAPI?.setTerminalRole?.(role);
+      if (!pending?.success) throw new Error(pending?.message || '端末設定を保存できませんでした');
+      App._terminalSetupPending = true;
       const tokenSave = await API.setTerminalApiToken(this.config.api_token || '');
-      if (!tokenSave?.success) {
-        throw new Error(tokenSave?.message || 'APIトークンを安全に保存できませんでした');
-      }
-      // 単独運用モードは親機のときのみ有効な端末ローカルの表示フラグ
+      if (!tokenSave?.success) throw new Error(tokenSave?.message || 'APIトークンを安全に保存できませんでした');
+      await saveLocalShareModeSettings(this.config.share_mode, this.config.parent_ip || '');
+      localStorage.setItem('cfg_share_mode', role.shareMode);
+      localStorage.setItem('cfg_parent_ip', role.parentIp);
+      localStorage.setItem('cfg_terminal_role', role.terminalRole);
+      localStorage.setItem('current_ward_id', role.wardId);
+      localStorage.setItem('_device_name', role.deviceName);
+      localStorage.setItem('cfg_app_zoom', this.config.default_zoom);
+      localStorage.setItem('cfg_font_style', this.config.font_style);
       localStorage.setItem('cfg_standalone_mode',
         (this.config.share_mode === 'parent' && this.config.standalone) ? 'true' : 'false');
 
-      // 稼働モード・親機IPはこの端末自身のローカルDBにも書き込む
-      try {
-        await saveLocalShareModeSettings(this.config.share_mode, this.config.parent_ip || '');
-      } catch (e) {
-        console.warn('[Wizard] ローカルDBへの稼働モード保存に失敗:', e);
-      }
-
-      // 表示設定など、親機・子機を問わず共有DBへ反映してよい項目
-      const sharedPatches = [
-        API.patch('system_settings', 'default_zoom',                  { value: this.config.default_zoom }),
-        API.patch('system_settings', 'font_style',                    { value: this.config.font_style }),
-        API.patch('system_settings', 'enable_patient_ic_association', { value: this.config.enable_patient_ic_association }),
-      ];
-
-      // 電子カルテ連携・SMB・在室管理モードは親機のみが持つ設定。
-      // 子機のウィザードがこれらを送ると、親機の実際の連携設定を
-      // 子機側の未入力・初期値で上書きしてしまうため、親機モード選択時のみ送る。
+      // Child setup has no shared writes. Local display overrides already exist.
       if (this.config.share_mode === 'parent') {
-        sharedPatches.push(
-          API.patch('system_settings', 'import_connection_type', { value: this.config.import_connection_type }),
-          API.patch('system_settings', 'import_directory',       { value: this.config.import_directory }),
-          API.patch('system_settings', 'odbc_connection_string', { value: this.config.odbc_connection_string }),
-          API.patch('system_settings', 'odbc_sql_query',         { value: this.config.odbc_sql_query }),
-          API.patch('system_settings', 'smb_auth_mode',          { value: this.config.smb_auth_mode }),
-          API.patch('system_settings', 'smb_username',           { value: this.config.smb_username }),
-          API.patch('system_settings', 'smb_password',           { value: this.config.smb_password }),
-          API.patch('system_settings', 'admission_mode',         { value: this.config.admission_mode }),
-          API.patch('system_settings', 'wizard_completed',       { value: 'true' }),
-        );
+        const ids = ['enable_patient_ic_association', 'import_connection_type', 'import_directory',
+          'odbc_connection_string', 'odbc_sql_query', 'smb_auth_mode', 'smb_username',
+          'smb_password', 'admission_mode'];
+        for (const id of ids) {
+          const result = await API.patch('system_settings', id, { value: this.config[id] });
+          if (result?.success === false) throw new Error(result.message || '共有設定を保存できませんでした');
+        }
+        const completed = await API.patch('system_settings', 'wizard_completed', { value: 'true' });
+        if (completed?.success === false) throw new Error(completed.message || '完了状態を保存できませんでした');
+        if (await App.loadMasters() === false) throw new Error('マスターを読み込めませんでした');
+        AppState.currentWardId = this.config.ward_id;
+        App.syncWardSelect();
+        if (await App.refreshData() === false) throw new Error('データを読み込めませんでした');
+        await App.applySystemVisualSettings();
       }
-
-      // 一部の項目が失敗しても（例: 子機から親機に一時的に届かない等）
-      // 接続設定は既にローカルへ保存済みなので、ウィザード自体は完了させる。
-      const results = await Promise.allSettled(sharedPatches);
-      const failedCount = results.filter(r => r.status === 'rejected').length;
-      if (failedCount > 0) {
-        console.warn('[Wizard] 一部の設定を共有DBへ反映できませんでした:', results.filter(r => r.status === 'rejected'));
-      }
-
-      if (failedCount > 0) {
-        UI.toast(`初期設定を保存しました（一部の項目は反映できませんでした。接続後に設定画面から確認してください）`, 'warning', 7000);
-      } else {
-        UI.toast('初期設定が完了しました！', 'success');
-      }
+      const saved = await window.electronAPI.setTerminalRole({ ...role, setupCompleted: true });
+      if (!saved?.success) throw new Error(saved?.message || '完了状態を保存できませんでした');
+      localStorage.setItem('cfg_wizard_completed', 'true');
+      App._terminalSetupPending = false;
+      UI.toast('初期設定が完了しました', 'success');
 
       if (this.config.share_mode === 'client') {
         // 子機モード: データ接続先が変わるため再起動するまで正常動作しない
@@ -731,9 +778,6 @@ const Wizard = {
         return;
       }
 
-      await App.loadMasters();
-      await App.refreshData();
-      await App.applySystemVisualSettings();
       // 単独運用モードのUI反映（検査室タブ・通話ボタン・接続端末チップ）とポーリング再判定
       App._applyStandaloneMode();
       App._applyTerminalRoleMode({ navigate: false });
@@ -744,6 +788,8 @@ const Wizard = {
     } catch (err) {
       console.error('[Wizard Finish Error]', err);
       UI.toast('設定の適用に失敗しました: ' + err.message, 'danger');
+    } finally {
+      this._finishing = false;
       if (finishBtn) {
         finishBtn.disabled = false;
         finishBtn.innerHTML = '<i class="fas fa-check-circle"></i> 設定を適用して完了';

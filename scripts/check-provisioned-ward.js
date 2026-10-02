@@ -18,6 +18,7 @@ function buildHarness({ stored = {}, roleResult, roleThrows = false } = {}) {
   const sandbox = {
     console: { warn() {}, log() {} },
     Promise, String,
+    UI: { toast() {} },
     localStorage: {
       getItem: (k) => (Object.prototype.hasOwnProperty.call(state.store, k) ? state.store[k] : null),
       setItem: (k, v) => { state.store[k] = String(v); },
@@ -68,8 +69,8 @@ async function main() {
       'BUG FIX: 利用者が選んだ病棟を配布時の既定値で上書きしないこと'
     );
     assert.strictEqual(
-      state.getTerminalRoleCalls, 0,
-      'すべての項目が確定済みなら、毎起動でIPCを呼ばないこと'
+      state.getTerminalRoleCalls, 1,
+      '設定済みでも毎起動で端末の未完了状態を確認すること'
     );
   }
 
@@ -154,7 +155,7 @@ async function main() {
       state.store.cfg_always_on_top, 'false',
       'BUG FIX: 利用者が明示的にfalseへ設定済みの常に最前面を上書きしないこと'
     );
-    assert.strictEqual(state.getTerminalRoleCalls, 0, 'すべての項目が確定済みなら、毎起動でIPCを呼ばないこと');
+    assert.strictEqual(state.getTerminalRoleCalls, 1, '設定済みでも毎起動で端末の未完了状態を確認すること');
   }
 
   // 8) 配布側でpreventSleep/alwaysOnTop/deviceNameが指定されていなければ、
@@ -170,6 +171,14 @@ async function main() {
     assert.strictEqual(state.store.cfg_always_on_top, undefined, 'alwaysOnTopが未指定なら書き込まないこと');
   }
 
+  {
+    const { obj } = buildHarness({
+      stored: { cfg_terminal_role: 'ward', current_ward_id: 'ward-9', _device_name: 'PC1', cfg_prevent_sleep: 'false', cfg_always_on_top: 'false' },
+      roleResult: { setupCompleted: false, provisioningError: 'DB保存失敗' },
+    });
+    await obj._loadTerminalRole();
+    assert.strictEqual(obj._terminalSetupPending, true, '既存の端末設定があっても配布失敗を検出すること');
+  }
   console.log('Provisioned ward checks passed.');
   process.exit(0);
 }
