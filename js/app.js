@@ -583,14 +583,6 @@ const App = {
     // 病棟セレクトの動的同期
     this.syncWardSelect();
 
-    // 検査室の電話番号と病床マップ位置が空なら補完する
-    await DemoData.setup();
-
-    // マスタ再読み込み（デモデータがmap_col等を更新した可能性があるため）
-    await this.loadMasters();
-
-    // 再度同期
-    this.syncWardSelect();
     this._applyTerminalRoleMode({ navigate: false });
 
     // 通話パネル描画（マスタ読み込み後）
@@ -1908,8 +1900,11 @@ const App = {
       } else if (AppState.wards.length > 0) {
         select.value = AppState.wards[0].id;
         AppState.currentWardId = AppState.wards[0].id;
+      } else {
+        AppState.currentWardId = null;
+        localStorage.removeItem('current_ward_id');
       }
-      localStorage.setItem('current_ward_id', AppState.currentWardId);
+      if (AppState.currentWardId) localStorage.setItem('current_ward_id', AppState.currentWardId);
     }
     // 通話パネルの病棟発信ボタン一覧はAppState.wardsのスナップショットを
     // 描画時に固定して持つため、病棟マスタの追加・改名・削除後にここで
@@ -2038,7 +2033,7 @@ const App = {
       const dayEndMs = todayMs + 24 * 60 * 60 * 1000;
       const isExamTerminal = this.isExamTerminal();
       const [eventResult, settingsResult, feedsResult, itemsResult] = await Promise.allSettled([
-        isExamTerminal
+        isExamTerminal || !wardId
           ? Promise.resolve({ activeEvents: [], todayEvents: [], recentStatusLogs: [], recentAnnouncements: [] })
           : API.getWardStatusEvents(wardId, todayMs),
         API.getAll('system_settings').then(res => res.data),

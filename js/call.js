@@ -436,7 +436,7 @@ const CallPanel = {
     if (tab === 'exam-room') {
       return document.getElementById('exam-room-select')?.value || null;
     } else {
-      return AppState.currentWardId || 'ward-1';
+      return AppState.currentWardId || null;
     }
   },
 
@@ -498,7 +498,8 @@ const CallPanel = {
   // ダッシュボードを一時的に見ている間、自分の病棟宛の着信・アナウンスを
   // 一切受信できなくなる
   _getWardListenIds() {
-    const wardId = AppState.currentWardId || 'ward-1';
+    const wardId = AppState.currentWardId;
+    if (!wardId) return [];
     if (!this._homeWardId) {
       // ホーム病棟はlocalStorageで再起動をまたいで保持する。メモリ上だけで
       // 確立していると、前回終了時にたまたま別病棟を一時閲覧していた場合、
@@ -506,8 +507,9 @@ const CallPanel = {
       // ホーム病棟として誤って確立されてしまい、本来のホーム病棟宛の
       // 着信・自動アナウンスを再び取りこぼす
       const savedHomeWardId = localStorage.getItem('_home_ward_id');
-      this._homeWardId = savedHomeWardId || wardId;
-      if (!savedHomeWardId && wardId) localStorage.setItem('_home_ward_id', wardId);
+      const savedHomeExists = AppState.wards.some(ward => String(ward.id) === String(savedHomeWardId));
+      this._homeWardId = savedHomeExists ? savedHomeWardId : wardId;
+      if (!savedHomeExists) localStorage.setItem('_home_ward_id', wardId);
     }
     const ids = [wardId];
     if (this._homeWardId && this._homeWardId !== wardId) ids.push(this._homeWardId);

@@ -299,12 +299,19 @@ const Wizard = {
       <p class="wiz-step-desc">病棟・端末名・表示設定はこの端末に保存します。共有の管理設定は親機で設定します。</p>
       <label class="wiz-label">端末表示名 <span style="color:#dc2626">*</span></label>
       <input id="wizard-device-name" class="wiz-input" maxlength="64" value="${UI.escapeHTML(this.config.device_name || '')}" placeholder="例: 3階ナースステーション">
-      ${this.config.terminal_role === 'ward' ? `
-      <label class="wiz-label">担当病棟 <span style="color:#dc2626">*</span></label>
-      <select id="wizard-ward" class="wiz-input">
-        <option value="">病棟を選択してください</option>
-        ${(this.config.wards || AppState.wards || []).map(w => `<option value="${UI.escapeHTML(String(w.id))}" ${String(w.id) === this.config.ward_id ? 'selected' : ''}>${UI.escapeHTML(w.name)}</option>`).join('')}
-      </select>` : ''}
+      ${this.config.terminal_role === 'ward' ? (() => {
+        const wards = this.config.wards || AppState.wards || [];
+        if (this.config.share_mode === 'parent' && wards.length === 0) {
+          return `<label class="wiz-label">最初の病棟名 <span style="color:#dc2626">*</span></label>
+            <input id="wizard-first-ward-name" class="wiz-input" maxlength="64" value="${UI.escapeHTML(this.config.ward_name || '')}" placeholder="例: 3階内科病棟">
+            <div class="wiz-hint">病棟名は後から病棟マスターで変更できます。</div>`;
+        }
+        return `<label class="wiz-label">担当病棟 <span style="color:#dc2626">*</span></label>
+          <select id="wizard-ward" class="wiz-input">
+            <option value="">病棟を選択してください</option>
+            ${wards.map(w => `<option value="${UI.escapeHTML(String(w.id))}" ${String(w.id) === this.config.ward_id ? 'selected' : ''}>${UI.escapeHTML(w.name)}</option>`).join('')}
+          </select>`;
+      })() : ''}
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
         <div>
@@ -360,7 +367,9 @@ const Wizard = {
       this.config.share_mode === 'client' ? ['接続先親機IP', this.config.parent_ip || '（未設定）'] : null,
       ['画面役割', this.config.terminal_role === 'exam' ? '検査室' : '病棟'],
       ['端末表示名', this.config.device_name],
-      this.config.terminal_role === 'ward' ? ['担当病棟', (this.config.wards || AppState.wards || []).find(w => String(w.id) === this.config.ward_id)?.name || this.config.ward_id] : null,
+      this.config.terminal_role === 'ward' ? ['担当病棟', this.config.ward_id
+        ? ((this.config.wards || AppState.wards || []).find(w => String(w.id) === this.config.ward_id)?.name || this.config.ward_id)
+        : (this.config.ward_name || '（未入力）')] : null,
       this.config.share_mode === 'parent' ? ['外部連携方式', connLabels[this.config.import_connection_type]] : null,
       this.config.share_mode === 'parent' && this.config.import_connection_type === 'csv'  ? ['CSV監視フォルダ', this.config.import_directory || '（未設定）'] : null,
       this.config.share_mode === 'parent' && this.config.import_connection_type === 'odbc' ? ['ODBC接続文字列', this.config.odbc_connection_string ? '✅ 設定済み' : '⚠ 未設定'] : null,
@@ -654,6 +663,8 @@ const Wizard = {
     if (this.currentStep === 3) {
       const ward = document.getElementById('wizard-ward');
       if (ward) this.config.ward_id = ward.value;
+      const firstWard = document.getElementById('wizard-first-ward-name');
+      if (firstWard) this.config.ward_name = firstWard.value.trim();
       const name = document.getElementById('wizard-device-name');
       if (name) this.config.device_name = name.value.trim();
       const zoom  = document.getElementById('wizard-zoom');
@@ -681,10 +692,44 @@ const Wizard = {
     if (this.currentStep === 3) {
       this._saveCurrentStepState();
       if (!this.config.device_name) { UI.toast('端末表示名を入力してください', 'warning'); return false; }
-      if (this.config.terminal_role === 'ward' && !(this.config.wards || AppState.wards || []).some(w => String(w.id) === this.config.ward_id)) {
-        UI.toast('担当病棟を選択してください', 'warning'); return false;
+      if (this.config.terminal_role === 'ward') {
+        const wards = this.config.wards || AppState.wards || [];
+        if (this.config.share_mode === 'parent' && wards.length === 0) {
+          if (!this.config.ward_name) { UI.toast('最初の病棟名を入力してください', 'warning'); return false; }
+        } else if (!wards.some(w => String(w.id) === this.config.ward_id)) {
+          UI.toast('担当病棟を選択してください', 'warning'); return false;
+        }
       }
     }
+    return true;
+  },
+
+  async _ensureInitialWard() {
+    if (this.config.share_mode !== 'parent' || this.config.terminal_role !== 'ward') return true;
+    const wards = AppState.wards || [];
+    if (wards.length > 0) {
+      if (!wards.some(ward => String(ward.id) === String(this.config.ward_id || ''))) {
+        UI.toast('担当病棟を選択してください', 'warning');
+        return false;
+      }
+      return true;
+    }
+    const name = String(this.config.ward_name || '').trim();
+    if (!name) {
+      UI.toast('最初の病棟名を入力してください', 'warning');
+      return false;
+    }
+    const created = await API.create('wards', {
+      name,
+      phone: '',
+      note: '',
+      sort_order: 1,
+    });
+    if (!created?.id) throw new Error('最初の病棟を保存できませんでした');
+    this.config.ward_id = String(created.id);
+    if (await App.loadMasters() === false) throw new Error('病棟マスターを読み込めませんでした');
+    AppState.currentWardId = this.config.ward_id;
+    App.syncWardSelect();
     return true;
   },
 
@@ -720,9 +765,14 @@ const Wizard = {
       this._saveCurrentStepState();
 
       if (!await this._verifyClientConnection()) return;
-      if (!this.config.device_name || (this.config.terminal_role === 'ward' &&
-          !(this.config.wards || AppState.wards || []).some(w => String(w.id) === this.config.ward_id))) {
-        throw new Error('端末表示名と担当病棟を確認してください');
+      if (!this.config.device_name) throw new Error('端末表示名を入力してください');
+      if (this.config.terminal_role === 'ward' && this.config.share_mode === 'parent' &&
+          !(AppState.wards || []).length && !String(this.config.ward_name || '').trim()) {
+        throw new Error('最初の病棟名を入力してください');
+      }
+      if (this.config.terminal_role === 'ward' && this.config.share_mode === 'client' &&
+          !(this.config.wards || []).some(w => String(w.id) === String(this.config.ward_id))) {
+        throw new Error('担当病棟を確認してください');
       }
       localStorage.removeItem('cfg_wizard_completed');
       // Persist pending first: any later failure must remain visibly incomplete.
@@ -747,6 +797,22 @@ const Wizard = {
       localStorage.setItem('cfg_font_style', this.config.font_style);
       localStorage.setItem('cfg_standalone_mode',
         (this.config.share_mode === 'parent' && this.config.standalone) ? 'true' : 'false');
+
+      if (this.config.share_mode === 'parent') {
+        // Reload after switching role so a prior parent's child-side masters are
+        // never mistaken for this terminal's local parent database.
+        if (await App.loadMasters() === false) throw new Error('マスターを読み込めませんでした');
+        App.syncWardSelect();
+        this.config.wards = AppState.wards;
+        if (!await this._ensureInitialWard()) return;
+        role.wardId = this.config.ward_id || '';
+        const wardSaved = await window.electronAPI.setTerminalRole(role);
+        if (!wardSaved?.success) throw new Error(wardSaved?.message || '担当病棟を保存できませんでした');
+      }
+      if (this.config.terminal_role === 'ward' &&
+          !(AppState.wards || []).some(w => String(w.id) === String(this.config.ward_id))) {
+        throw new Error('担当病棟を確認してください');
+      }
 
       // Child setup has no shared writes. Local display overrides already exist.
       if (this.config.share_mode === 'parent') {

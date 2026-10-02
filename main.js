@@ -433,61 +433,14 @@ const webrtcSignaling = createWebrtcSignalingService();
 
 // データベースの初期シードデータ（マスタデータ）
 const SEEDS = {
-  wards: [
-    { id: "ward-1", name: "7階東病棟", phone: "7101", note: "7階東 ナースステーション", sort_order: 1 },
-    { id: "ward-2", name: "7階西病棟", phone: "7201", note: "7階西 ナースステーション", sort_order: 2 }
-  ],
-  beds: [
-    { id: "bed-701", ward_id: "ward-1", bed_number: "701", room_number: "701", sort_order: 1, map_col: 0, map_row: 0 },
-    { id: "bed-702", ward_id: "ward-1", bed_number: "702", room_number: "701", sort_order: 2, map_col: 1, map_row: 0 },
-    { id: "bed-703", ward_id: "ward-1", bed_number: "703", room_number: "702", sort_order: 3, map_col: 3, map_row: 0 },
-    { id: "bed-704", ward_id: "ward-1", bed_number: "704", room_number: "702", sort_order: 4, map_col: 4, map_row: 0 },
-    { id: "bed-705", ward_id: "ward-1", bed_number: "705", room_number: "703", sort_order: 5, map_col: 6, map_row: 0 },
-    { id: "bed-706", ward_id: "ward-1", bed_number: "706", room_number: "703", sort_order: 6, map_col: 7, map_row: 0 },
-    { id: "bed-707", ward_id: "ward-1", bed_number: "707", room_number: "704", sort_order: 7, map_col: 0, map_row: 2 },
-    { id: "bed-708", ward_id: "ward-1", bed_number: "708", room_number: "704", sort_order: 8, map_col: 1, map_row: 2 },
-    { id: "bed-709", ward_id: "ward-1", bed_number: "709", room_number: "705", sort_order: 9, map_col: 3, map_row: 2 },
-    { id: "bed-710", ward_id: "ward-1", bed_number: "710", room_number: "705", sort_order: 10, map_col: 4, map_row: 2 },
-    { id: "bed-711", ward_id: "ward-1", bed_number: "711", room_number: "706", sort_order: 11, map_col: 6, map_row: 2 },
-    { id: "bed-712", ward_id: "ward-1", bed_number: "712", room_number: "706", sort_order: 12, map_col: 7, map_row: 2 },
-    { id: "bed-713", ward_id: "ward-1", bed_number: "713", room_number: "707", sort_order: 13, map_col: 0, map_row: 4 },
-    { id: "bed-714", ward_id: "ward-1", bed_number: "714", room_number: "707", sort_order: 14, map_col: 1, map_row: 4 },
-    { id: "bed-715", ward_id: "ward-1", bed_number: "715", room_number: "708", sort_order: 15, map_col: 3, map_row: 4 },
-    { id: "bed-716", ward_id: "ward-1", bed_number: "716", room_number: "708", sort_order: 16, map_col: 4, map_row: 4 },
-    { id: "bed-717", ward_id: "ward-1", bed_number: "717", room_number: "709個室", sort_order: 17, map_col: 6, map_row: 4 },
-    { id: "bed-718", ward_id: "ward-1", bed_number: "718", room_number: "709個室", sort_order: 18, map_col: 7, map_row: 4 }
-  ],
-  exam_rooms: [
-    { id: "room-ct", name: "CT室", code: "CT", floor: "1F", phone: "2001", icon: "fa-x-ray", is_active: true },
-    { id: "room-mri", name: "MRI室", code: "MRI", floor: "1F", phone: "2002", icon: "fa-magnet", is_active: true },
-    { id: "room-xp", name: "X線室", code: "XP", floor: "2F", phone: "2010", icon: "fa-radiation", is_active: true },
-    { id: "room-endo", name: "内視鏡室", code: "ENDO", floor: "2F", phone: "2030", icon: "fa-procedures", is_active: true },
-    { id: "room-echo", name: "エコー室", code: "ECHO", floor: "2F", phone: "2020", icon: "fa-wave-square", is_active: true }
-  ],
-  exam_types: [
-    { id: "exam-ct", name: "CT", code: "CT", standard_duration_min: 30 },
-    { id: "exam-mri", name: "MRI", code: "MRI", standard_duration_min: 60 },
-    { id: "exam-xp", name: "レントゲン(XP)", code: "XP", standard_duration_min: 20 },
-    { id: "exam-endo", name: "内視鏡", code: "ENDO", standard_duration_min: 90 },
-    { id: "exam-echo", name: "エコー", code: "ECHO", standard_duration_min: 40 },
-    { id: "exam-angio", name: "血管撮影", code: "ANGIO", standard_duration_min: 120 }
-  ],
-  pickup_assistance_types: [
-    { id: "pat-stretcher", name: "ストレッチャー", is_active: true },
-    { id: "pat-wheelchair", name: "車いす", is_active: true },
-    { id: "pat-walk", name: "一人でOK", is_active: true }
-  ],
-  staffs: [
-    { id: "staff-1", name: "看護師A", role: "nurse", ward_id: "ward-1", is_active: true },
-    { id: "staff-2", name: "看護師B", role: "nurse", ward_id: "ward-1", is_active: true },
-    { id: "staff-3", name: "看護師C", role: "nurse", ward_id: "ward-1", is_active: true },
-    { id: "staff-4", name: "看護師D", role: "nurse", ward_id: "ward-1", is_active: true },
-    { id: "staff-5", name: "看護師E", role: "nurse", ward_id: "ward-1", is_active: true },
-    { id: "staff-6", name: "看護師F", role: "nurse", ward_id: "ward-1", is_active: true }
-  ],
+  wards: [],
+  beds: [],
+  exam_rooms: [],
+  exam_types: [],
+  pickup_assistance_types: [],
+  staffs: [],
   system_settings: [
     { id: "import_directory", value: "" },
-    { id: "demo_inserted", value: "false" },
     { id: "import_mapping", value: "{\"bed_number\":\"\",\"room_code\":\"\",\"bed_code\":\"\",\"join_char\":\"-\",\"patient_id\":\"\",\"patient_name\":\"\",\"is_present\":\"\"}" },
     { id: "import_schedule", value: "{\"mode\":\"realtime\",\"intervalMin\":\"10\",\"times\":[]}" },
     { id: "import_retention_policy", value: "{\"action\":\"archive\",\"retentionDays\":\"30\",\"clearUnlisted\":false}" },

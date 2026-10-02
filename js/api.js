@@ -399,6 +399,7 @@ const API = {
   },
 
   async getWardStatusEvents(wardId, todayMs) {
+    if (!wardId) return { activeEvents: [], todayEvents: [], recentStatusLogs: [], recentAnnouncements: [] };
     const qs = new URLSearchParams({ ward_id: wardId || '', today_ms: String(todayMs || 0) }).toString();
     return this._fetch(`tables/transfer_events/ward-status?${qs}`);
   },
@@ -485,6 +486,7 @@ const API = {
 
   /* ---------- 出棟イベント ---------- */
   async getActiveEvents(wardId) {
+    if (!wardId) return [];
     const res = await this.getAll('transfer_events', { ward_id: wardId || '' });
     return res.data.filter(e =>
       e.ward_id === wardId &&
@@ -493,6 +495,7 @@ const API = {
   },
 
   async getAllEventsForWard(wardId) {
+    if (!wardId) return [];
     const res = await this.getAll('transfer_events', { ward_id: wardId || '' });
     return requireDataArray(res, '移送履歴');
   },
