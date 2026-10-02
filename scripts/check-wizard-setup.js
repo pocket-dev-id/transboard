@@ -1,7 +1,7 @@
 const assert = require('assert');
 const vm = require('vm');
 const { readRoot, extractByBraceEnd, extractMethodBody } = require('./lib/extract-source');
-function context({ token = 'abcdefgh', outcome = 'ok', localFailure = false, sharedFailure = false, wards = [{ id: 'w1', name: '病棟1' }] } = {}) {
+function context({ token = 'abcdefgh', outcome = 'ok', localFailure = false, sharedFailure = false, masterFailure = false, wards = [{ id: 'w1', name: '病棟1' }] } = {}) {
   const values = new Map();
   const state = { completed: false, patches: [], toasts: [], role: null, creates: [] };
   const elements = { 'wizard-parent-ip': { value: '10.0.0.1' }, 'wizard-api-token': { value: token } };
@@ -12,7 +12,7 @@ function context({ token = 'abcdefgh', outcome = 'ok', localFailure = false, sha
     window: { electronAPI: { setTerminalRole: async role => { state.role = role; return { success: true }; } } },
     UI: { toast: (...args) => state.toasts.push(args), escapeHTML: String },
     AppState: { wards },
-    App: { syncWardSelect() {}, loadMasters: async () => true, refreshData: async () => true, applySystemVisualSettings: async () => {}, _applyStandaloneMode() {}, _applyTerminalRoleMode() {}, _startDevicePresenceMonitor() {}, isExamTerminal: () => false },
+    App: { syncWardSelect() {}, loadMasters: async () => !masterFailure, refreshData: async () => true, applySystemVisualSettings: async () => {}, _applyStandaloneMode() {}, _applyTerminalRoleMode() {}, _startDevicePresenceMonitor() {}, isExamTerminal: () => false },
     WardDashboard: { render() {} },
     API: { create: async (table, record) => { state.creates.push({ table, record }); return { id: 'ward-new', ...record }; }, setTerminalApiToken: async () => ({ success: true }), patch: async (...args) => { state.patches.push(args); if(sharedFailure) throw Error('disk'); return {success:true}; } },
     testParentConnection: async () => ({ outcome }),
@@ -20,6 +20,11 @@ function context({ token = 'abcdefgh', outcome = 'ok', localFailure = false, sha
     saveLocalShareModeSettings: async () => { if(localFailure) throw Error('disk'); },
   };
   const wizard = vm.runInNewContext(readRoot('js/wizard.js') + '\nWizard', sandbox);
+  sandbox.App.loadMasters = async () => {
+    if (masterFailure) return false;
+    if (wizard.config.share_mode === 'client') sandbox.AppState.wards = [{ id: 'w1', name: '病棟1' }];
+    return true;
+  };
   wizard.config = { share_mode: 'client', ward_name: '', parent_ip:'10.0.0.1', api_token:token, terminal_role:'ward', ward_id:'w1', device_name:'PC1', default_zoom:'1.0', font_style:'ud' };
   wizard._saveCurrentStepState = () => {};
   wizard._showClientRestartScreen = () => { state.completed = true; };
@@ -50,11 +55,14 @@ function context({ token = 'abcdefgh', outcome = 'ok', localFailure = false, sha
     assert.strictEqual(c.state.completed,false,'Failed authentication/save must leave setup open');
     assert.notStrictEqual(c.values.get('cfg_wizard_completed'),'true');
   }
-  const child = context(); await child.wizard.finish();
+  const child = context({ wards: [] }); await child.wizard.finish();
   assert.strictEqual(child.state.completed,true);
   assert.strictEqual(child.state.patches.length,0,'Client setup must never patch parent settings');
   assert.strictEqual(child.values.get('cfg_app_zoom'),'1.0');
   assert.strictEqual(child.values.get('cfg_wizard_completed'),'true');
+  const incomplete = context({ wards: [], masterFailure: true });
+  await incomplete.wizard.finish();
+  assert.strictEqual(incomplete.state.completed, false, 'Incomplete initial master sync must prevent completion');
   const parent = context({sharedFailure:true}); parent.wizard.config.share_mode='parent';
   await parent.wizard.finish();
   assert.strictEqual(parent.state.completed,false,'Failed shared settings must not complete setup');

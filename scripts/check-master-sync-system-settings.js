@@ -17,7 +17,7 @@ const { readRoot, extractMethodBody } = require('./lib/extract-source');
 
 const source = readRoot('js/app.js');
 
-const methodBody = extractMethodBody(source, 'async loadMasters({ silent = false } = {}) {');
+const methodBody = extractMethodBody(source, 'async loadMasters({ silent = false, requireComplete = false } = {}) {');
 assert(methodBody, 'loadMasters({ silent })の抽出に失敗しました(js/app.jsの構造が変わった可能性があります)');
 
 function buildHarness(state) {
@@ -32,7 +32,7 @@ function buildHarness(state) {
   const obj = vm.runInNewContext(`({
     isExamTerminal() { return false; },
     _checkParentIdentity(settings) { __state.checkParentIdentityCalls.push(settings); },
-    async loadMasters({ silent = false } = {}) {${methodBody}
+    async loadMasters({ silent = false, requireComplete = false } = {}) {${methodBody}
     },
   })`, Object.assign(sandbox, { __state: state }));
   return obj;
@@ -120,6 +120,29 @@ async function main() {
     assert.deepStrictEqual(Array.from(state.AppState.systemSettings), [], '前回値が無い場合は空配列にフォールバックすること(undefinedのままにならないこと)');
   }
 
+  for (const failed of ['staffs', 'settings']) {
+    const state = { AppState: makeAppState(), checkParentIdentityCalls: [], API: makeApi(failed === 'staffs'
+      ? { getAllStaffs: async () => { throw Error('staffs unavailable'); } }
+      : { getAll: async () => { throw Error('settings unavailable'); } }) };
+    const harness = buildHarness(state);
+    assert.strictEqual(await harness.loadMasters({ silent: true, requireComplete: true }), false, 'Initial sync must require every master table');
+    assert.strictEqual(state.AppState.wards[0], 'stale-ward', 'Incomplete initial sync must not publish a mixed snapshot');
+  }
+  const saved = new Map([['current_ward_id', 'w2']]);
+  const appState = { wards: [], currentWardId: null };
+  const select = { value: '', closest() { return null; }, replaceChildren() {} };
+  const picker = vm.runInNewContext(`({ syncWardSelect() {${extractMethodBody(source, 'syncWardSelect() {')} } })`, {
+    AppState: appState, localStorage: { getItem: k => saved.get(k), setItem: (k,v) => saved.set(k,v), removeItem: k => saved.delete(k) },
+    document: { getElementById: () => select, createElement: () => ({}) }
+  });
+  picker.isExamTerminal = () => false;
+  picker._masterLoadFailed = true;
+  picker.syncWardSelect();
+  assert.strictEqual(saved.get('current_ward_id'), 'w2', 'Failed fetch must preserve the assigned ward');
+  appState.wards = [{ id: 'w1' }, { id: 'w2' }];
+  picker._masterLoadFailed = false;
+  picker.syncWardSelect();
+  assert.strictEqual(appState.currentWardId, 'w2', 'Recovery must restore the assigned ward, not the first ward');
   console.log('Master sync system_settings checks passed.');
   process.exit(0);
 }

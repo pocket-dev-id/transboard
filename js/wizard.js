@@ -809,6 +809,13 @@ const Wizard = {
         const wardSaved = await window.electronAPI.setTerminalRole(role);
         if (!wardSaved?.success) throw new Error(wardSaved?.message || '担当病棟を保存できませんでした');
       }
+      if (this.config.share_mode === 'client') {
+        if (await App.loadMasters({ requireComplete: true }) === false) {
+          throw new Error('初回同期が完了していません。親機への接続を確認して再適用してください');
+        }
+        AppState.currentWardId = this.config.ward_id || null;
+        App.syncWardSelect();
+      }
       if (this.config.terminal_role === 'ward' &&
           !(AppState.wards || []).some(w => String(w.id) === String(this.config.ward_id))) {
         throw new Error('担当病棟を確認してください');
@@ -839,7 +846,7 @@ const Wizard = {
 
       if (this.config.share_mode === 'client') {
         // 子機モード: データ接続先が変わるため再起動するまで正常動作しない
-        // loadMasters() を呼ばず、再起動を促す専用画面に切り替える
+        // 初回同期の確認後、常駐処理の接続先を揃えるため再起動を促す
         this._showClientRestartScreen();
         return;
       }

@@ -1884,6 +1884,8 @@ const App = {
       }
       return;
     }
+    // A failed request is not an authoritative empty ward list.
+    if (this._masterLoadFailed) return;
     if (select) {
       const savedWardId = localStorage.getItem('current_ward_id');
       const current = [savedWardId, AppState.currentWardId, select.value]
@@ -1915,7 +1917,7 @@ const App = {
     }
   },
 
-  async loadMasters({ silent = false } = {}) {
+  async loadMasters({ silent = false, requireComplete = false } = {}) {
     try {
       const [wards, beds, examRooms, examTypes, pickupAssistanceTypes, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
@@ -1931,6 +1933,10 @@ const App = {
         API.getAllStaffs().catch(() => null),
         API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : null).catch(() => null)
       ]);
+      const initialClientSync = typeof isClientMode === 'function' && isClientMode() && !this._mastersFullySynced;
+      if ((requireComplete || initialClientSync) && (!Array.isArray(allStaffs) || !Array.isArray(systemSettings))) {
+        throw new Error('初回同期が未完了です。職員・共有設定を親機から取得できませんでした');
+      }
       AppState.wards = wards.slice().sort((a, b) =>
         (Number(a.sort_order) || 999999) - (Number(b.sort_order) || 999999) ||
         String(a.name || '').localeCompare(String(b.name || ''), 'ja')
@@ -1955,10 +1961,13 @@ const App = {
       } else {
         AppState.systemSettings = AppState.systemSettings || [];
       }
+      if (Array.isArray(allStaffs) && Array.isArray(systemSettings)) this._mastersFullySynced = true;
+      this._masterLoadFailed = false;
       console.log('[App] マスタ読み込み完了', { beds: beds.length, examRooms: examRooms.length, systemSettings: AppState.systemSettings.length });
       return true;
 
     } catch (e) {
+      this._masterLoadFailed = true;
       console.error('[App] マスタ読み込み失敗:', e);
       if (!silent && e?.unauthorized) {
         UI.toast('APIトークンが親機と一致しないため、患者データを取得できません。設定 → 共有・ネットワーク設定 でトークンを確認してください', 'danger', 8000);
