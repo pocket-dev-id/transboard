@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 60536)
-Total output lines: 5350
-
 const { app, BrowserWindow, ipcMain, powerSaveBlocker, safeStorage, dialog } = require('electron');
 const path = require('path');
 const { Tray, Menu } = require('electron');
@@ -2286,7 +2283,927 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
   const notices = [];
   if (fileErrors.length > 0) notices.push(`${fileErrors.length}件のファイルでエラー: ${fileErrors.join('; ')}`);
   if (result.archiveWarning) notices.push(result.archiveWarning);
-  const combinedMessa…10536 tokens truncated…edEventById = new Map(scoped.map(event => [String(event.id), event]));
+  const combinedMessage = notices.length > 0
+    ? [result.message, ...notices].filter(Boolean).join(' / ')
+    : result.message;
+
+  if (csvFiles.length > 0 || fileErrors.length > 0) {
+    const fileName = csvFiles.length === 1 ? path.basename(csvFiles[0]) : `${csvFiles.length}件のファイル`;
+    notifyScheduleImported(feed, fileName, { success: overallSuccess, count: result.importedCount, message: combinedMessage });
+  }
+
+  if (!overallSuccess) {
+    return { success: false, importedCount: result.importedCount, message: combinedMessage || '取り込みに失敗したファイルがあります' };
+  }
+  return { success: true, importedCount: result.importedCount, message: combinedMessage || null };
+}
+
+function parseScheduleFeedCsvFile(filePath, feed) {
+  return new Promise(resolve => {
+    try {
+      assertCsvFileSize(filePath);
+      const buffer = fs.readFileSync(filePath);
+      const { text: decodedText, encoding } = decodeScheduleCsvBuffer(buffer, feed.encoding);
+
+      const mapping = feed.mapping || {};
+      const rows = [];
+      const parser = csv();
+      parser.on('data', row => {
+        if (rows.length >= MAX_CSV_ROWS) {
+          parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
+          return;
+        }
+        rows.push(row);
+      });
+      Readable.from([decodedText])
+        .pipe(parser)
+        .on('end', () => {
+          const items = [];
+          rows.forEach(row => {
+            const dateVal = mapping.col_date ? row[mapping.col_date] : null;
+            const timeVal = mapping.col_time ? row[mapping.col_time] : null;
+            const dtVal = mapping.col_datetime ? row[mapping.col_datetime] : null;
+
+            const startMs = parseScheduleDatetimeMs(dtVal || dateVal, dtVal ? null : timeVal, mapping.date_format);
+            if (!startMs) return;
+
+            const title = mapping.col_title ? (row[mapping.col_title] || '') : '';
+            const identifier = mapping.col_id ? (row[mapping.col_id] || '') : '';
+            const durationMin = mapping.col_duration_min ? parseInt(row[mapping.col_duration_min]) || null : null;
+            // 時刻列が無い/空のCSV行はparseScheduleDatetimeMs内で00:00として
+            // デフォルト処理されるため、start_msだけでは「実際に0:00の予定」と
+            // 「時刻情報が無い」を区別できない。ここで元の文字列に実際に時刻表記
+            // (SCHEDULE_TIME_RE_SRC)が含まれていたかを見て、has_timeとして残す
+            const timeSource = dtVal || timeVal;
+            const hasTime = !!timeSource && new RegExp(SCHEDULE_TIME_RE_SRC).test(String(timeSource));
+
+            // 複数ファイル分をまとめて挿入することがあるため、ファイル名も含めて
+            // ID衝突を避ける(同じstart_msの行が別ファイルにもあり得るため)
+            items.push({
+              id: `sched-${feed.id}-${startMs}-${items.length}-${path.basename(filePath)}`,
+              feed_id: feed.id,
+              feed_name: feed.name || '取り込みスケジュール',
+              color: feed.color || '#7c3aed',
+              ward_ids: feed.ward_ids || [], // 空配列 = 全病棟
+              title,
+              identifier,
+              start_ms: startMs,
+              has_time: hasTime,
+              duration_min: durationMin,
+              raw: row,
+              imported_at: Date.now()
+            });
+          });
+          resolve({ success: true, items, rowCount: rows.length, message: null, encoding });
+        })
+        .on('error', err => {
+          console.error(`[ScheduleFeed] "${feed.name}" パースエラー: ${path.basename(filePath)}:`, err);
+          resolve({ success: false, items: [], rowCount: 0, message: err.message, encoding });
+        });
+    } catch (err) {
+      console.error(`[ScheduleFeed] "${feed.name}" 読み込みエラー: ${path.basename(filePath)}:`, err);
+      resolve({ success: false, items: [], rowCount: 0, message: err.message, encoding: null });
+    }
+  });
+}
+
+// parseScheduleFeedCsvFileの結果1件以上をまとめて1回のDB書き込みで反映する。
+// scanAndImportScheduleFolder(フォルダ走査・リアルタイム監視のいずれも、
+// 最終的にこの関数を通ってフォルダ内の全CSVをまとめて渡す)から使う。
+// 以前はファイルごとに個別へ「このフィードの既存アイテムを全削除してから再挿入」
+// していたため、同じフォルダに複数のCSVがあると後続ファイルの書き込みで
+// 先行ファイル分が消えてしまい、取り込み件数の集計とDBの実際の中身が
+// 食い違うバグがあった。既存アイテムの置換は、渡された全ファイル分をまとめて
+// 1回だけ行う
+function commitScheduleFeedImport(feed, parsedFiles) {
+  const succeeded = parsedFiles.filter(p => p.success);
+  const totalRowCount = succeeded.reduce((sum, p) => sum + p.rowCount, 0);
+  const allItems = succeeded.flatMap(p => p.items);
+
+  // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
+  // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
+  // 既存アイテムには触れずに中止する（患者CSV取り込み側の空振りガードと同じ方針）
+  if (totalRowCount > 0 && allItems.length === 0) {
+    const message = `${totalRowCount}行すべてで日時を解釈できなかったため、取り込みを中止しました。日付・時刻の列マッピングを確認してください。`;
+    console.warn(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, importedCount: 0, message };
+  }
+
+  if (succeeded.length === 0) return { success: true, importedCount: 0, message: null };
+
+  const db = readDB();
+  if (!db.schedule_items) db.schedule_items = [];
+  db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
+  db.schedule_items.push(...allItems);
+
+  const saved = writeDB(db);
+  if (!saved) {
+    const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
+    console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, importedCount: 0, message };
+  }
+
+  // retentionDaysはこのフィードの取り込みでは参照しない(アーカイブ後の保存
+  // 期間による削除は未実装のため、既定値に含めて実装済みであるかのように
+  // 見せない)。設定画面の各フィード編集フォームもaction(archive/delete/skip)
+  // しか保存しておらず、アーカイブされたCSVは実質無期限に積み上がる
+  const policy = feed.retention_policy || { action: 'archive' };
+  // DB反映(予定の保存)自体はここまでで既に成功している。以降のアーカイブ/
+  // 削除に失敗しても、それだけを理由に取り込み全体を失敗として報告しない
+  // (成功したはずの予定保存を「失敗」と偽ることになるため)。ただし、
+  // 失敗した事実は警告としてまとめ、呼び出し元がログ・通知・手動取り込み
+  // APIの戻り値へ「部分成功」として反映できるようにする
+  const archiveFailures = [];
+  succeeded.forEach(p => {
+    const archiveResult = archiveScheduleFeedFile(p.filePath, feed, policy);
+    if (archiveResult && archiveResult.success === false) {
+      archiveFailures.push(archiveResult.message);
+    }
+  });
+  const archiveWarning = archiveFailures.length > 0
+    ? `予定の保存には成功しましたが、元CSVの${policy.action === 'delete' ? '削除' : 'アーカイブ移動'}に失敗しました: ${archiveFailures.join('; ')}`
+    : null;
+  if (archiveWarning) console.warn(`[ScheduleFeed] "${feed.name}" ${archiveWarning}`);
+
+  return { success: true, importedCount: allItems.length, message: null, archiveWarning };
+}
+
+function notifyScheduleImported(feed, fileName, { success, count, message }) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('schedule-imported', {
+    success,
+    feedId: feed.id,
+    feedName: feed.name,
+    fileName,
+    count,
+    message: message || null,
+  });
+}
+
+// 取り込み済みCSVの削除・アーカイブ移動を行う。DB反映は既に完了済みの前提で
+// 呼ばれるため、この関数の失敗は「予定の保存自体」には影響しない。しかし
+// 以前は unlinkSync/mkdirSync/renameSync の例外をすべて無条件で握りつぶして
+// おり、共有フォルダが読み取り専用等の理由でこの後処理に失敗しても、UIには
+// 取り込み成功としか表示されず、元CSVが監視フォルダに残り続けて
+// インターバル/時刻指定モードで同じCSVを繰り返し取り込んでしまっていた。
+// 呼び出し元がログ・通知・手動取り込みAPIの戻り値へ反映できるよう、
+// 成否をそのまま返す
+function archiveScheduleFeedFile(filePath, feed, policy) {
+  const baseName = path.basename(filePath);
+  if (policy.action === 'skip') return { success: true, message: null };
+  if (policy.action === 'delete') {
+    try {
+      fs.unlinkSync(filePath);
+      return { success: true, message: null };
+    } catch (e) {
+      const message = `${baseName}の削除に失敗しました: ${e.message}`;
+      console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+      return { success: false, message };
+    }
+  }
+  // archive
+  const archiveDir = path.join(path.dirname(filePath), 'archive');
+  try {
+    fs.mkdirSync(archiveDir, { recursive: true });
+  } catch (e) {
+    const message = `${baseName}のアーカイブフォルダ作成に失敗しました: ${e.message}`;
+    console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, message };
+  }
+  const ext = path.extname(baseName);
+  const stem = path.basename(baseName, ext);
+  let destPath = path.join(archiveDir, baseName);
+  if (fs.existsSync(destPath)) {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    destPath = path.join(archiveDir, `${stem}_${ts}${ext}`);
+  }
+  try {
+    fs.renameSync(filePath, destPath);
+    return { success: true, message: null };
+  } catch (e) {
+    const message = `${baseName}のアーカイブへの移動に失敗しました: ${e.message}`;
+    console.error(`[ScheduleFeed] "${feed.name}" ${message}`);
+    return { success: false, message };
+  }
+}
+
+// UTF-8 のバイナリパターン検証（日本語対応）
+function isUtf8(buf) {
+  let i = 0;
+  while (i < buf.length) {
+    if (buf[i] <= 0x7F) { // 0xxxxxxx
+      i += 1;
+    } else if ((buf[i] & 0xE0) === 0xC0) { // 110xxxxx 10xxxxxx
+      if (i + 1 >= buf.length || (buf[i + 1] & 0xC0) !== 0x80) return false;
+      i += 2;
+    } else if ((buf[i] & 0xF0) === 0xE0) { // 1110xxxx 10xxxxxx 10xxxxxx
+      if (i + 2 >= buf.length || (buf[i + 1] & 0xC0) !== 0x80 || (buf[i + 2] & 0xC0) !== 0x80) return false;
+      i += 3;
+    } else if ((buf[i] & 0xF8) === 0xF0) { // 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+      if (i + 3 >= buf.length || (buf[i + 1] & 0xC0) !== 0x80 || (buf[i + 2] & 0xC0) !== 0x80 || (buf[i + 3] & 0xC0) !== 0x80) return false;
+      i += 4;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+function registerImportJob(filePath) {
+  for (const job of pendingImportJobs.values()) {
+    if (job.filePath === filePath) {
+      console.warn(`[Watcher] 同じCSVの取り込みが進行中のため重複実行を抑止しました: ${filePath}`);
+      return null;
+    }
+  }
+  const importId = `import-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+  const timer = setTimeout(() => {
+    if (!pendingImportJobs.has(importId)) return;
+    pendingImportJobs.delete(importId);
+    console.warn(`[Watcher] インポート完了応答がないため原本を残します: ${filePath}`);
+  }, IMPORT_JOB_TIMEOUT_MS);
+  pendingImportJobs.set(importId, { filePath, timer, createdAt: Date.now() });
+  return importId;
+}
+
+// renderer側のDB更新結果を受けてから、CSV原本をアーカイブ／削除する。
+handleTrusted('complete-data-import', (event, payload = {}) => {
+  const importId = typeof payload.importId === 'string' ? payload.importId.trim() : '';
+  const success = payload.success === true;
+  if (!importId || importId.length > 160) return { success: false, message: '不正なインポートIDです。' };
+  const job = pendingImportJobs.get(importId);
+  if (!job) return { success: false, message: 'インポートジョブが見つからないか、期限切れです。' };
+  clearTimeout(job.timer);
+  pendingImportJobs.delete(importId);
+  if (!success) {
+    console.warn(`[Watcher] DB更新失敗のため原本を残します: ${job.filePath}`);
+    return { success: true, archived: false };
+  }
+  archiveFile(job.filePath);
+  return { success: true, archived: true };
+});
+
+// CSVファイルをパースしてレンダラーへ送信
+async function importCSV(filePath) {
+  const importId = registerImportJob(filePath);
+  if (!importId) return;
+  try {
+    assertCsvFileSize(filePath);
+    const buffer = await fs.promises.readFile(filePath);
+    
+    // 文字コードの自動判定（BOM判定 または UTF-8バイナリ判定）
+    let encoding = 'shift-jis'; // デフォルトは Shift-JIS
+    if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+      encoding = 'utf-8';
+    } else if (isUtf8(buffer)) {
+      encoding = 'utf-8';
+    } else {
+      // マッピング設定に保存されている設定値があればフォールバック
+      const db = readDB();
+      const mapping = getJsonSetting(db, 'import_mapping', {});
+      if (mapping.encoding) {
+        encoding = mapping.encoding;
+      }
+    }
+    
+    const decoder = new TextDecoder(encoding);
+    const decodedText = decoder.decode(buffer);
+
+    const results = [];
+    const parser = csv();
+    parser.on('data', data => {
+      if (results.length >= MAX_CSV_ROWS) {
+        parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
+        return;
+      }
+      results.push(data);
+    });
+    Readable.from([decodedText])
+      .pipe(parser)
+      .on('end', () => {
+        console.log(`[Watcher] パース完了 (${encoding}): ${results.length} 件`);
+        if (mainWindow) {
+          mainWindow.webContents.send('data-imported', {
+            importId,
+            fileName: path.basename(filePath),
+            rows: results
+          });
+        }
+      })
+      .on('error', (err) => {
+        console.error('[Watcher] パースエラー:', err);
+        if (mainWindow) {
+          mainWindow.webContents.send('data-import-failed', {
+            importId,
+            fileName: path.basename(filePath),
+            error: err.message
+          });
+        }
+      });
+  } catch (err) {
+    console.error('[Watcher] ファイル読み込みまたはデコードエラー:', err);
+    if (mainWindow) {
+      mainWindow.webContents.send('data-import-failed', {
+        importId,
+        fileName: path.basename(filePath),
+        error: err.message
+      });
+    }
+  }
+}
+
+// 古いアーカイブファイルを整理
+function cleanOldArchives() {
+  const db = readDB();
+  const policy = getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' });
+
+  if (policy.action !== 'archive') return;
+  const days = parseInt(policy.retentionDays) || 30;
+  if (days <= 0) return; // 0は無制限
+
+  const watchDir = resolveWatchDir();
+  const archiveDir = path.join(watchDir, 'archive');
+  if (!fs.existsSync(archiveDir)) return;
+
+  const now = Date.now();
+  const maxAgeMs = days * 24 * 60 * 60 * 1000;
+
+  fs.readdir(archiveDir, (err, files) => {
+    if (err) return;
+    files.forEach(file => {
+      const filePath = path.join(archiveDir, file);
+      fs.stat(filePath, (err, stats) => {
+        if (err) return;
+        const ageMs = now - stats.mtimeMs;
+        if (ageMs > maxAgeMs) {
+          fs.unlink(filePath, (err) => {
+            if (err) console.error(`[Cleaner] 古いアーカイブファイルの削除失敗: ${file}`, err);
+            else console.log(`[Cleaner] 古いアーカイブファイルを削除しました: ${file}`);
+          });
+        }
+      });
+    });
+  });
+}
+
+// ファイルをアーカイブ移動または削除
+function archiveFile(filePath) {
+  const db = readDB();
+  const policy = getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' });
+
+  if (policy.action === 'skip') {
+    console.log(`[Watcher] ポリシー: そのまま残す (スキップ): ${filePath}`);
+    return;
+  }
+
+  if (policy.action === 'delete') {
+    // 即時物理削除
+    setTimeout(() => {
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.error('[Watcher] ファイル即時削除失敗 (リトライします):', err);
+          setTimeout(() => {
+            fs.unlink(filePath, (err2) => {
+              if (err2) console.error('[Watcher] ファイル即時削除リトライ失敗:', err2);
+              else console.log(`[Watcher] ファイル即時削除完了 (リトライ成功): ${filePath}`);
+            });
+          }, 1000);
+        } else {
+          console.log(`[Watcher] ファイル即時削除完了: ${filePath}`);
+        }
+      });
+    }, 200);
+    return;
+  }
+
+  const baseDir = path.dirname(filePath);
+  const archiveDir = path.join(baseDir, 'archive');
+  if (!fs.existsSync(archiveDir)) {
+    try {
+      fs.mkdirSync(archiveDir, { recursive: true });
+    } catch (mkdirErr) {
+      const msg = `archiveフォルダの作成に失敗しました。権限を確認してください。\nフォルダ: ${archiveDir}\n理由: ${mkdirErr.message}`;
+      console.error('[Watcher]', msg, mkdirErr);
+      if (mainWindow) {
+        mainWindow.webContents.send('archive-error', {
+          fileName: path.basename(filePath),
+          archiveDir,
+          error: msg,
+          code: mkdirErr.code
+        });
+      }
+      return;
+    }
+  }
+  const baseName = path.basename(filePath);
+  const ext = path.extname(baseName);
+  const stem = path.basename(baseName, ext);
+  let destPath = path.join(archiveDir, baseName);
+  if (fs.existsSync(destPath)) {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    destPath = path.join(archiveDir, `${stem}_${ts}${ext}`);
+  }
+
+  function sendArchiveError(err) {
+    let hint = '';
+    if (err.code === 'EPERM' || err.code === 'EACCES') {
+      hint = ' (アクセス権限がありません。設定でポリシーを「そのまま残す」に変更することで回避できます)';
+    } else if (err.code === 'EBUSY') {
+      hint = ' (ファイルが他のプロセスに使用中です)';
+    } else if (err.code === 'EXDEV') {
+      hint = ' (異なるドライブ間の移動はできません)';
+    }
+    const msg = `archiveフォルダへの移動に失敗しました${hint}\nファイル: ${path.basename(filePath)}\n理由: ${err.message}`;
+    console.error('[Watcher]', msg);
+    if (mainWindow) {
+      mainWindow.webContents.send('archive-error', {
+        fileName: path.basename(filePath),
+        archiveDir,
+        error: msg,
+        code: err.code
+      });
+    }
+  }
+
+  // Windowsのファイル排他ロック問題を回避するため、少し待ってから移動する
+  setTimeout(() => {
+    fs.rename(filePath, destPath, (err) => {
+      if (err) {
+        console.error('[Watcher] アーカイブ移動失敗 (リトライします):', err);
+        setTimeout(() => {
+          fs.rename(filePath, destPath, (err2) => {
+            if (err2) {
+              console.error('[Watcher] アーカイブ移動リトライ失敗:', err2);
+              sendArchiveError(err2);
+            } else {
+              console.log(`[Watcher] アーカイブ移動完了 (リトライ成功): ${destPath}`);
+              cleanOldArchives();
+            }
+          });
+        }, 1000);
+      } else {
+        console.log(`[Watcher] アーカイブ移動完了: ${destPath}`);
+        cleanOldArchives();
+      }
+    });
+  }, 200);
+}
+
+// IPC通信で監視対象フォルダパスをフロントに返す
+handleTrusted('get-watch-directory', () => {
+  return currentWatchDir;
+});
+
+// 親機が既にSMB接続するよう設定されているサーバーの集合。
+// 子機が指定したパスに対して親機の資格情報で net use するのは、
+// 「既に設定済みのサーバーへ接続し直す」場合に限る。
+function getConfiguredSmbServerKeys(db) {
+  const keys = new Set();
+  const collect = (p) => {
+    const t = parseUncTarget(p);
+    if (t) keys.add(t.serverKey);
+  };
+  collect(getSettingRecord(db, 'import_directory')?.value || '');
+  (db.schedule_feeds || []).forEach(feed => collect(String(feed?.watch_dir || '').trim()));
+  return keys;
+}
+
+function validateWatchDirectoryOnParent(newPath, { isExternal = false } = {}) {
+  const resolved = newPath && newPath.trim()
+    ? newPath.trim()
+    : path.join(app.getPath('userData'), 'import_folder');
+
+  // 子機からの要求で、まだ設定されていないサーバーのUNCパスが来た場合は拒否する。
+  // ここを通すと、子機が指定した任意のホストへ親機が保存済みのSMB資格情報で
+  // net use しに行き（authenticateSMBSync）、さらに mkdirSync まで実行してしまう。
+  // 設定済みのフィード/監視先だけを触るという schedule-feed-headers と同じ方針。
+  if (isExternal) {
+    const target = parseUncTarget(resolved);
+    if (target && !getConfiguredSmbServerKeys(readDB()).has(target.serverKey)) {
+      return {
+        success: false,
+        message: `新しいネットワーク共有（\\\\${target.server}）の追加は親機で行ってください。`,
+      };
+    }
+  }
+
+  // UNCパスの場合のみSMBネットワーク共有フォルダの認証を実行
+  authenticateSMBSync(resolved);
+
+  if (!fs.existsSync(resolved)) {
+    try {
+      fs.mkdirSync(resolved, { recursive: true });
+    } catch (err) {
+      console.error(`[Watcher] フォルダの自動作成失敗:`, err);
+      return { success: false, message: `監視フォルダを作成できません: ${err.message}` };
+    }
+  }
+
+  try {
+    if (!fs.statSync(resolved).isDirectory()) {
+      return { success: false, message: '指定された監視先はフォルダではありません。' };
+    }
+    // 保存時点で一覧を取得できることまで確認し、「保存成功後に手動スキャンだけ失敗」
+    // する状態を防ぐ。UNC切断・権限不足もここで利用者へ返す。
+    fs.readdirSync(resolved);
+    approvedCsvHeaderFolders.add(normalizeLocalFolderPath(resolved));
+  } catch (err) {
+    console.error('[Watcher] 監視フォルダを開けません:', err);
+    return { success: false, message: `監視フォルダを開けません: ${err.message}` };
+  }
+
+  return { success: true, path: resolved };
+}
+
+function updateWatchDirectoryOnParent(newPath, { isExternal = false } = {}) {
+  const validation = validateWatchDirectoryOnParent(newPath, { isExternal });
+  if (!validation.success) return validation;
+  setupImportTrigger();
+  setupScheduleFeedTriggers();
+  return validation;
+}
+
+// IPC通信で監視対象フォルダを動的に切り替える
+handleTrusted('update-watch-directory', (event, newPath) => updateWatchDirectoryOnParent(newPath));
+
+// 子機へ切り替えたとき、再起動を待たずに共有サーバーを閉じるためのIPC。
+// あわせて取り込み監視も止める（setupImportTrigger/setupScheduleFeedTriggersは
+// 子機なら停止処理だけ行って抜ける）。
+handleTrusted('stop-parent-server', () => {
+  const result = stopParentServer();
+  setupImportTrigger();
+  setupScheduleFeedTriggers();
+  return result;
+});
+
+async function triggerManualImportOnParent() {
+  const watchPath = resolveWatchDir();
+  if (!fs.existsSync(watchPath)) {
+    return { success: false, message: '監視フォルダが存在しません。' };
+  }
+  try {
+    const files = fs.readdirSync(watchPath);
+    const csvFiles = files.filter(file => {
+      const filePath = path.join(watchPath, file);
+      return fs.statSync(filePath).isFile() && path.extname(file).toLowerCase() === '.csv';
+    });
+    if (csvFiles.length === 0) {
+      return { success: true, count: 0, message: '監視フォルダに未処理のCSVファイルはありません。' };
+    }
+    await Promise.all(csvFiles.map(file => {
+      const filePath = path.join(watchPath, file);
+      return importCSV(filePath).catch(err => console.error(`[Manual Import] CSV取り込みエラー: ${filePath}`, err));
+    }));
+    return { success: true, count: csvFiles.length, message: `${csvFiles.length}件のCSVファイルを取り込み開始しました。` };
+  } catch (err) {
+    console.error('[Manual Import] エラー:', err);
+    return { success: false, message: err.message };
+  }
+}
+
+// IPC通信で手動でのフォルダスキャン・CSV取り込みを実行する
+handleTrusted('trigger-manual-import', () => triggerManualImportOnParent());
+
+// ODBC読み取り専用安全対策: SQLクエリバリデーション
+// 実装は main-modules/odbc.js。IPC登録だけここへ残す。
+handleTrusted('get-odbc-tables', (event, config) => getOdbcTablesOnParent(config || {}));
+handleTrusted('get-odbc-dsns', () => getOdbcDsnsOnParent());
+handleTrusted('test-odbc-connection', (event, config) => testOdbcConnectionOnParent(config || {}));
+handleTrusted('run-odbc-sync', (event, config) => runOdbcSyncOnParent(config || {}));
+handleTrusted('preview-odbc-query', (event, config) => previewOdbcQueryOnParent(config || {}));
+
+// IPC通信で出棟中（進行中）の移送情報をリセットする
+handleTrusted('reset-database', () => {
+  const db = readDB();
+  
+  // 進行中のステータス一覧
+  const activeStatuses = ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'];
+  
+  if (Array.isArray(db.transfer_events)) {
+    // 進行中のイベントIDを取得
+    const activeEventIds = db.transfer_events
+      .filter(e => activeStatuses.includes(e.current_status))
+      .map(e => e.id);
+
+    // 進行中のイベントのみを削除（完了・キャンセル済みは残す）
+    db.transfer_events = db.transfer_events.filter(e => !activeStatuses.includes(e.current_status));
+
+    // 進行中イベントに対応するステータス変更ログを削除
+    if (Array.isArray(db.transfer_status_logs)) {
+      db.transfer_status_logs = db.transfer_status_logs.filter(log => !activeEventIds.includes(log.transfer_event_id));
+    }
+  }
+
+  // ※ 患者情報 (beds の patient_name, patient_id, is_present) は消去しません。
+  // ※ 通話履歴 (calls) や 取り込み履歴 (import_logs) も消去しません。
+
+  if (!writeDB(db)) {
+    return { success: false, message: 'データベースの保存に失敗しました。ディスク容量や書き込み権限を確認してください。' };
+  }
+  console.log('[DB] 進行中の移送情報と関連ログをクリアしました');
+  return { success: true };
+});
+
+// WebRTCシグナリング処理は、入力検証とキュー上限を含む専用サービスへ委譲する。
+function processWebrtcRequest(method, urlPath, bodyStr) {
+  return webrtcSignaling.handle(method, urlPath, bodyStr);
+}
+
+const ALLOWED_TABLES = new Set([
+  'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs',
+  'pickup_assistance_types',
+  'system_settings', 'transfer_events', 'transfer_status_logs',
+  'calls', 'import_logs', 'schedule_feeds', 'schedule_items',
+  'audit_logs', 'chat_messages', 'bed_occupancy_log',
+]);
+
+// 共有マスターは親機を唯一の書き込み元とし、更新時刻で子機同士の上書きを検知する。
+const MASTER_REVISION_TABLES = new Set([
+  'wards', 'beds', 'exam_rooms', 'exam_types', 'staffs', 'system_settings',
+  'pickup_assistance_types',
+]);
+
+function checkMasterRevision(table, existing, payload) {
+  if (!MASTER_REVISION_TABLES.has(table) || !payload || typeof payload !== 'object') return null;
+  const expected = Object.prototype.hasOwnProperty.call(payload, '_expectedUpdatedAt')
+    ? payload._expectedUpdatedAt
+    : undefined;
+  if (expected !== undefined && String(existing?.updated_at || '') !== String(expected || '')) {
+    return {
+      success: false,
+      conflict: true,
+      message: '他の端末でマスターが更新されています。最新データを取得してから再度保存してください。',
+    };
+  }
+  return null;
+}
+
+function applyMasterRevision(table, existing, payload) {
+  if (!MASTER_REVISION_TABLES.has(table) || !payload || typeof payload !== 'object') return null;
+  const conflict = checkMasterRevision(table, existing, payload);
+  if (conflict) return conflict;
+  delete payload._expectedUpdatedAt;
+  payload.updated_at = Math.max(Date.now(), Number(existing?.updated_at || 0) + 1);
+  return null;
+}
+
+// UI.conversationKey(js/ui.js)と同じ組み立て規則をサーバー側でも独立に持つ。
+// POST時にクライアント入力のconversation_keyを信用せず、検証済みのfrom_id/to_id
+// から再計算して上書きするために使う。UI.conversationKeyの規則を変更する場合は
+// 実装がズレて片方の端末にしか履歴が見えなくなるため、必ずこちらも揃えて直すこと
+function chatConversationKey(idA, idB) {
+  const a = String(idA || '').trim();
+  const b = String(idB || '').trim();
+  if (!a || !b) return '';
+  return [a, b].sort().join('|');
+}
+
+function validateMasterReferences(db, table, existing, payload) {
+  if (table !== 'beds' || !payload || typeof payload !== 'object') return null;
+  delete payload.bed_type;
+  if (Object.prototype.hasOwnProperty.call(payload, 'bed_number')) {
+    const bedNumber = String(payload.bed_number || '').trim();
+    if (!bedNumber) {
+      return { success: false, message: '病床番号は必須です。' };
+    }
+    const duplicate = (db.beds || []).find(bed =>
+      String(bed.id) !== String(existing?.id || '') &&
+      String(bed.bed_number || '').trim().toLowerCase() === bedNumber.toLowerCase()
+    );
+    if (duplicate) {
+      return { success: false, conflict: true, message: `病床番号が重複しています: ${bedNumber}` };
+    }
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'ward_id') || !payload.ward_id) return null;
+  const wardExists = (db.wards || []).some(ward => String(ward.id) === String(payload.ward_id));
+  if (!wardExists) {
+    return {
+      success: false,
+      conflict: true,
+      message: '指定された病棟が存在しないため、病床を保存できません。最新の病棟マスターを取得してください。',
+    };
+  }
+  return null;
+}
+
+// 患者情報（氏名・ID）を含むテーブル。追加のマスキング判断にも使用する。
+// bed_occupancy_logは非マスクの氏名・IDを保持するため患者データ扱いとする
+// 端末間チャット(chat_messages)も本文・アナウンス文に患者名が入りうるため同様に扱う
+const PATIENT_DATA_TABLES = new Set(['beds', 'transfer_events', 'audit_logs', 'chat_messages', 'bed_occupancy_log']);
+function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {}) {
+  const bulkTables = new Set(['wards', 'beds', 'exam_rooms', 'exam_types', 'staffs']);
+  if (!bulkTables.has(table)) {
+    return { success: false, message: 'このテーブルの一括マスター更新は許可されていません。' };
+  }
+  if (!Array.isArray(records) || records.length === 0 || records.length > 1000) {
+    return { success: false, message: '一括マスター更新の件数が不正です。' };
+  }
+
+  const list = db[table] || [];
+  const workingList = list.map(item => ({ ...item }));
+  const seenIds = new Set();
+  const operations = [];
+  for (const raw of records) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { success: false, message: 'マスターデータの形式が不正です。' };
+    }
+    const data = { ...raw };
+    if (!data.id) data.id = `${table}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const key = String(data.id);
+    if (seenIds.has(key)) {
+      return { success: false, conflict: true, message: '同じIDのマスターが複数含まれています。' };
+    }
+    seenIds.add(key);
+    const index = workingList.findIndex(item => String(item.id) === key);
+    const before = index === -1 ? null : workingList[index];
+    const revisionError = applyMasterRevision(table, before, data);
+    if (revisionError) return revisionError;
+    const referenceError = validateMasterReferences(db, table, before, data);
+    if (referenceError) return referenceError;
+    const after = index === -1 ? data : { ...before, ...data };
+    if (table === 'beds' && Object.prototype.hasOwnProperty.call(data, 'bed_number')) {
+      const duplicate = workingList.find(item =>
+        String(item.id) !== key &&
+        String(item.bed_number || '').trim().toLowerCase() === String(data.bed_number || '').trim().toLowerCase()
+      );
+      if (duplicate) return { success: false, conflict: true, message: `病床番号が重複しています: ${data.bed_number}` };
+    }
+    if (index === -1) workingList.push(after);
+    else workingList[index] = after;
+    operations.push({ before: before ? JSON.parse(JSON.stringify(before)) : null, after });
+  }
+
+  const now = Date.now();
+  if (table === 'beds') {
+    db.bed_occupancy_log = db.bed_occupancy_log || [];
+    for (const operation of operations) {
+      WRITE_HOOKS.beds.onUpsert(db, operation.after.id, operation.after.ward_id, operation.before, operation.after, operation.after, now, null);
+    }
+    WRITE_HOOKS.beds.finalize(db, now);
+  }
+  db[table] = workingList;
+  appendAuditLog(db, 'DB_BULK_UPSERT', {
+    targetType: table,
+    targetId: 'bulk',
+    actorType: isExternal ? 'child_api' : 'local_ui',
+    remoteIp: requestMeta.remoteIp || '',
+    before: operations.map(operation => operation.before ? summarizeAuditRecord(table, operation.before) : null),
+    after: operations.map(operation => summarizeAuditRecord(table, operation.after)),
+    details: { method: 'POST', count: operations.length },
+  });
+  writeDbOrThrow(db);
+  return { success: true, count: operations.length, data: operations.map(operation => operation.after) };
+}
+
+// 共通のデータベース操作処理関数
+async function processDbRequest(method, url, bodyStr, isExternal = false, apiToken = null, requestMeta = {}) {
+  // GETはDB全体をディープコピーせずキャッシュを直接参照する（高頻度ポーリングでの
+  // CPU負荷対策）。GET経路はdbやdb[table]の中身をミューテーションしてはならない。
+  // 書き込み系メソッドは従来どおりreadDB()で専用のディープコピーを取得する。
+  const db = method === 'GET' ? readDbShared() : readDB();
+
+  // URL解析 (例: "tables/transfer_events?limit=200" や "tables/beds/bed-701")
+  const cleanUrl = url.replace(/^\//, '').replace(/^tables\//, '');
+  const [urlPath, queryString] = cleanUrl.split('?');
+  const searchParams = new URLSearchParams(queryString || '');
+  const urlParts = urlPath.split('/');
+  const table = urlParts[0];
+  const id = urlParts[1];
+
+  // 高頻度・低診断価値なGETポーリング(ダッシュボード5秒間隔等、接続端末数×
+  // ポーリング頻度に比例して呼ばれる)では出力せず、書き込み系のみログする
+  if (method !== 'GET') {
+    console.log(`[DB Request] ${method} tables/${table}${id ? '/' + id : ''}`);
+  }
+
+  // テーブル名の許可リストチェック（不正テーブル名インジェクション防止）
+  if (!ALLOWED_TABLES.has(table)) {
+    console.warn(`[DB] 未許可のテーブル名へのアクセス: ${table}`);
+    return { success: false, message: 'Not Found' };
+  }
+
+  if (table === 'audit_logs' && method !== 'GET') {
+    return { success: false, message: 'Audit logs are append-only' };
+  }
+
+  // bed_occupancy_logはbedsへの書き込みの副作用として内部でのみ更新される
+  // サーバー管理テーブル（applyBedOccupancyTransition等がdb.bed_occupancy_logを
+  // 直接書き換える。このtableに対するPOST/PATCH/DELETEは経由しない）。
+  // 外部からの直接書き換え・改ざんを防ぐため、GET以外は拒否する
+  if (table === 'bed_occupancy_log' && method !== 'GET') {
+    return { success: false, message: 'bed_occupancy_log is server-managed and cannot be written directly' };
+  }
+
+  // 状態変更ログは status/update / status/note からmainプロセスだけが追加する。
+  // 汎用テーブルAPIを開けたままにすると、履歴の状態や操作者を任意に偽装できる。
+  if (table === 'transfer_status_logs' && method !== 'GET') {
+    return { success: false, message: 'transfer_status_logs is server-managed' };
+  }
+
+  // 端末間チャット/アナウンス履歴は追記専用の証跡として扱う。PATCH/PUT/DELETEを
+  // 汎用テーブルAPIで許すと、共有APIトークンを持つ任意端末が過去の会話や
+  // アナウンス送信履歴を書き換え・削除できてしまう(audit_logs等と同じ理由)
+  if (table === 'chat_messages' && method !== 'GET' && method !== 'POST') {
+    return { success: false, message: 'chat_messages is append-only and cannot be modified or deleted' };
+  }
+
+  // 管理者パスコードは専用IPCでのみ扱う。汎用DB APIからハッシュを取得・更新できると、
+  // renderer上のXSSがオフライン解析やロックの無効化に悪用できるため、ローカルでも拒否する。
+  if (table === 'system_settings') {
+    if (id === 'admin_passcode') {
+      return { success: false, message: 'Forbidden' };
+    }
+    if (method !== 'GET' && bodyStr) {
+      try {
+        const payload = JSON.parse(bodyStr);
+        const records = Array.isArray(payload) ? payload : [payload];
+        if (records.some(record => record?.id === 'admin_passcode')) {
+          return { success: false, message: 'Forbidden' };
+        }
+      } catch {}
+    }
+  }
+
+  // 患者情報を含むテーブルへの外部アクセスはAPIトークンで保護する
+  if (isExternal && PATIENT_DATA_TABLES.has(table)) {
+    if (!isValidApiToken(apiToken)) {
+      console.warn(`[Security] APIトークン認証失敗: table=${table}`);
+      return { success: false, message: 'Unauthorized', unauthorized: true };
+    }
+  }
+
+  // 外部(HTTP)からのアクセスに対するセキュリティ制限（機密データの保護）
+  if (isExternal && table === 'system_settings') {
+    // パスコードは検証APIで照合し、ハッシュ自体は子機へ返さない。
+    // ODBC接続文字列・SMBパスワード・APIトークンも単体GETを禁止する。
+    // フィード個別のSMBパスワード(smb_password__<feedId>)も同じ扱いにするため、
+    // 完全一致の配列ではなく述語で判定する
+    const isBlockedSecret = (settingId) =>
+      ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'].includes(settingId)
+      || isFeedSmbPasswordSettingId(settingId);
+    // 稼働モード・親機IPは各端末ローカルの設定。外部（子機）からの書き換えを許すと
+    // 親機のDBの share_mode が'client'に上書きされ、再起動後に共有サーバーが
+    // 起動しなくなるため、書き込みのみ遮断する（読み取りは従来どおり許可）
+    const isWriteBlocked = (settingId) =>
+      isBlockedSecret(settingId) || ['share_mode', 'parent_ip', 'wizard_completed'].includes(settingId);
+
+    if (method === 'GET') {
+      if (id) {
+        if (isBlockedSecret(id)) {
+          return { success: false, message: 'Forbidden' };
+        }
+      } else {
+        // 全件取得時は機密設定の値をマスクして返す
+        const list = db[table] || [];
+        const filteredList = list.map(s => {
+          if (isBlockedSecret(s.id)) {
+            return { ...s, value: MASKED_SECRET_VALUE };
+          }
+          return s;
+        });
+        return { data: filteredList };
+      }
+    } else {
+      // POST/PUT/PATCH/DELETE による機密設定・端末ローカル設定の更新・削除を禁止
+      if (id && isWriteBlocked(id)) {
+        return { success: false, message: 'Forbidden' };
+      }
+      if (bodyStr) {
+        try {
+          const data = JSON.parse(bodyStr);
+          if (Array.isArray(data)) {
+            if (data.some(x => isWriteBlocked(x.id))) {
+              return { success: false, message: 'Forbidden' };
+            }
+          } else {
+            if (isWriteBlocked(data.id)) {
+              return { success: false, message: 'Forbidden' };
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  // GETはdbがdbCacheと共有されている可能性があるため、db[table]への代入で
+  // キャッシュをミューテーションしない。書き込み系は従来どおりdb[table]を初期化する。
+  if (!db[table] && method !== 'GET') {
+    db[table] = [];
+  }
+
+  const list = db[table] || [];
+
+  if (method === 'GET') {
+    if (table === 'transfer_events' && id === 'ward-status') {
+      const wardId = searchParams.get('ward_id') || '';
+      const todayMs = Number(searchParams.get('today_ms') || 0);
+      const scoped = wardId ? list.filter(e => e.ward_id === wardId) : list;
+      const activeEvents = scoped.filter(e => ACTIVE_TRANSFER_STATUSES.has(e.current_status));
+      const todayEvents = scoped.filter(e => {
+        if (ACTIVE_TRANSFER_STATUSES.has(e.current_status)) return true;
+        return Number.isFinite(todayMs) && todayMs > 0 && e.departed_at != null && e.departed_at >= todayMs;
+      });
+      const scopedEventById = new Map(scoped.map(event => [String(event.id), event]));
       const recentStatusLogs = (db.transfer_status_logs || [])
         .filter(log => {
           const event = scopedEventById.get(String(log.transfer_event_id));
