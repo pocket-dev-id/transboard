@@ -2645,7 +2645,7 @@ assert(
 // 各種運用設定が既定値へ戻って見えてしまう
 assert(
   (() => {
-    const idx = app.indexOf('async loadMasters({ silent = false } = {}) {');
+    const idx = app.indexOf('async loadMasters({ silent = false, requireComplete = false } = {}) {');
     const end = app.indexOf('\n  },', idx);
     if (idx < 0 || end < idx) return false;
     const body = app.slice(idx, end);
