@@ -4,7 +4,7 @@
 
 const AppState = {
   // 選択中の病棟
-  currentWardId: 'ward-1',
+  currentWardId: null,
 
   // 選択中の検査室
   currentExamRoomId: null,

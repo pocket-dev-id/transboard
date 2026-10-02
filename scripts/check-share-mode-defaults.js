@@ -10,7 +10,7 @@ const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'u
 const api = read('js/api.js');
 const app = read('js/app.js');
 const wizard = read('js/wizard.js');
-const demo = read('js/demo.js');
+const demoPath = path.join(root, 'js/demo.js');
 const state = read('js/state.js');
 const network = read('js/settings/network.js');
 const terminalAccess = read('js/settings/terminal-access.js');
@@ -43,7 +43,7 @@ assert(
 );
 
 assert(!state.includes('stickyNotes') && !app.includes('stickyNotes'), '未使用の stickyNotes が残っています');
-assert(!demo.includes('_insertDemoEvents') && !wizard.includes('wizard-insert-demo'), 'デモ移送の自動投入が残っています');
-assert(demo.includes('_ensureExamRoomPhones') && demo.includes('_ensureBedMapPositions'), '検査室電話番号と病床位置の補完は残すこと');
+assert(!fs.existsSync(demoPath) && !app.includes('DemoData.setup()'), 'デモマスター補完が起動経路に残っています');
+assert(wizard.includes('_ensureInitialWard()'), '空の初期DBから最初の病棟を設定できること');
 
 console.log('Share mode default checks passed.');
