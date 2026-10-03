@@ -3,6 +3,8 @@
 const { isPrivateOrLoopbackIpv4 } = require('./net-address');
 
 const http = require('http');
+const dns = require('dns');
+const net = require('net');
 
 let readDbShared = null;
 let getSettingRecord = null;
@@ -49,7 +51,8 @@ function normalizeParentHttpRequest(opts) {
   const isConnectionTest = opts.purpose === 'connection-test';
   const isAllowedConnectionTest = (
     isConnectionTest &&
-    isPrivateOrLoopbackIpv4(parsed.hostname) &&
+    (isPrivateOrLoopbackIpv4(parsed.hostname) ||
+      (net.isIP(parsed.hostname) === 0 && parsed.hostname.length <= 253 && /^[a-z0-9_.-]+$/i.test(parsed.hostname))) &&
     (parsed.pathname === '/api/tables/wards' || parsed.pathname === '/api/tables/beds')
   );
   const isConfiguredEndpoint = (
@@ -97,15 +100,17 @@ function normalizeParentHttpRequest(opts) {
     ? Math.min(Math.max(Math.trunc(requestedTimeout), 1000), 30000)
     : 8000;
 
-  return { url: parsed, method, headers, body, timeoutMs };
+  return { url: parsed, method, headers, body, timeoutMs, requiresPrivateLookup: isConnectionTest && net.isIP(parsed.hostname) === 0 };
 }
 
 function parentHttpRequest(opts) {
   return new Promise((resolve) => {
     let settled = false;
+    let deadline;
     const finish = (result) => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       resolve(result);
     };
 
@@ -123,6 +128,26 @@ function parentHttpRequest(opts) {
         method: request.method,
         headers: request.headers,
         timeout: request.timeoutMs,
+        ...(request.requiresPrivateLookup ? {
+          family: 4,
+          autoSelectFamily: false,
+          // Use OS resolution (Windows DNS/hosts), then pass the validated
+          // address directly to the socket to avoid resolving it a second time.
+          lookup(hostname, options, callback) {
+            dns.lookup(hostname, { family: 4, all: true }, (error, addresses) => {
+              if (error || !Array.isArray(addresses) || addresses.length === 0) {
+                callback(new Error('HOSTNAME_NOT_RESOLVED'));
+                return;
+              }
+              if (addresses.some(item => !isPrivateOrLoopbackIpv4(item.address))) {
+                callback(new Error('ENDPOINT_NOT_ALLOWED'));
+                return;
+              }
+              if (options?.all) callback(null, addresses);
+              else callback(null, addresses[0].address, 4);
+            });
+          },
+        } : {}),
       }, (res) => {
         const chunks = [];
         let responseBytes = 0;
@@ -156,6 +181,11 @@ function parentHttpRequest(opts) {
       finish({ ok: false, status: 0, error: e.message || 'NETWORK_ERROR' });
     });
 
+    // A socket timeout alone does not cover time spent resolving a hostname.
+    deadline = setTimeout(() => {
+      req.destroy();
+      finish({ ok: false, status: 0, error: 'TIMEOUT' });
+    }, request.timeoutMs);
     if (request.body) req.write(request.body);
     req.end();
   });

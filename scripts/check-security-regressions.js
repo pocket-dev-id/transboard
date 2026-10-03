@@ -1726,8 +1726,9 @@ assert(
 // バーコードモード・出棟登録時の患者ID自動セットは設定画面(共有・ネットワーク設定)で
 // system_settingsとして保存されなければならない
 assert(
-  networkSettings.includes("API.patch('system_settings', 'patient_id_scan_mode'") &&
-  networkSettings.includes("API.patch('system_settings', 'enable_auto_set_patient_id'"),
+  networkSettings.includes("patient_id_scan_mode:") &&
+  networkSettings.includes("enable_auto_set_patient_id:") &&
+  networkSettings.includes("API.patch('system_settings', id, { value })"),
   'Network settings save handler must persist patient_id_scan_mode and enable_auto_set_patient_id to system_settings'
 );
 
@@ -1762,7 +1763,7 @@ assert(
 // 「患者IDをセット」チェックボックスの既定チェック状態(auto_set_patient_id_default_checked)は
 // 設定画面から保存され、出棟登録フォームの描画時にcheckedとして反映されなければならない
 assert(
-  networkSettings.includes("API.patch('system_settings', 'auto_set_patient_id_default_checked'"),
+  networkSettings.includes("auto_set_patient_id_default_checked:") && networkSettings.includes("API.patch('system_settings', id, { value })"),
   'Network settings save handler must persist auto_set_patient_id_default_checked to system_settings'
 );
 assert(
