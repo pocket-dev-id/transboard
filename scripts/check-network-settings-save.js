@@ -1,7 +1,7 @@
 const assert = require('assert');
 const vm = require('vm');
 const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
-const text = readRoot('js/settings/network.js');
+const text = readRoot('js/settings/network.js').replace(/\r\n/g, '\n');
 const marker = 'saveNetworkBtn.onclick = async () => {';
 const start = text.indexOf(marker) + marker.length;
 const source = text.slice(start, text.indexOf('    }; // if (saveNetworkBtn)', start));
