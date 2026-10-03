@@ -150,9 +150,9 @@ const Wizard = {
         </div>
       </div>
       <div id="parent-ip-container" class="wiz-sub-panel" style="display:${sel('client') ? 'block' : 'none'};">
-        <label class="wiz-label">親機のIPアドレス <span style="color:#dc2626">*</span></label>
+        <label class="wiz-label">親機のホスト名 / IPアドレス <span style="color:#dc2626">*</span></label>
         <input type="text" id="wizard-parent-ip" value="${UI.escapeHTML(this.config.parent_ip)}"
-          placeholder="例: 192.168.1.100"
+          placeholder="例: TB-MASTER01 または 192.168.1.100"
           class="wiz-input" style="font-family:monospace;">
         <label class="wiz-label" style="margin-top:10px;">APIトークン <span style="color:#dc2626">*</span></label>
         <input type="password" id="wizard-api-token" autocomplete="off" value="${UI.escapeHTML(this.config.api_token)}"
@@ -364,7 +364,7 @@ const Wizard = {
 
     const rows = [
       ['稼働モード',     modeLabel],
-      this.config.share_mode === 'client' ? ['接続先親機IP', this.config.parent_ip || '（未設定）'] : null,
+      this.config.share_mode === 'client' ? ['接続先親機', this.config.parent_ip || '（未設定）'] : null,
       ['画面役割', this.config.terminal_role === 'exam' ? '検査室' : '病棟'],
       ['端末表示名', this.config.device_name],
       this.config.terminal_role === 'ward' ? ['担当病棟', this.config.ward_id
@@ -498,7 +498,7 @@ const Wizard = {
       const result = document.getElementById('wiz-test-connection-result');
       const parentIp = document.getElementById('wizard-parent-ip')?.value.trim();
       if (!parentIp) {
-        if (result) result.innerHTML = '<span style="color:#dc2626">親機のIPアドレスを入力してください</span>';
+        if (result) result.innerHTML = '<span style="color:#dc2626">親機のホスト名 / IPアドレスを入力してください</span>';
         return;
       }
       btn.disabled = true;
@@ -527,7 +527,7 @@ const Wizard = {
             result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> HTTPエラー ${testResult.status}</span>`;
             break;
           case 'exception':
-            result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした（${UI.escapeHTML(testResult.reason)}）。IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
+            result.innerHTML = `<span style="color:#dc2626"><i class="fas fa-times-circle"></i> 接続できませんでした（${UI.escapeHTML(testResult.reason)}）。ホスト名・IPアドレスや親機の起動状態、ファイアウォールを確認してください</span>`;
             break;
         }
       }
@@ -681,7 +681,7 @@ const Wizard = {
   _validateStep() {
     if (this.currentStep === 1 && this.config.share_mode === 'client') {
       const ip = document.getElementById('wizard-parent-ip')?.value.trim();
-      if (!ip) { UI.toast('子機モードでは親機IPアドレスを入力してください', 'warning'); return false; }
+      if (!ip) { UI.toast('子機モードでは親機のホスト名またはIPアドレスを入力してください', 'warning'); return false; }
       const token = document.getElementById('wizard-api-token')?.value.trim();
       if (!token) { UI.toast('APIトークンを入力してください', 'warning'); return false; }
     }
@@ -736,7 +736,7 @@ const Wizard = {
   async _verifyClientConnection() {
     if (this.config.share_mode !== 'client') return true;
     if (!this.config.parent_ip || !this.config.api_token) {
-      UI.toast('親機IPアドレスとAPIトークンを入力してください', 'warning'); return false;
+      UI.toast('親機のホスト名またはIPアドレスとAPIトークンを入力してください', 'warning'); return false;
     }
     const result = await testParentConnection(this.config.parent_ip, this.config.api_token, 'Wizard完了前検証');
     if (result.outcome !== 'ok') {
