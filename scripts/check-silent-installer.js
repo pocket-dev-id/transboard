@@ -89,6 +89,7 @@ function buildIndividualArgsJson({
 }
 
 const mainSource = readRoot('main.js');
+const receiptFnSource = extractByBraceEnd(mainSource, 'function writeProvisioningResult(');
 const applyFnSource = extractByBraceEnd(mainSource, 'function applyProvisioningFile() {');
 assert(applyFnSource, 'applyProvisioningFile()の抽出に失敗しました(main.jsの構造が変わった可能性があります)');
 
@@ -103,6 +104,7 @@ function runApply(jsonText) {
     },
     Date, JSON, Number, String,
     PROVISIONING_FILE: 'dummy-path',
+    PROVISIONING_RESULT_FILE: 'dummy-receipt-path',
     MANAGED_DEPLOYMENT_FILE: 'dummy-managed-path',
     normalizeShareMode: (v) => (v === 'client' || v === 'child' ? 'client' : 'parent'),
     normalizeTerminalRole: (v) => (v === 'exam' ? 'exam' : 'ward'),
@@ -114,7 +116,7 @@ function runApply(jsonText) {
     getSettingRecord: () => undefined,
     appendAuditLog() {},
   };
-  const result = vm.runInNewContext(`${applyFnSource}\napplyProvisioningFile()`, sandbox);
+  const result = vm.runInNewContext(`${receiptFnSource}\n${applyFnSource}\napplyProvisioningFile()`, sandbox);
   return { result, state };
 }
 
@@ -179,3 +181,4 @@ function runApply(jsonText) {
 
 console.log('Silent installer provisioning checks passed.');
 process.exit(0);
+

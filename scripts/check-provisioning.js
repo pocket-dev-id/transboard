@@ -21,6 +21,9 @@ const source = readRoot('main.js');
 const fnSource = extractByBraceEnd(source, 'function applyProvisioningFile() {');
 assert(fnSource, 'applyProvisioningFile()の抽出に失敗しました(main.jsの構造が変わった可能性があります)');
 
+const receiptFnSource = extractByBraceEnd(source, 'function writeProvisioningResult(');
+assert(receiptFnSource, '取り込み結果の保存関数が必要です');
+
 const managedFnSource = extractByBraceEnd(source, 'function isManagedDeployment() {');
 assert(managedFnSource, 'isManagedDeployment()の抽出に失敗しました');
 
@@ -44,6 +47,7 @@ function makeContext({ tokenResult = { success: true }, writeDbOk = true } = {})
     auditLogs: [],
     db: { system_settings: [{ id: 'wizard_completed', value: 'false' }] },
     dbWrites: 0,
+    receipts: [],
   };
 
   const sandbox = {
@@ -53,6 +57,7 @@ function makeContext({ tokenResult = { success: true }, writeDbOk = true } = {})
     JSON,
     Number,
     String,
+    PROVISIONING_RESULT_FILE: path.join(state.dir, 'provisioning-result.json'),
     PROVISIONING_FILE: state.provisioningFile,
     MANAGED_DEPLOYMENT_FILE: state.managedFile,
     normalizeShareMode: (v) => (v === 'client' || v === 'child' ? 'client' : 'parent'),
@@ -81,7 +86,7 @@ function makeContext({ tokenResult = { success: true }, writeDbOk = true } = {})
   };
 
   const ctx = vm.runInNewContext(
-    `${fnSource}\n${managedFnSource}\n({ applyProvisioningFile, isManagedDeployment })`,
+    `${receiptFnSource}\n${fnSource}\n${managedFnSource}\n({ applyProvisioningFile, isManagedDeployment })`,
     sandbox
   );
   return { state, ...ctx };
@@ -110,6 +115,7 @@ function makeRealRoleContext({ tokenResult = { success: true } } = {}) {
     JSON,
     Number,
     String,
+    PROVISIONING_RESULT_FILE: path.join(state.dir, 'provisioning-result.json'),
     PROVISIONING_FILE: state.provisioningFile,
     MANAGED_DEPLOYMENT_FILE: state.managedFile,
     TERMINAL_ROLE_FILE: state.roleFile,
@@ -128,7 +134,7 @@ function makeRealRoleContext({ tokenResult = { success: true } } = {}) {
   };
 
   const ctx = vm.runInNewContext(
-    `${safeWriteFileSource}\n${readTerminalRoleSource}\n${writeTerminalRoleSource}\n${fnSource}\n`
+    `${safeWriteFileSource}\n${readTerminalRoleSource}\n${writeTerminalRoleSource}\n${receiptFnSource}\n${fnSource}\n`
     + '({ applyProvisioningFile, readTerminalRole, writeTerminalRole })',
     sandbox
   );
@@ -176,6 +182,7 @@ function main() {
     const { state, applyProvisioningFile } = makeContext();
     writeProvisioning(state, {
       version: 1,
+      requestId: 'new-request',
       shareMode: 'client',
       parentIp: '192.168.1.10',
       terminalRole: 'ward',
@@ -185,6 +192,12 @@ function main() {
     const result = applyProvisioningFile();
 
     assert.strictEqual(result.success, true, '正常な初期設定ファイルは取り込まれること');
+    const receiptText = fs.readFileSync(path.join(state.dir,'provisioning-result.json'),'utf8');
+    const receipt = JSON.parse(receiptText);
+    assert.strictEqual(receipt.requestId,'new-request');
+    assert.strictEqual(receipt.success,true);
+    assert.strictEqual(receipt.setupCompleted,false);
+    assert.ok(!receiptText.includes('a'.repeat(64)), '結果ファイルにトークンを含めないこと');
     assert.strictEqual(state.roleWrites.length, 1, '端末役割が1回保存されること');
     assert.strictEqual(state.roleWrites[0].shareMode, 'client', 'shareModeが反映されること');
     assert.strictEqual(state.roleWrites[0].parentIp, '192.168.1.10', 'parentIpが反映されること');
@@ -242,6 +255,7 @@ function main() {
     const result = applyProvisioningFile();
 
     assert.strictEqual(result.success, false, 'SECURITY: 有効期限切れの初期設定ファイルは取り込まないこと');
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(state.dir,'provisioning-result.json'),'utf8')).success,false);
     assert.strictEqual(state.tokenWrites.length, 0, 'SECURITY: 有効期限切れならトークンを保存しないこと');
     assert.strictEqual(state.roleWrites.length, 0, '有効期限切れなら役割も変更しないこと');
     assert.strictEqual(
@@ -395,3 +409,4 @@ function main() {
 }
 
 main();
+

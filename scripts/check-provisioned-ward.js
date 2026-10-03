@@ -179,6 +179,32 @@ async function main() {
     await obj._loadTerminalRole();
     assert.strictEqual(obj._terminalSetupPending, true, '既存の端末設定があっても配布失敗を検出すること');
   }
+  {
+    const mainSource=readRoot('main.js');
+    const start=mainSource.indexOf("handleTrusted('get-terminal-role', () => {");
+    const end=mainSource.indexOf("handleTrusted('set-terminal-role'",start);
+    let ipcRole;
+    vm.runInNewContext(mainSource.slice(start,end),{
+      handleTrusted: (_name,handler) => {ipcRole=handler();},
+      readTerminalRole: () => ({shareMode:'client',parentIp:'PARENT-PC',terminalRole:'ward'}),
+      normalizeTerminalRole: r=>r, provisioningResult:null,
+    });
+    const {obj,state} = buildHarness({roleResult:ipcRole});
+    await obj._loadTerminalRole();
+    assert.strictEqual(state.store.cfg_share_mode, 'client');
+    assert.strictEqual(state.store.cfg_parent_ip, 'PARENT-PC', '新規配布の親機ホスト名を採用すること');
+  }
+  {
+    const {obj,state} = buildHarness({stored:{cfg_share_mode:'client', cfg_parent_ip:'CURRENT-PC'}, roleResult:{shareMode:'client',parentIp:'OLD-PC',setupCompleted:true}});
+    await obj._loadTerminalRole();
+    assert.strictEqual(state.store.cfg_parent_ip,'CURRENT-PC','通常起動では利用者の設定を維持すること');
+  }
+  {
+    const {obj,state}=buildHarness({stored:{cfg_share_mode:'client',cfg_parent_ip:'OLD-PC',cfg_terminal_role:'ward'},roleResult:{shareMode:'client',parentIp:'NEW-PC',terminalRole:'exam',provisioningApplied:true}});
+    await obj._loadTerminalRole();
+    assert.strictEqual(state.store.cfg_parent_ip,'NEW-PC');
+    assert.strictEqual(state.store.cfg_terminal_role,'exam');
+  }
   console.log('Provisioned ward checks passed.');
   process.exit(0);
 }
@@ -187,3 +213,4 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
