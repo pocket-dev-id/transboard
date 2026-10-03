@@ -174,6 +174,35 @@ async function saveLocalShareModeSettings(mode, parentIp) {
   }
 }
 
+// Persist the connection before changing renderer routing. Restore partial writes
+// so a failed settings save continues to use the previous endpoint and token.
+async function saveTerminalConnectionSettings(mode, parentIp, token = null) {
+  if (!window.electronAPI?.dbRequest) throw new Error('ローカル設定の保存機能を利用できません');
+  const [oldMode, oldIp] = await Promise.all(['share_mode', 'parent_ip'].map(async id => {
+    const record = await window.electronAPI.dbRequest({ url: `tables/system_settings/${id}`, options: { method: 'GET' } });
+    if (!record || record.success === false) throw new Error('現在の接続設定を読み込めませんでした');
+    return String(record.value || '');
+  }));
+  const oldToken = token === null ? null : await getTerminalApiToken();
+  let tokenAttempted = false;
+  try {
+    await saveLocalShareModeSettings(mode, parentIp);
+    if (token !== null) {
+      tokenAttempted = true;
+      const result = await setTerminalApiToken(token);
+      if (!result?.success) throw new Error(result?.message || 'APIトークンを安全に保存できませんでした');
+    }
+  } catch (error) {
+    let restored = true;
+    try { await saveLocalShareModeSettings(oldMode, oldIp); } catch { restored = false; }
+    if (tokenAttempted) {
+      try { if (!(await setTerminalApiToken(oldToken))?.success) restored = false; } catch { restored = false; }
+    }
+    if (!restored) throw new Error(error.message + '。元の接続設定の復元にも失敗しました。初期設定から再設定してください');
+    throw error;
+  }
+}
+
 let terminalApiTokenCache = null;
 
 function ensureMutationSuccess(result) {

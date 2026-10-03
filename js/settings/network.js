@@ -80,7 +80,7 @@ Object.assign(Settings, {
               <i class="fas fa-magic"></i> 初期設定ウィザード起動
             </button>
             <button class="btn btn-primary btn-sm" id="btn-save-network">
-              <i class="fas fa-save"></i> 設定を保存
+              <i class="fas fa-save"></i> 接続設定を保存
             </button>
           </div>
         </div>
@@ -268,6 +268,12 @@ Object.assign(Settings, {
               </div>
             </div>
           </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+            <button class="btn btn-primary btn-sm" id="btn-save-network-shared" ${currentMode === 'parent' ? '' : 'disabled'}>
+              <i class="fas fa-save"></i> 通話・患者登録の共通設定を保存
+            </button>
+          </div>
+          ${currentMode === 'parent' ? '' : '<p class="settings-hint">共通設定は親機で変更してください。</p>'}
 
         </div>
       </div>
@@ -284,6 +290,32 @@ Object.assign(Settings, {
     });
 
     if (currentMode === 'parent' && !isStandaloneMode) this._renderDeviceList(body);
+
+    const sharedSelectors = '#cfg-enable-webrtc-call, #cfg-enable-patient-ic, input[name="patient-id-scan-mode"], #cfg-auto-set-patient-id, #cfg-auto-set-patient-id-default';
+    if (currentMode !== 'parent') body.querySelectorAll(sharedSelectors).forEach(input => { input.disabled = true; });
+    const sharedSaveBtn = body.querySelector('#btn-save-network-shared');
+    if (sharedSaveBtn) sharedSaveBtn.onclick = async () => {
+      if (this._networkSaveInFlight) return;
+      if (readLocalShareMode() !== 'parent') { UI.toast('共通設定は親機で変更してください', 'warning'); return; }
+      const values = {
+        enable_webrtc_call: body.querySelector('#cfg-enable-webrtc-call')?.checked ? 'true' : 'false',
+        enable_patient_ic_association: body.querySelector('#cfg-enable-patient-ic')?.checked ? 'true' : 'false',
+        patient_id_scan_mode: body.querySelector('input[name="patient-id-scan-mode"]:checked')?.value === 'barcode' ? 'barcode' : 'ic_card',
+        enable_auto_set_patient_id: body.querySelector('#cfg-auto-set-patient-id')?.checked ? 'true' : 'false',
+        auto_set_patient_id_default_checked: body.querySelector('#cfg-auto-set-patient-id-default')?.checked ? 'true' : 'false',
+      };
+      this._networkSaveInFlight = true;
+      sharedSaveBtn.disabled = true;
+      try {
+        for (const [id, value] of Object.entries(values)) {
+          await API.patch('system_settings', id, { value });
+          this._writeLocalSetting(id, value);
+        }
+        UI.toast('通話・患者登録の共通設定を保存しました', 'success');
+      } catch (error) {
+        UI.toast('共通設定をすべて保存できませんでした。再保存してください: ' + error.message, 'danger');
+      } finally { this._networkSaveInFlight = false; sharedSaveBtn.disabled = false; }
+    };
 
     // 役割ラジオの変更イベント
     body.querySelectorAll('input[name="network-mode"]').forEach(radio => {
@@ -451,53 +483,26 @@ Object.assign(Settings, {
       const mode = selectedMode.value;
       const parentIp = body.querySelector('#cfg-parent-ip')?.value.trim() || '';
       const apiToken = body.querySelector('#cfg-api-token')?.value.trim() || '';
-      const enableWebRtcCall = body.querySelector('#cfg-enable-webrtc-call')?.checked ? 'true' : 'false';
-      const enablePatientIc = body.querySelector('#cfg-enable-patient-ic')?.checked ? 'true' : 'false';
-      const patientIdScanMode = body.querySelector('input[name="patient-id-scan-mode"]:checked')?.value === 'barcode' ? 'barcode' : 'ic_card';
-      const enableAutoSetPatientId = body.querySelector('#cfg-auto-set-patient-id')?.checked ? 'true' : 'false';
-      const autoSetPatientIdDefaultChecked = body.querySelector('#cfg-auto-set-patient-id-default')?.checked ? 'true' : 'false';
       const isClientSave = mode === 'client' || mode === 'child';
-
-      if (mode === 'client' && !parentIp) {
-        UI.toast('接続先の親機IPアドレスを入力してください', 'warning');
+      if (isClientSave && (!parentIp || !apiToken)) {
+        UI.toast('親機IPアドレスとAPIトークンを入力してください', 'warning');
         return;
       }
-
+      if (this._networkSaveInFlight) return;
+      this._networkSaveInFlight = true;
       saveNetworkBtn.disabled = true;
-
       try {
-        const tokenSave = await API.setTerminalApiToken(apiToken);
-        if (!tokenSave?.success) {
-          UI.toast(tokenSave?.message || 'APIトークンを安全に保存できませんでした', 'danger');
-          return;
+        if (isClientSave) {
+          const result = await testParentConnection(parentIp, apiToken, 'Network保存前検証');
+          if (result.outcome !== 'ok') {
+            UI.toast('接続・認証を確認できませんでした。接続テストで設定を確認してください', 'danger');
+            return;
+          }
         }
-
-        // localStorageへ保存（起動時の同期ロード用）
+        const savedIp = isClientSave ? parentIp : '';
+        await saveTerminalConnectionSettings(mode, savedIp, isClientSave ? apiToken : null);
         localStorage.setItem('cfg_share_mode', mode);
-        localStorage.setItem('cfg_parent_ip', parentIp);
-
-        // マスタDB側にも設定値（互換性保存）を反映
-        await saveLocalShareModeSettings(mode, parentIp);
-        const sharedUpdates = [
-          API.patch('system_settings', 'enable_webrtc_call', { value: enableWebRtcCall }),
-          API.patch('system_settings', 'enable_patient_ic_association', { value: enablePatientIc }),
-          API.patch('system_settings', 'patient_id_scan_mode', { value: patientIdScanMode }),
-          API.patch('system_settings', 'enable_auto_set_patient_id', { value: enableAutoSetPatientId }),
-          API.patch('system_settings', 'auto_set_patient_id_default_checked', { value: autoSetPatientIdDefaultChecked }),
-        ];
-        const sharedResults = isClientSave
-          ? await Promise.allSettled(sharedUpdates)
-          : await Promise.all(sharedUpdates).then(() => []);
-        const sharedFailed = sharedResults.some(result => result.status === 'rejected');
-
-        // AppStateのシステム設定も更新
-        if (!sharedFailed) {
-          this._writeLocalSetting('enable_webrtc_call', enableWebRtcCall);
-          this._writeLocalSetting('enable_patient_ic_association', enablePatientIc);
-          this._writeLocalSetting('patient_id_scan_mode', patientIdScanMode);
-          this._writeLocalSetting('enable_auto_set_patient_id', enableAutoSetPatientId);
-          this._writeLocalSetting('auto_set_patient_id_default_checked', autoSetPatientIdDefaultChecked);
-        }
+        localStorage.setItem('cfg_parent_ip', savedIp);
 
         // 子機へ切り替えた場合は、その場で共有サーバー(3005)と取り込み監視を止める。
         // 再起動の確認は下で出すが拒否できるため、これが無いと3005で配信を続けたまま
@@ -508,11 +513,7 @@ Object.assign(Settings, {
           }
         }
 
-        if (isClientSave && sharedFailed) {
-          UI.toast('この端末の接続設定は保存しました。共有設定は接続または権限の問題で反映できませんでした。', 'warning', 8000);
-        } else {
-          UI.toast('共有・ネットワーク設定を保存しました。稼働モードや接続先は再起動後に確実に反映されます。', 'success');
-        }
+        UI.toast('この端末の接続設定を保存しました。再起動して反映してください。', 'success');
 
         // 再起動アラートの提示
         if (await UI.confirmModal('設定を完全に反映するためには、アプリケーションの再起動が必要です。今すぐ再起動しますか？', { confirmLabel: '再起動' })) {
@@ -526,6 +527,7 @@ Object.assign(Settings, {
         console.error(err);
         UI.toast('設定の保存に失敗しました: ' + err.message, 'danger');
       } finally {
+        this._networkSaveInFlight = false;
         saveNetworkBtn.disabled = false;
       }
     }; // if (saveNetworkBtn)
