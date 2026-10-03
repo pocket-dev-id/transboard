@@ -122,8 +122,8 @@ Object.assign(Settings, {
               <span class="settings-badge settings-badge--child">子機専用設定</span>
             </h4>
             <div class="form-row" style="margin-bottom:12px;">
-              <label>親機PCのIPアドレス / ホスト名</label>
-              <input type="text" id="cfg-parent-ip" placeholder="例: 192.168.1.15" style="width:100%; max-width:300px; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${UI.escapeHTML(currentParentIp)}">
+              <label>親機PCのホスト名 / IPアドレス</label>
+              <input type="text" id="cfg-parent-ip" placeholder="例: TB-MASTER01 または 192.168.1.15" style="width:100%; max-width:300px; padding:8px; border:1px solid #cbd5e0; border-radius:6px;" value="${UI.escapeHTML(currentParentIp)}">
             </div>
             <div class="form-row" style="margin-bottom:12px;">
               <label>APIトークン <span style="color:#dc2626">*</span></label>
@@ -485,7 +485,7 @@ Object.assign(Settings, {
       const apiToken = body.querySelector('#cfg-api-token')?.value.trim() || '';
       const isClientSave = mode === 'client' || mode === 'child';
       if (isClientSave && (!parentIp || !apiToken)) {
-        UI.toast('親機IPアドレスとAPIトークンを入力してください', 'warning');
+        UI.toast('親機のホスト名またはIPアドレスとAPIトークンを入力してください', 'warning');
         return;
       }
       if (this._networkSaveInFlight) return;

@@ -56,7 +56,9 @@ async function parentFetch(url, options = {}, timeoutMs = API_DEFAULT_TIMEOUT_MS
       await waitForTransientRetry();
     }
     if (!result.ok) {
-      const err = new Error(result.error === 'TIMEOUT' ? 'タイムアウトしました' : (result.error || 'ネットワークエラー'));
+      const message = result.error === 'HOSTNAME_NOT_RESOLVED' ? '親機のホスト名を解決できません。PC名とネットワーク接続を確認してください'
+        : result.error === 'TIMEOUT' ? 'タイムアウトしました' : (result.error || 'ネットワークエラー');
+      const err = new Error(message);
       err.name = result.error === 'TIMEOUT' ? 'AbortError' : 'NetworkError';
       throw err;
     }
