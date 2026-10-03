@@ -263,6 +263,7 @@ const TERMINAL_ROLE_FILE = path.join(USER_DATA_DIR, 'terminal_role.json');
 // 「平文のこのファイルを置く → 初回起動時に本体が取り込んで安全な形式へ変換し、
 // 元ファイルを削除する」という受け渡しにしている（下記 applyProvisioningFile）
 const PROVISIONING_FILE = path.join(USER_DATA_DIR, 'provisioning.json');
+const PROVISIONING_RESULT_FILE = path.join(USER_DATA_DIR, 'provisioning-result.json');
 // 管理配布された端末の目印。自己更新の案内文を「管理者が配布します」に切り替える
 const MANAGED_DEPLOYMENT_FILE = path.join(USER_DATA_DIR, 'managed_deployment.json');
 
@@ -1568,10 +1569,25 @@ function isLocalParentAddress(parentIp) {
 //  3. 監査ログに記録する（トークン本体はマスクし、値そのものは残さない）
 let provisioningResult = null;
 
+// A request-matched receipt lets the deployer distinguish saving from rejection.
+// Only fixed status fields are emitted; never serialize the input or token.
+function writeProvisioningResult(raw, success, reason = '') {
+  try {
+    const requestId = typeof raw?.requestId === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(raw.requestId) ? raw.requestId : '';
+    safeWriteFile(PROVISIONING_RESULT_FILE, JSON.stringify({
+      version: 1, requestId, success, reason, setupCompleted: false, at: Date.now(),
+    }, null, 2));
+  } catch {
+    console.error('[Provisioning] 取り込み結果を保存できませんでした');
+  }
+}
+
 function applyProvisioningFile() {
   if (!fs.existsSync(PROVISIONING_FILE)) return null;
 
+  let raw;
   const discard = (reason) => {
+    writeProvisioningResult(raw, false, reason);
     try {
       fs.unlinkSync(PROVISIONING_FILE);
     } catch (err) {
@@ -1582,14 +1598,13 @@ function applyProvisioningFile() {
     return { success: false, reason };
   };
 
-  let raw;
   try {
     raw = JSON.parse(fs.readFileSync(PROVISIONING_FILE, 'utf8'));
   } catch (err) {
     return discard('JSONとして読み取れません。配布設定を作成し直してください');
   }
   if (!raw || typeof raw !== 'object') return discard('内容がオブジェクトではありません');
-  if (Number(raw.version) !== 1) return discard(`未対応のversion(${raw.version})です`);
+  if (Number(raw.version) !== 1) return discard('未対応のversionです');
 
   const expiresAt = Number(raw.expiresAt || 0);
   if (expiresAt && Date.now() > expiresAt) {
@@ -1679,6 +1694,8 @@ function applyProvisioningFile() {
   } catch (err) {
     return failPartial('初期設定のDB反映に失敗しました。初期設定から再設定してください');
   }
+
+  writeProvisioningResult(raw, true);
 
   // 保存済みと利用準備完了を分ける。接続・担当病棟の確認は端末の初期設定で行う。
   // 平文トークンを含むファイルは、取り込みが済んだら必ず消す
@@ -3886,6 +3903,9 @@ handleTrusted('get-terminal-role', () => {
   const role = readTerminalRole() || {};
   return {
     success: true,
+    shareMode: role.shareMode || null,
+    parentIp: String(role.parentIp || ''),
+    provisioningApplied: provisioningResult?.success === true,
     terminalRole: normalizeTerminalRole(role.terminalRole),
     setupCompleted: role.setupCompleted ?? null,
     provisioningError: provisioningResult?.success === false ? provisioningResult.reason : (role.provisioningError || ''),
@@ -5348,3 +5368,4 @@ app.on('window-all-closed', () => {
   if (shareMode === 'parent') return;
   if (process.platform !== 'darwin') app.quit();
 });
+

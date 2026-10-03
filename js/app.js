@@ -460,21 +460,31 @@ const App = {
     const needsAlwaysOnTop = localStorage.getItem('cfg_always_on_top') === null;
     try {
       const result = await window.electronAPI?.getTerminalRole?.();
+      // Restore first-start connection values before any master request. Explicit
+      // provisioning is authoritative; ordinary upgrades preserve browser choices.
+      const applied = result?.provisioningApplied === true;
+      if ((applied || !localStorage.getItem('cfg_share_mode')) && ['parent', 'client', 'child'].includes(result?.shareMode)) {
+        localStorage.setItem('cfg_share_mode', result.shareMode === 'child' ? 'client' : result.shareMode);
+      }
+      if ((applied || !localStorage.getItem('cfg_parent_ip')) && typeof result?.parentIp === 'string' &&
+          (result.parentIp || applied)) {
+        localStorage.setItem('cfg_parent_ip', result.parentIp);
+      }
       this._terminalSetupPending = result?.setupCompleted === false || !!result?.provisioningError;
       if (result?.provisioningError) UI.toast('配布設定は未完了です: ' + result.provisioningError, 'warning', 12000);
-      if (needsRole) {
+      if (needsRole || applied) {
         localStorage.setItem('cfg_terminal_role', result?.terminalRole === 'exam' ? 'exam' : 'ward');
       }
-      if (needsWard && result?.wardId) {
+      if ((needsWard || applied) && result?.wardId) {
         localStorage.setItem('current_ward_id', String(result.wardId));
       }
-      if (needsDeviceName && result?.deviceName) {
+      if ((needsDeviceName || applied) && result?.deviceName) {
         localStorage.setItem('_device_name', String(result.deviceName));
       }
-      if (needsPreventSleep && typeof result?.preventSleep === 'boolean') {
+      if ((needsPreventSleep || applied) && typeof result?.preventSleep === 'boolean') {
         localStorage.setItem('cfg_prevent_sleep', String(result.preventSleep));
       }
-      if (needsAlwaysOnTop && typeof result?.alwaysOnTop === 'boolean') {
+      if ((needsAlwaysOnTop || applied) && typeof result?.alwaysOnTop === 'boolean') {
         localStorage.setItem('cfg_always_on_top', String(result.alwaysOnTop));
       }
     } catch (err) {
@@ -2686,3 +2696,4 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.toast(`アプリの起動に失敗しました: ${e.message || e}`, 'danger', 10000);
   });
 });
+
