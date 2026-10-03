@@ -146,6 +146,30 @@ async function main() {
     assert.ok(state.statusCalls.some((c) => c.ok === false), '病棟端末は従来通りeventResultの失敗だけで_setConnectionStatus(false)を呼ぶこと');
   }
 
+  // A ward terminal without a restored ward also skips the event request.
+  {
+    const state = { isExamTerminal: false, statusCalls: [], AppState: { ...makeAppState(), currentWardId: null },
+      API: { getWardStatusEvents: async () => { throw Error('must not request events'); },
+        getAll: async () => { throw Error('offline'); }, getScheduleFeeds: async () => { throw Error('offline'); },
+        getScheduleItemsForRange: async () => { throw Error('offline'); } } };
+    assert.strictEqual(await buildHarness(state)._refreshDataOnce(null, 0), false);
+    assert(!state.statusCalls.some(call => call.ok), 'No real successful request must not report connected');
+  }
+  for (const masterOk of [true, false]) {
+    const calls = [];
+    let ward = null;
+    const monitor = vm.runInNewContext(`({ _wasUnavailable: true, async _check() {${extractMethodBody(source, 'async _check() {')} } })`, {
+      console, localStorage: { getItem: () => '10.0.0.1' }, API: { getTerminalApiToken: async () => 'token' },
+      parentFetch: async () => ({ ok: true }), App: {
+        loadMasters: async () => { calls.push('masters'); return masterOk; },
+        syncWardSelect: () => { ward = 'assigned'; calls.push('ward'); },
+        refreshData: async () => { calls.push('events:' + ward); return true; },
+        _setConnectionStatus: ok => calls.push('connected:' + ok), renderCurrentPageData() {}
+      }
+    });
+    assert.strictEqual(await monitor._check(), masterOk);
+    assert.deepStrictEqual(calls, masterOk ? ['masters', 'ward', 'events:assigned', 'connected:true'] : ['masters', 'connected:false']);
+  }
   console.log('Exam terminal connection status checks passed.');
   process.exit(0);
 }

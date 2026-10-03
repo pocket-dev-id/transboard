@@ -375,8 +375,14 @@ const ParentServerMonitor = {
         const recovered = this._wasUnavailable;
         if (recovered) {
           const mastersRefreshed = await App.loadMasters({ silent: true });
+          if (!mastersRefreshed) {
+            this._wasUnavailable = true;
+            App._setConnectionStatus(false, 'network');
+            return false;
+          }
+          App.syncWardSelect();
           const refreshed = await App.refreshData({ force: true });
-          if (!mastersRefreshed || !refreshed) {
+          if (!refreshed) {
             this._wasUnavailable = true;
             App._setConnectionStatus(false, 'network');
             return false;
@@ -2059,7 +2065,7 @@ const App = {
       // ポーリングが _setConnectionStatus(true) を呼び続け、ハートビートや
       // ParentServerMonitorが検知した切断表示を毎回上書きしてしまう
       const auxFulfilledCount = auxResults.filter(r => r.status === 'fulfilled').length;
-      if (isExamTerminal && auxFulfilledCount === 0) {
+      if ((isExamTerminal || !wardId) && auxFulfilledCount === 0) {
         throw settingsResult.reason ?? feedsResult.reason ?? itemsResult.reason ?? new Error('通信に失敗しました');
       }
       const partialSync = auxFulfilledCount < auxResults.length;
