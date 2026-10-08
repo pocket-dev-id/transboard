@@ -6,6 +6,7 @@ const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
   let complete, sent = 0, settled = false;
   const savePromise = new Promise(resolve => { complete = resolve; });
   const odbc = vm.runInNewContext(extractByBraceEnd(readRoot('main-modules/odbc.js'), 'async function runOdbcSyncOnParent(') + '\nrunOdbcSyncOnParent', {
+    getImportSignature: () => undefined,
     enforceReadOnlyConnectionString: () => ({ valid: true, connectionString: 'DSN=test' }),
     validateReadOnlyQuery: () => ({ valid: true }),
     execOdbcPowerShell: async () => ({ success: true, output: 'rows' }),
@@ -25,6 +26,7 @@ const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
   const src = readRoot('main.js');
   const commit = vm.runInNewContext('let patientImportQueue = Promise.resolve();\n' + extractByBraceEnd(src, 'function commitPatientRows(') + '\ncommitPatientRows', {
     readDB: () => ({}), isClientTerminal: () => false,
+    getPatientImportSignature: () => 'current',
     planPatientImport: () => ({ updates: [{id:'bed'}], importedCount: 1, clearCount: 0, skipCount: 0, overwrittenActiveBeds: [] }),
     crypto: { randomBytes: () => ({ toString: () => 'test' }) },
     processDbRequest: async (method, url) => {
@@ -39,5 +41,8 @@ const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
   const results = await Promise.all([commit([{}]), commit([{}]), commit([{}])]);
   assert(results.every(r => r.success));
   assert.strictEqual(writes, 3); assert.strictEqual(maxActive, 1, 'Patient commits must serialize');
+  const stale = await commit([{}], 'stale.csv', {expectedSignature:'previous'});
+  assert.strictEqual(stale.success, false, 'Old settings must not commit after reconfiguration');
+  assert.strictEqual(writes, 3);
   console.log('Import commit checks passed.');
 })().catch(e => { console.error(e); process.exitCode = 1; });
