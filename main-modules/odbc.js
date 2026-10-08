@@ -14,11 +14,13 @@ function pathJoin(...parts) {
 }
 
 let getMainWindow = () => null;
+let getImportSignature = () => undefined;
 let commitPatientRows = async () => ({ success: false, message: '患者保存処理を利用できません' });
 
 function configureOdbc(deps) {
   getMainWindow = deps.getMainWindow;
   commitPatientRows = deps.commitPatientRows;
+  getImportSignature = deps.getImportSignature || (() => undefined);
 }
 
 // ODBC読み取り専用安全対策: SQLクエリバリデーション
@@ -298,6 +300,7 @@ function parseOdbcRows(output) {
 }
 
 async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
+  const expectedSignature = getImportSignature();
   // 接続文字列の検証 & 読み取り専用属性の付与
   const connResult = enforceReadOnlyConnectionString(connectionString);
   if (!connResult.valid) {
@@ -327,7 +330,7 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
   }
 
-  const resultSaved = await commitPatientRows(rows, 'ODBC同期');
+  const resultSaved = await commitPatientRows(rows, 'ODBC同期', expectedSignature === undefined ? {} : {expectedSignature});
   if (!resultSaved?.success) return resultSaved || { success: false, message: '患者情報を保存できませんでした' };
   getMainWindow()?.webContents.send('data-imported', { committed: true, fileName: 'ODBC同期', ...resultSaved });
   return resultSaved;

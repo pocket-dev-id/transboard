@@ -2268,6 +2268,14 @@ Object.assign(Settings, {
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="sched-form-policy" value="skip"> そのまま残す</label>
               </div>
 
+              <label style="font-size:12px;display:block;margin-bottom:14px;">アーカイブ保存期間
+                <select id="sched-form-retention-days">
+                  <option value="0">無期限</option><option value="7">7日間</option>
+                  <option value="30">30日間</option><option value="90">90日間</option>
+                </select>
+                <span style="font-size:11px;color:#6b7280;">アーカイブ時から計算。起動時と日次に整理します。共有フォルダでは長い保存期間を優先します。</span>
+              </label>
+
               <label style="font-size:12px;font-weight:700;color:#374151;display:block;margin-bottom:6px;">
                 対象病棟 <span style="font-size:10px;color:#6b7280;font-weight:400;">（未選択 = 全病棟に表示）</span>
               </label>
@@ -2612,6 +2620,8 @@ Object.assign(Settings, {
     const policyRadio = body.querySelector(`input[name="sched-form-policy"][value="${policy}"]`);
     if (policyRadio) policyRadio.checked = true;
 
+    body.querySelector('#sched-form-retention-days').value = String(feed?.retention_policy?.retentionDays ?? 0);
+
     // 対象病棟チェック設定
     body.querySelectorAll('.sched-ward-chk').forEach(chk => {
       chk.checked = feed?.ward_ids?.length > 0 ? feed.ward_ids.includes(chk.value) : false;
@@ -2672,7 +2682,7 @@ Object.assign(Settings, {
       encoding: body.querySelector('#sched-form-encoding').value,
       schedule,
       mapping,
-      retention_policy: { action: body.querySelector('input[name="sched-form-policy"]:checked').value },
+      retention_policy: { action: body.querySelector('input[name="sched-form-policy"]:checked').value, retentionDays: body.querySelector('#sched-form-retention-days').value },
       show_on_bed_map: body.querySelector('#sched-form-bed-map').checked,
       bed_map_icon: bedMapIcon,
       bed_map_abbreviation: refs.bedMapAbbreviationInput.value.trim().slice(0, 10),

@@ -26,7 +26,7 @@ function extractFunction(startMarker) {
   return snippet;
 }
 
-const archiveSrc = extractFunction('function archiveScheduleFeedFile(filePath, feed, policy) {');
+const archiveSrc = extractFunction('function archiveScheduleFeedFile(filePath, feed, policy, expectedHash = null) {');
 const commitSrc = extractFunction('function commitScheduleFeedImport(feed, parsedFiles) {');
 
 function makeArchiveScheduleFeedFile() {
@@ -86,10 +86,14 @@ function main() {
     const dir = mkTmpDir();
     const filePath = path.join(dir, 'a.csv');
     fs.writeFileSync(filePath, 'x');
+    const oldTime = new Date(Date.now() - 100 * 86400000);
+    fs.utimesSync(filePath, oldTime, oldTime);
     const result = archiveScheduleFeedFile(filePath, feed, { action: 'archive' });
     assert.strictEqual(result.success, true, 'アーカイブ成功時はsuccess:trueを返すこと');
     assert.ok(fs.existsSync(path.join(dir, 'archive', 'a.csv')), 'archive/配下へ実際に移動されること');
     assert.ok(!fs.existsSync(filePath), '元の場所からは無くなっていること');
+    assert.ok(fs.statSync(path.join(dir, 'archive', 'a.csv')).mtimeMs > Date.now() - 10000,
+      'Retention starts at archive time, not the age of the incoming CSV');
   }
 
   // 5) BUG FIX: action: archive で移動先のarchiveディレクトリを作成できない

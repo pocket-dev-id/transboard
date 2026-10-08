@@ -1,3 +1,5 @@
+const { fingerprint, hasReceipt, recordReceipt, readScheduleManifest, recordScheduleManifest } = require('./main-modules/import-receipts');
+const { cleanArchive } = require('./main-modules/archive-retention');
 const { createJobScheduler } = require('./main-modules/job-scheduler');
 const { planPatientImport } = require('./main-modules/patient-import');
 const { migrateStorage } = require('./main-modules/storage-migration');
@@ -1314,7 +1316,7 @@ function normalizeShareMode(value) {
 }
 
 configureParentHttp({ readDbShared, getSettingRecord, normalizeShareMode });
-configureOdbc({ getMainWindow: () => mainWindow, commitPatientRows });
+configureOdbc({ getMainWindow: () => mainWindow, commitPatientRows, getImportSignature: () => getPatientImportSignature(readDB()) });
 configureScheduleCsv({ isUtf8, authenticateSMBSync });
 configureUpdater({
   readDB,
@@ -2330,7 +2332,8 @@ function setupScheduleFeedTriggers() {
 // 手動取り込みAPI(triggerScheduleFeedImportOnParent)がフォルダ内のCSV全件の
 // 取り込み完了を待ってから結果を返せるよう、Promiseを返す。同期例外はここで
 // 全てcatchし、setInterval等のfire-and-forgetな呼び出し元でも安全に使える
-async function scanAndImportScheduleFolder(watchDir, feed) {
+async function scanAndImportScheduleFolder(watchDir, feed, { force = false } = {}) {
+  const feedSignature = fingerprint('', feed);
   // UNC監視先はセッションが切れていることがあるため都度確認する
   // （同一資格情報で接続済みならレジストリがskipするので実質無コスト）
   if (String(watchDir || '').startsWith('\\\\')) {
@@ -2362,10 +2365,11 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
     }
   }
 
-  const parsedFiles = [];
+  let parsedFiles = [];
   for (const filePath of csvFiles) {
     const parsed = await parseScheduleFeedCsvFile(filePath, feed);
-    parsedFiles.push({ filePath, ...parsed });
+    parsedFiles.push({ filePath, ...parsed, receiptKey: fingerprint(path.resolve(filePath).toLowerCase(), feed.id),
+      digest: parsed.contentHash ? fingerprint(parsed.contentHash, feed) : null });
     if (!parsed.success) {
       fileErrors.push(`${path.basename(filePath)}: ${parsed.message}`);
       console.warn(`[ScheduleFeed] "${feed.name}" 取り込みエラー: ${path.basename(filePath)}: ${parsed.message}`);
@@ -2377,7 +2381,58 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
   // あると後続ファイルの書き込みで先行ファイル分が消えてしまい、
   // 取り込み件数の集計(全ファイルの合計)とDBの実際の中身(最後のファイル分のみ)
   // が食い違っていた
-  const result = commitScheduleFeedImport(feed, parsedFiles);
+  // An entire unchanged batch needs one receipt even if it has >512 files.
+  const receiptDb = readDB();
+  const currentFeed = (receiptDb.schedule_feeds || []).find(f => f.id === feed.id);
+  if (isClientTerminal(receiptDb) || !currentFeed || fingerprint('', currentFeed) !== feedSignature) {
+    return { success: false, importedCount: 0, message: '取り込み設定が変更されたため中止しました。既存予定と原本を保持しました。' };
+  }
+  const policy = feed.retention_policy || {action:'archive'};
+  const batchKey = fingerprint(path.resolve(watchDir).toLowerCase(), `schedule-batch:${feed.id}`);
+  const batchDigest = fingerprint('', {feed, files:parsedFiles.map(p => [p.receiptKey,p.digest]).sort((a,b) => a[0].localeCompare(b[0]))});
+  const manifest = new Map(readScheduleManifest(receiptDb, feed.id, feedSignature).map(p => [p.key,p.digest]));
+  const known = p => manifest.get(p.receiptKey) === p.digest;
+  const remainingCleanup = [];
+  const validBatch = !fileErrors.length && parsedFiles.length && parsedFiles.every(p => p.success && !p.invalidRowCount);
+  const cleanupWarnings = [];
+  const retryCleanup = files => {
+    for (const p of files) {
+      const result = archiveScheduleFeedFile(p.filePath, feed, policy, p.contentHash);
+      if (!result.success) { cleanupWarnings.push(result.message); remainingCleanup.push(p); }
+    }
+  };
+  if (!force && validBatch) {
+    if (hasReceipt(receiptDb, batchKey, batchDigest) || (policy.action !== 'skip' && parsedFiles.every(known))) {
+      retryCleanup(parsedFiles);
+      if (policy.action !== 'skip' && manifest.size) {
+        const progress = readDB();
+        const before = JSON.stringify(progress.schedule_import_manifests);
+        if (!recordScheduleManifest(progress, feed.id, feedSignature, remainingCleanup) ||
+          (before !== JSON.stringify(progress.schedule_import_manifests) && !writeDB(progress))) {
+          cleanupWarnings.push('原本の後処理記録を更新できませんでした');
+        }
+      }
+      return { success: true, importedCount: 0, skipped: true, message: cleanupWarnings.join(' / ') || null };
+    }
+    // Pending cleanup belongs to an earlier export, not the fresh snapshot.
+    if (policy.action !== 'skip') {
+      retryCleanup(parsedFiles.filter(known));
+      parsedFiles = parsedFiles.filter(p => !known(p));
+    }
+  }
+  if (validBatch && parsedFiles.length) {
+    parsedFiles[0].batchReceipt = {key:batchKey,digest:batchDigest};
+    // Include old originals which still need cleanup, even when they are not
+    // part of this new snapshot. Their provenance must survive receipt eviction.
+    if (policy.action !== 'skip') parsedFiles[0].cleanupManifest = {
+      signature:feedSignature,
+      files:remainingCleanup,
+    };
+  }
+  // A full replacement is safe only when the entire directory was readable.
+  const result = fileErrors.length
+    ? { success: false, importedCount: 0, message: '全件の検証に失敗したため、既存予定と原本を保持しました。' }
+    : commitScheduleFeedImport(feed, parsedFiles);
   const overallSuccess = result.success && fileErrors.length === 0;
   // アーカイブ/削除の失敗(result.archiveWarning)は予定の保存自体には
   // 影響しないため overallSuccess は変えないが、「保存はできたが元CSVの
@@ -2386,6 +2441,7 @@ async function scanAndImportScheduleFolder(watchDir, feed) {
   const notices = [];
   if (fileErrors.length > 0) notices.push(`${fileErrors.length}件のファイルでエラー: ${fileErrors.join('; ')}`);
   if (result.archiveWarning) notices.push(result.archiveWarning);
+  notices.push(...cleanupWarnings);
   const combinedMessage = notices.length > 0
     ? [result.message, ...notices].filter(Boolean).join(' / ')
     : result.message;
@@ -2457,7 +2513,7 @@ function parseScheduleFeedCsvFile(filePath, feed) {
               imported_at: Date.now()
             });
           });
-          resolve({ success: true, items, rowCount: rows.length, message: null, encoding });
+          resolve({ success: true, items, rowCount: rows.length, contentHash: crypto.createHash('sha256').update(buffer).digest('hex'), invalidRowCount: rows.length - items.length, message: null, encoding });
         })
         .on('error', err => {
           console.error(`[ScheduleFeed] "${feed.name}" パースエラー: ${path.basename(filePath)}:`, err);
@@ -2479,9 +2535,15 @@ function parseScheduleFeedCsvFile(filePath, feed) {
 // 食い違うバグがあった。既存アイテムの置換は、渡された全ファイル分をまとめて
 // 1回だけ行う
 function commitScheduleFeedImport(feed, parsedFiles) {
+  if (parsedFiles.some(p => !p.success || p.invalidRowCount > 0)) {
+    return { success: false, importedCount: 0, message: '読み込みまたは日時の検証に失敗したため、既存予定と原本を保持しました。' };
+  }
   const succeeded = parsedFiles.filter(p => p.success);
   const totalRowCount = succeeded.reduce((sum, p) => sum + p.rowCount, 0);
   const allItems = succeeded.flatMap(p => p.items);
+  if (succeeded.length && totalRowCount === 0) {
+    return {success:false,importedCount:0,message:'CSVが空のため、既存予定と原本を保持しました。'};
+  }
 
   // 行はあるのに日時を1件も解釈できなかった場合、列マッピングの誤りやCSV形式の
   // 変更である可能性が高い。このまま進めるとそのフィードの予定が全て消えるため、
@@ -2495,10 +2557,18 @@ function commitScheduleFeedImport(feed, parsedFiles) {
   if (succeeded.length === 0) return { success: true, importedCount: 0, message: null };
 
   const db = readDB();
+  if (succeeded[0]?.cleanupManifest) {
+    const {signature,files} = succeeded[0].cleanupManifest;
+    const combined = new Map([...files,...succeeded].map(p => [p.receiptKey,p]));
+    if (!recordScheduleManifest(db, feed.id, signature, [...combined.values()])) {
+      return {success:false,importedCount:0,message:'原本の処理記録が上限5000件を超えるため中止しました。取り込みフォルダを整理してください。'};
+    }
+  }
   if (!db.schedule_items) db.schedule_items = [];
   db.schedule_items = db.schedule_items.filter(x => x.feed_id !== feed.id);
   db.schedule_items.push(...allItems);
 
+  if (succeeded[0]?.batchReceipt) recordReceipt(db, succeeded[0].batchReceipt.key, succeeded[0].batchReceipt.digest);
   const saved = writeDB(db);
   if (!saved) {
     const message = 'スケジュールの保存に失敗しました。ディスク容量や書き込み権限を確認してください。';
@@ -2506,10 +2576,6 @@ function commitScheduleFeedImport(feed, parsedFiles) {
     return { success: false, importedCount: 0, message };
   }
 
-  // retentionDaysはこのフィードの取り込みでは参照しない(アーカイブ後の保存
-  // 期間による削除は未実装のため、既定値に含めて実装済みであるかのように
-  // 見せない)。設定画面の各フィード編集フォームもaction(archive/delete/skip)
-  // しか保存しておらず、アーカイブされたCSVは実質無期限に積み上がる
   const policy = feed.retention_policy || { action: 'archive' };
   // DB反映(予定の保存)自体はここまでで既に成功している。以降のアーカイブ/
   // 削除に失敗しても、それだけを理由に取り込み全体を失敗として報告しない
@@ -2517,12 +2583,20 @@ function commitScheduleFeedImport(feed, parsedFiles) {
   // 失敗した事実は警告としてまとめ、呼び出し元がログ・通知・手動取り込み
   // APIの戻り値へ「部分成功」として反映できるようにする
   const archiveFailures = [];
+  const pendingOriginals = [...(succeeded[0]?.cleanupManifest?.files || [])];
   succeeded.forEach(p => {
-    const archiveResult = archiveScheduleFeedFile(p.filePath, feed, policy);
+    const archiveResult = archiveScheduleFeedFile(p.filePath, feed, policy, p.contentHash);
     if (archiveResult && archiveResult.success === false) {
       archiveFailures.push(archiveResult.message);
+      pendingOriginals.push(p);
     }
   });
+  if (succeeded[0]?.cleanupManifest) {
+    const latest = readDB();
+    if (!recordScheduleManifest(latest, feed.id, succeeded[0].cleanupManifest.signature, pendingOriginals) || !writeDB(latest)) {
+      archiveFailures.push('原本の後処理記録を更新できませんでした。保存前の記録を保持します。');
+    }
+  }
   const archiveWarning = archiveFailures.length > 0
     ? `予定の保存には成功しましたが、元CSVの${policy.action === 'delete' ? '削除' : 'アーカイブ移動'}に失敗しました: ${archiveFailures.join('; ')}`
     : null;
@@ -2551,9 +2625,17 @@ function notifyScheduleImported(feed, fileName, { success, count, message }) {
 // インターバル/時刻指定モードで同じCSVを繰り返し取り込んでしまっていた。
 // 呼び出し元がログ・通知・手動取り込みAPIの戻り値へ反映できるよう、
 // 成否をそのまま返す
-function archiveScheduleFeedFile(filePath, feed, policy) {
+function archiveScheduleFeedFile(filePath, feed, policy, expectedHash = null) {
   const baseName = path.basename(filePath);
   if (policy.action === 'skip') return { success: true, message: null };
+  if (expectedHash) {
+    try {
+      assertCsvFileSize(filePath);
+      if (crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex') !== expectedHash) {
+        return { success: false, message: `${baseName}が処理中に変更されたため、原本を残しました` };
+      }
+    } catch (error) { return { success: false, message: `${baseName}の原本確認に失敗しました: ${error.message}` }; }
+  }
   if (policy.action === 'delete') {
     try {
       fs.unlinkSync(filePath);
@@ -2579,8 +2661,15 @@ function archiveScheduleFeedFile(filePath, feed, policy) {
   if (fs.existsSync(destPath)) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     destPath = path.join(archiveDir, `${stem}_${ts}${ext}`);
+    let suffix = 1;
+    while (fs.existsSync(destPath)) destPath = path.join(archiveDir, `${stem}_${ts}_${suffix++}${ext}`);
   }
   try {
+    // Start retention at successful processing, even for an old source CSV.
+    // If timestamps cannot be set, keep the original rather than archive a
+    // file which the next cleanup could immediately delete.
+    const archivedAt = new Date();
+    fs.utimesSync(filePath, archivedAt, archivedAt);
     fs.renameSync(filePath, destPath);
     return { success: true, message: null };
   } catch (e) {
@@ -2626,11 +2715,12 @@ function registerImportJob(filePath) {
 
 // CSV and ODBC share one parent-side commit queue. Rendering is notification only.
 let patientImportQueue = Promise.resolve();
-function commitPatientRows(rows, fileName = 'ODBC同期') {
+function commitPatientRows(rows, fileName = 'ODBC同期', { expectedSignature = getPatientImportSignature(readDB()) } = {}) {
   const work = patientImportQueue.catch(() => {}).then(async () => {
     try {
       const db = readDB();
       if (isClientTerminal(db)) throw Error('患者取込は親機でのみ実行できます');
+      if (expectedSignature !== getPatientImportSignature(db)) throw Error('取り込み設定が変更されたため中止しました。原本を残します');
       const plan = planPatientImport(rows, db);
       if (plan.updates.length) {
         const saved = await processDbRequest('PATCH', 'tables/beds/bulk', JSON.stringify(plan.updates));
@@ -2655,14 +2745,39 @@ function commitPatientRows(rows, fileName = 'ODBC同期') {
   return work;
 }
 
-async function importCSV(filePath) {
+function getPatientImportSignature(db) {
+  return fingerprint('', {
+    mapping: getJsonSetting(db, 'import_mapping', {}),
+    policy: getJsonSetting(db, 'import_retention_policy', {}),
+    admission: getSettingRecord(db, 'admission_mode')?.value || 'csv',
+    connection: getSettingRecord(db, 'import_connection_type')?.value || 'csv',
+    directory: getSettingRecord(db, 'import_directory')?.value || '',
+    odbc: [getSettingRecord(db, 'odbc_connection_string')?.value || '', getSettingRecord(db, 'odbc_sql_query')?.value || ''],
+    beds: (db.beds || []).map(b => [b.id, b.ward_id, b.bed_number, b.room_code, b.room_number, b.bed_code]),
+  });
+}
+
+async function importCSV(filePath, { force = false } = {}) {
   const importId = registerImportJob(filePath);
   if (!importId) return { success: false, message: '同じCSVを処理中です' };
   try {
-    if (isClientTerminal(readDB())) throw Error('患者取込は親機でのみ実行できます');
+    const dbAtStart = readDB();
+    if (isClientTerminal(dbAtStart)) throw Error('患者取込は親機でのみ実行できます');
     assertCsvFileSize(filePath);
     const buffer = await fs.promises.readFile(filePath);
-    const mapping = getJsonSetting(readDB(), 'import_mapping', {});
+    const current = readDB();
+    if (isClientTerminal(current) || getPatientImportSignature(current) !== getPatientImportSignature(dbAtStart)) {
+      throw Error('取り込み設定が変更されたため中止しました。原本を残します');
+    }
+    const digest = fingerprint(buffer, getPatientImportSignature(dbAtStart));
+    const receiptKey = fingerprint(path.resolve(filePath).toLowerCase(), 'patient');
+    if (!force && hasReceipt(dbAtStart, receiptKey, digest)) {
+      const policy = getJsonSetting(dbAtStart, 'import_retention_policy', { action: 'archive' });
+      const cleanup = archiveScheduleFeedFile(filePath, { name: '患者取込' }, policy,
+        crypto.createHash('sha256').update(buffer).digest('hex'));
+      return { success: true, count: 0, skipped: true, warning: cleanup.success ? '' : cleanup.message };
+    }
+    const mapping = getJsonSetting(dbAtStart, 'import_mapping', {});
     const encoding = isUtf8(buffer) ? 'utf-8' : (mapping.encoding || 'shift-jis');
     const decodedText = new TextDecoder(encoding).decode(buffer);
     const rows = await new Promise((resolve, reject) => {
@@ -2675,11 +2790,18 @@ async function importCSV(filePath) {
       parser.on('error', reject);
       Readable.from([decodedText]).pipe(parser);
     });
-    const result = await commitPatientRows(rows, path.basename(filePath));
+    const result = await commitPatientRows(rows, path.basename(filePath), { expectedSignature: getPatientImportSignature(dbAtStart) });
     if (!result.success) throw Error(result.message);
+    const dbAfterCommit = readDB();
+    if (isClientTerminal(dbAfterCommit) || getPatientImportSignature(dbAfterCommit) !== getPatientImportSignature(dbAtStart)) {
+      result.warning = [result.warning, '保存後に設定が変更されたため、原本を残しました'].filter(Boolean).join(' ');
+      return result;
+    }
+    recordReceipt(dbAfterCommit, receiptKey, digest);
+    if (!writeDB(dbAfterCommit)) result.warning = [result.warning, '再処理防止の記録を保存できませんでした'].filter(Boolean).join(' ');
     // Only a successful DB commit permits original-file cleanup.
     const policy = getJsonSetting(readDB(), 'import_retention_policy', { action: 'archive' });
-    const archived = archiveScheduleFeedFile(filePath, { name: '患者取込' }, policy);
+    const archived = archiveScheduleFeedFile(filePath, { name: '患者取込' }, policy, crypto.createHash('sha256').update(buffer).digest('hex'));
     if (!archived.success) result.warning = [result.warning, archived.message].filter(Boolean).join(' ');
     mainWindow?.webContents.send('data-imported', { committed: true, fileName: path.basename(filePath), ...result });
     return result;
@@ -2692,37 +2814,45 @@ async function importCSV(filePath) {
 }
 
 // 古いアーカイブファイルを整理
+function getArchiveCleanupPolicies(db) {
+  const policies = new Map();
+  const add = (watchDir, policy, fallbackDays) => {
+    if (!watchDir || policy.action !== 'archive') return;
+    const directory = path.resolve(watchDir, 'archive');
+    const rawDays = Number(policy.retentionDays ?? fallbackDays);
+    const days = Number.isInteger(rawDays) && rawDays >= 0 ? rawDays : 0;
+    const key = process.platform === 'win32' ? directory.toLowerCase() : directory;
+    const previous = policies.get(key);
+    // Shared folders use the longest retention; unlimited takes precedence.
+    policies.set(key, { directory, days: previous ? (!previous.days || !days ? 0 : Math.max(previous.days, days)) : days });
+  };
+  const patientDirectory = String(getSettingRecord(db, 'import_directory')?.value || '').trim() || path.join(app.getPath('userData'), 'import_folder');
+  add(patientDirectory, getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' }), 30);
+  for (const feed of db.schedule_feeds || []) {
+    // Legacy schedule archives had no expiry. Preserve that until configured.
+    add(feed.watch_dir, feed.retention_policy || { action: 'archive' }, 0);
+  }
+  return policies;
+}
+
+let archiveCleanupPending = null;
 function cleanOldArchives() {
-  const db = readDB();
-  const policy = getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' });
-
-  if (policy.action !== 'archive') return;
-  const days = parseInt(policy.retentionDays) || 30;
-  if (days <= 0) return; // 0は無制限
-
-  const watchDir = resolveWatchDir();
-  const archiveDir = path.join(watchDir, 'archive');
-  if (!fs.existsSync(archiveDir)) return;
-
-  const now = Date.now();
-  const maxAgeMs = days * 24 * 60 * 60 * 1000;
-
-  fs.readdir(archiveDir, (err, files) => {
-    if (err) return;
-    files.forEach(file => {
-      const filePath = path.join(archiveDir, file);
-      fs.stat(filePath, (err, stats) => {
-        if (err) return;
-        const ageMs = now - stats.mtimeMs;
-        if (ageMs > maxAgeMs) {
-          fs.unlink(filePath, (err) => {
-            if (err) console.error(`[Cleaner] 古いアーカイブファイルの削除失敗: ${file}`, err);
-            else console.log(`[Cleaner] 古いアーカイブファイルを削除しました: ${file}`);
-          });
-        }
+  if (archiveCleanupPending) return archiveCleanupPending;
+  archiveCleanupPending = (async () => {
+    const db = readDB();
+    if (isClientTerminal(db)) return;
+    for (const [key, policy] of getArchiveCleanupPolicies(db)) {
+      const result = await cleanArchive(policy.directory, policy.days, () => {
+        const current = readDB();
+        if (isClientTerminal(current)) return false;
+        return getArchiveCleanupPolicies(current).get(key)?.days === policy.days;
       });
-    });
-  });
+      if (result.deleted) console.log(`[Cleaner] ${policy.directory}: ${result.deleted}件の期限切れCSVを削除しました`);
+      for (const message of result.errors) console.warn(`[Cleaner] ${policy.directory}: ${message}`);
+    }
+  })().catch(error => console.warn('[Cleaner]', error.message))
+    .finally(() => { archiveCleanupPending = null; });
+  return archiveCleanupPending;
 }
 
 // IPC通信で監視対象フォルダパスをフロントに返す
@@ -2826,7 +2956,7 @@ async function triggerManualImportOnParent() {
     if (csvFiles.length === 0) {
       return { success: true, count: 0, message: '監視フォルダに未処理のCSVファイルはありません。' };
     }
-    const results = await Promise.all(csvFiles.map(file => importCSV(path.join(watchPath, file))));
+    const results = await Promise.all(csvFiles.map(file => importCSV(path.join(watchPath, file), {force:true})));
     const failed = results.filter(result => !result?.success);
     return { success: failed.length === 0, count: results.filter(result => result?.success).length,
       message: failed.length ? `${failed.length}件の取込が失敗しました: ${failed[0]?.message || ''}` : `${csvFiles.length}件のCSV保存が完了しました。` };
@@ -4035,7 +4165,7 @@ async function triggerScheduleFeedImportOnParent(feedId) {
   // 取り込み完了を待たずに{success:true}を返すと、子機（親機アクション経由）
   // では「取り込みました」と表示された直後にまだ結果が反映されていない
   // ことがある。実際にCSVを読み終えるまで待ってから結果を返す
-  const result = await scanAndImportScheduleFolder(feed.watch_dir, feed);
+  const result = await scanAndImportScheduleFolder(feed.watch_dir, feed, { force: true });
   return { success: result.success, count: result.importedCount, message: result.message || undefined };
 }
 
@@ -5263,6 +5393,10 @@ app.whenReady().then(() => {
   }
   setupImportTrigger();
   setupScheduleFeedTriggers();
+  cleanOldArchives();
+  const archiveCleanupTimer = setInterval(cleanOldArchives, 24 * 60 * 60 * 1000);
+  archiveCleanupTimer.unref();
+  app.on('before-quit', () => clearInterval(archiveCleanupTimer));
 
   // ネットワーク共有モードに基づき、必要に応じて親機サーバーを起動
   const db = readDB();

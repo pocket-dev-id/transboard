@@ -243,7 +243,7 @@ assert(
 assert(
   (() => {
     const body = main.slice(main.indexOf('async function importCSV'), main.indexOf('function cleanOldArchives'));
-    return body.indexOf('await commitPatientRows(') < body.indexOf('archiveScheduleFeedFile(filePath') &&
+    return body.indexOf('await commitPatientRows(') < body.indexOf('const archived = archiveScheduleFeedFile(filePath') &&
       body.includes('if (!result.success) throw Error(result.message)') && !app.includes("API.bulkPatch('beds', bulkUpdates)");
   })(),
   'CSV originals must be archived only after parent DB commit succeeds'
@@ -1973,9 +1973,9 @@ assert(
 // awaitされる前提のため、コールバックベースのfs.readdirのままでは
 // 呼び出し元が完了を待てない
 assert(
-  mainSources.includes('async function scanAndImportScheduleFolder(watchDir, feed) {') &&
+  mainSources.includes('async function scanAndImportScheduleFolder(watchDir, feed, { force = false } = {}) {') &&
   (() => {
-    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed, { force = false } = {}) {');
     const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
     const body = mainSources.slice(idx, end);
@@ -2348,11 +2348,11 @@ assert(
 // 集計(全ファイルの合計)とDBの実際の中身(最後のファイル分のみ)が食い違う
 assert(
   (() => {
-    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
+    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed, { force = false } = {}) {');
     const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
     const body = mainSources.slice(idx, end);
-    return body.includes('const parsedFiles = []') &&
+    return body.includes('let parsedFiles = []') &&
       body.includes('commitScheduleFeedImport(feed, parsedFiles)');
   })(),
   'scanAndImportScheduleFolder must parse all CSV files first and commit them together in one call, not replace the feed\'s items once per file'
@@ -2376,8 +2376,8 @@ assert(
 // ファイル削除等が誰にも気づかれない)。記録した上で処理を継続しなければならない
 assert(
   (() => {
-    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed) {');
-    const end = mainSources.indexOf('const parsedFiles = []', idx);
+    const idx = mainSources.indexOf('async function scanAndImportScheduleFolder(watchDir, feed, { force = false } = {}) {');
+    const end = mainSources.indexOf('let parsedFiles = []', idx);
     if (idx < 0 || end < idx) return false;
     const body = mainSources.slice(idx, end);
     return body.includes('fileErrors.push(') && body.includes('console.warn(') && !/catch \(e\) \{\}/.test(body);
@@ -2653,7 +2653,7 @@ assert(
 // 続けてインターバル/時刻指定モードで同じCSVを繰り返し取り込んでしまう
 assert(
   (() => {
-    const idx = mainSources.indexOf('function archiveScheduleFeedFile(filePath, feed, policy) {');
+    const idx = mainSources.indexOf('function archiveScheduleFeedFile(filePath, feed, policy, expectedHash = null) {');
     const end = mainSources.indexOf('\n}', idx);
     if (idx < 0 || end < idx) return false;
     const body = mainSources.slice(idx, end);
