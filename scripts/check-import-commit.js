@@ -6,6 +6,7 @@ const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
   let complete, sent = 0, settled = false;
   const savePromise = new Promise(resolve => { complete = resolve; });
   const odbc = vm.runInNewContext(extractByBraceEnd(readRoot('main-modules/odbc.js'), 'async function runOdbcSyncOnParent(') + '\nrunOdbcSyncOnParent', {
+    MAX_ODBC_SYNC_ROWS: 5000,
     getImportSignature: () => undefined,
     enforceReadOnlyConnectionString: () => ({ valid: true, connectionString: 'DSN=test' }),
     validateReadOnlyQuery: () => ({ valid: true }),
