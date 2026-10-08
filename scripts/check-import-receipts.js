@@ -2,7 +2,7 @@
 const assert = require('assert');
 const fs = require('fs');
 assert(fs.existsSync(require('path').join(__dirname, '../main-modules/import-receipts.js')), 'Persistent bounded receipts must exist');
-const { fingerprint, hasReceipt, recordReceipt, recordScheduleManifest } = require('../main-modules/import-receipts');
+const { fingerprint, hasReceipt, recordReceipt, recordScheduleManifest, readPatientManifest, recordPatientManifest, applyPatientImportReceipt } = require('../main-modules/import-receipts');
 const db = {};
 const first = fingerprint(Buffer.from('csv'), {mapping:'a'});
 recordReceipt(db, 'file', first);
@@ -18,4 +18,23 @@ assert(db.import_receipts.length <= 512, 'Receipt history must stay bounded');
 const manifestDb={schedule_feeds:[{id:'feed'}]};
 assert.strictEqual(recordScheduleManifest(manifestDb,'feed','config',Array.from({length:5001},(_,i)=>({receiptKey:String(i),digest:'content'}))),false);
 assert.strictEqual(manifestDb.schedule_import_manifests,undefined,'Capacity rejection must preserve the old state');
+const patientDb = {};
+assert.strictEqual(recordPatientManifest(patientDb, 'folder-a', 'settings-a', 'file-a', 'digest-a'), true);
+assert.deepStrictEqual(readPatientManifest(patientDb, 'folder-a', 'settings-a'), [{ key: 'file-a', digest: 'digest-a' }]);
+assert.deepStrictEqual(readPatientManifest(patientDb, 'folder-a', 'settings-b'), [], 'Settings changes invalidate patient import receipts');
+assert.strictEqual(recordPatientManifest(patientDb, 'folder-b', 'settings-a', 'file-b', 'digest-b'), true);
+assert.strictEqual(readPatientManifest(patientDb, 'folder-a', 'settings-a').length, 1, 'Patient receipts are isolated by source folder');
+for (let i = 0; i < 4998; i++) assert.strictEqual(recordPatientManifest(patientDb, 'folder-c', 'settings-a', `file-${i}`, 'digest'), true);
+assert.strictEqual(recordPatientManifest(patientDb, 'folder-c', 'settings-a', 'overflow', 'digest'), false, 'Patient manifest capacity must be bounded');
+assert.strictEqual(readPatientManifest(patientDb, 'folder-c', 'settings-a').length, 4998, 'Overflow must preserve existing manifest');
+const rejectedDb = { patient_import_manifests: [{
+  folderKey: 'old-folder', signature: 'old-config', files: Array.from({ length: 5000 }, (_, i) => ({ key: `old-${i}`, digest: 'x' })),
+}] };
+const rejected = applyPatientImportReceipt(rejectedDb, { key: 'new-key', digest: 'new-digest', folderKey: 'new-folder', signature: 'new-config', skip: true });
+assert.strictEqual(rejected.success, false);
+assert.strictEqual(rejectedDb.import_receipts, undefined, 'A full manifest must reject without mutating receipt state');
+const atomicDb = {};
+assert.strictEqual(applyPatientImportReceipt(atomicDb, { key: 'key', digest: 'digest', folderKey: 'folder', signature: 'config', skip: true }).success, true);
+assert(hasReceipt(atomicDb, 'key', 'digest'));
+assert.strictEqual(readPatientManifest(atomicDb, 'folder', 'config').length, 1);
 console.log('Import receipt checks passed.');

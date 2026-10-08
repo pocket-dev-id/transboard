@@ -1,6 +1,29 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+
+function getArchiveDirectory(sourceDirectory, source = {}) {
+  const isScheduleFeed = Boolean(source.id);
+  const kind = isScheduleFeed ? 'schedule-feed' : 'patient-import';
+  const sourceId = isScheduleFeed ? String(source.id) : 'patient';
+  const key = crypto.createHash('sha256').update(sourceId).digest('hex').slice(0, 24);
+  return path.join(path.resolve(sourceDirectory), 'archive', kind, key);
+}
+
+function countArchiveFiles(directory, depth = 0) {
+  if (depth > 3) return 0;
+  let count = 0;
+  let entries;
+  try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT') return 0; throw error; }
+  for (const entry of entries) {
+    const file = path.join(directory, entry.name);
+    if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.csv') count++;
+    else if (entry.isDirectory()) count += countArchiveFiles(file, depth + 1);
+  }
+  return count;
+}
 
 // Only ordinary CSV files in the archive directory are eligible. Invalid or
 // unlimited policies preserve everything. Do not follow archive/file symlinks.
@@ -29,4 +52,4 @@ async function cleanArchive(directory, retentionDays, shouldDelete = () => true)
   }
   return result;
 }
-module.exports = { cleanArchive };
+module.exports = { cleanArchive, getArchiveDirectory, countArchiveFiles };

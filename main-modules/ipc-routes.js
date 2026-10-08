@@ -11,6 +11,7 @@ const LOCAL_DB_COMMANDS = new Set([
   'status/note',
   'status/ack',
   'transfer/start',
+  'actions/save-import-settings',
 ]);
 
 function isAllowedLocalDbRequestUrl(url, allowedTables) {
