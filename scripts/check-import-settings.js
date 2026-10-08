@@ -2,6 +2,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { extractByBraceEnd } = require('./lib/extract-source');
 const { prepareImportSettings, applyImportSettings } = require('../main-modules/import-settings');
 const oldDb = { system_settings: [{ id: 'smb_password', value: 'secret' }, { id: 'show_sync_time', value: 'false' }] };
 const input = {
@@ -24,9 +25,8 @@ const root = path.resolve(__dirname, '..');
 const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
 const apiSource = fs.readFileSync(path.join(root, 'js/api.js'), 'utf8');
 const uiSource = fs.readFileSync(path.join(root, 'js/settings/import-notify.js'), 'utf8');
-const saveStart = mainSource.indexOf('function saveImportSettingsOnParent(');
-const saveEnd = mainSource.indexOf('\n}\n', saveStart);
-const saveBody = mainSource.slice(saveStart, saveEnd);
+const saveBody = extractByBraceEnd(mainSource, 'function saveImportSettingsOnParent(');
+assert(saveBody, 'The atomic settings save function must be found');
 assert.strictEqual((saveBody.match(/writeDB\(/g) || []).length, 1, 'Validated import settings must persist through one DB write');
 assert(saveBody.includes('prepareImportSettings') && saveBody.includes('applyImportSettings'), 'All values must be validated and prepared before persistence');
 assert(apiSource.includes("this._fetch('actions/save-import-settings'"), 'The local API must use the atomic main-process action');
