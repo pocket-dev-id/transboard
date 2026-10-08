@@ -1,3 +1,6 @@
+const { createJobScheduler } = require('./main-modules/job-scheduler');
+const { planPatientImport } = require('./main-modules/patient-import');
+const { migrateStorage } = require('./main-modules/storage-migration');
 const { app, BrowserWindow, ipcMain, powerSaveBlocker, safeStorage, dialog } = require('electron');
 const path = require('path');
 const { Tray, Menu } = require('electron');
@@ -67,6 +70,8 @@ const {
   MASKED_SECRET_VALUE,
   isFeedSmbPasswordSettingId,
   feedSmbPasswordSettingId,
+  serverSmbPasswordSettingId,
+  isServerSmbPasswordSettingId,
   normalizeGlobalSmbMode,
   parseUncTarget,
   credentialFingerprint,
@@ -122,10 +127,8 @@ const NFC_QUICK_EXIT_THRESHOLD_MS = 3000;
 const NFC_RESTART_BASE_DELAY_MS = 5000;
 const NFC_RESTART_MAX_DELAY_MS = 60000;
 let powerSaveBlockerId = null;
-// CSV取り込みはrenderer側のDB更新完了後に初めて原本を整理する。
-// importIdで複数ファイルを同時処理しても取り違えないようにする。
+// 親機で処理中のCSVを記録し、監視と手動実行の重複を抑える。
 const pendingImportJobs = new Map();
-const IMPORT_JOB_TIMEOUT_MS = 10 * 60 * 1000;
 const TRUSTED_RENDERER_URL = pathToFileURL(path.join(__dirname, 'index.html')).href;
 
 function isTrustedRendererFrame(frame) {
@@ -443,7 +446,7 @@ const SEEDS = {
   system_settings: [
     { id: "import_directory", value: "" },
     { id: "import_mapping", value: "{\"bed_number\":\"\",\"room_code\":\"\",\"bed_code\":\"\",\"join_char\":\"-\",\"patient_id\":\"\",\"patient_name\":\"\",\"is_present\":\"\"}" },
-    { id: "import_schedule", value: "{\"mode\":\"realtime\",\"intervalMin\":\"10\",\"times\":[]}" },
+    { id: "import_schedule", value: "{\"mode\":\"interval\",\"intervalMin\":\"10\",\"times\":[]}" },
     { id: "import_retention_policy", value: "{\"action\":\"archive\",\"retentionDays\":\"30\",\"clearUnlisted\":false}" },
     { id: "import_connection_type", value: "csv" },
     { id: "odbc_connection_string", value: "" },
@@ -503,10 +506,10 @@ const AUDIT_SECRET_SETTING_IDS = new Set(['admin_passcode', 'api_token', 'smb_pa
 // 完全一致のリストでは拾えない。暗号化・子機マスク・監査マスク・エクスポート除外の
 // 4機構すべてを以下の述語経由にし、フィード用IDも同じ保護を受けるようにする。
 function isSensitiveSettingId(id) {
-  return SENSITIVE_SETTING_IDS.includes(id) || isFeedSmbPasswordSettingId(id);
+  return SENSITIVE_SETTING_IDS.includes(id) || isFeedSmbPasswordSettingId(id) || isServerSmbPasswordSettingId(id);
 }
 function isAuditSecretSettingId(id) {
-  return AUDIT_SECRET_SETTING_IDS.has(String(id || '')) || isFeedSmbPasswordSettingId(id);
+  return AUDIT_SECRET_SETTING_IDS.has(String(id || '')) || isFeedSmbPasswordSettingId(id) || isServerSmbPasswordSettingId(id);
 }
 const AUDIT_PATIENT_FIELD_IDS = new Set(['patient_name', 'patient_id', 'patient_ic_tag_id', 'patient_note']);
 const AUDIT_LOG_MAX_ENTRIES = 20000;
@@ -1298,6 +1301,11 @@ function writeDbOrThrow(db) {
 }
 
 function getSettingRecord(db, id) {
+  // Role file is canonical; legacy DB values are read only before migration.
+  if (id === 'share_mode' || id === 'parent_ip') {
+    const role = readTerminalRole();
+    if (role) return { id, value: id === 'share_mode' ? role.shareMode : role.parentIp };
+  }
   return (db.system_settings || []).find(s => s.id === id);
 }
 
@@ -1306,7 +1314,7 @@ function normalizeShareMode(value) {
 }
 
 configureParentHttp({ readDbShared, getSettingRecord, normalizeShareMode });
-configureOdbc({ getMainWindow: () => mainWindow });
+configureOdbc({ getMainWindow: () => mainWindow, commitPatientRows });
 configureScheduleCsv({ isUtf8, authenticateSMBSync });
 configureUpdater({
   readDB,
@@ -1521,6 +1529,32 @@ function writeTerminalRole(
   }
 }
 
+function saveTerminalConnection({ mode, parentIp = '', token = null } = {}) {
+  if (!['parent', 'client', 'child'].includes(mode)) return { success: false, message: '稼働モードが不正です' };
+  mode = normalizeShareMode(mode);
+  parentIp = mode === 'client' ? String(parentIp).trim() : '';
+  if (mode === 'client' && (!parentIp || !/^[a-z0-9_.-]{1,253}$/i.test(parentIp))) {
+    return { success: false, message: '親機のホスト名またはIPv4アドレスを確認してください' };
+  }
+  const oldRole = readTerminalRole();
+  if (!oldRole) return { success: false, message: '端末設定を読み込めません。再起動して初期設定を確認してください' };
+  const oldSecret = token === null ? null : getTerminalApiToken();
+  if (oldSecret && !oldSecret.success) return oldSecret;
+  if (token !== null) {
+    const saved = setTerminalApiToken(token);
+    if (!saved.success) return saved;
+  }
+  const changed = oldRole.shareMode !== mode || oldRole.parentIp !== parentIp;
+  const saved = writeTerminalRole({ ...oldRole, shareMode: mode, parentIp,
+    setupCompleted: changed ? false : oldRole.setupCompleted,
+  });
+  if (!saved) {
+    const restored = token === null || setTerminalApiToken(oldSecret.token).success;
+    return { success: false, message: restored ? '接続設定を保存できませんでした' : '接続設定と資格情報の復元に失敗しました。再設定してください' };
+  }
+  return { success: true, changed, role: saved };
+}
+
 function syncTerminalRoleFromLocalDbRequest(url, method, bodyStr) {
   if (!/^tables\/system_settings\/(share_mode|parent_ip)$/.test(url || '')) return;
   if (method !== 'PATCH' && method !== 'PUT' && method !== 'POST') return;
@@ -1721,8 +1755,8 @@ function isManagedDeployment() {
 function repairShareModeBeforeServerStart() {
   const db = readDB();
   db.system_settings = db.system_settings || [];
-  const shareModeSetting = getSettingRecord(db, 'share_mode');
-  const parentIpSetting = getSettingRecord(db, 'parent_ip');
+  const shareModeSetting = db.system_settings.find(s => s.id === 'share_mode');
+  const parentIpSetting = db.system_settings.find(s => s.id === 'parent_ip');
   const dbShareMode = normalizeShareMode(shareModeSetting?.value);
   const dbParentIp = String(parentIpSetting?.value || '');
   let terminalRole = readTerminalRole();
@@ -1787,6 +1821,65 @@ function readGlobalSmbCredentials(db) {
   };
 }
 
+function readSmbServerProfiles(db) {
+  try {
+    const parsed = JSON.parse(getSettingRecord(db, 'smb_server_profiles')?.value || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+
+function resolveSmbServerProfile(db, watchPath, fallback) {
+  const target = parseUncTarget(watchPath);
+  if (!target) return fallback;
+  const profiles = readSmbServerProfiles(db);
+  const profile = Object.prototype.hasOwnProperty.call(profiles, target.serverKey)
+    ? profiles[target.serverKey] : null;
+  if (!profile) return fallback;
+  return {
+    mode: profile.mode === 'custom' ? 'custom' : 'current',
+    username: profile.username || '',
+    password: getSettingRecord(db, serverSmbPasswordSettingId(target.serverKey))?.value || '',
+    source: 'server',
+  };
+}
+
+function saveSmbServerProfile({ server, mode, username, password = '', remove = false } = {}) {
+  try {
+    const key = String(server || '').trim().toLowerCase();
+    const secretId = serverSmbPasswordSettingId(key);
+    if (!['custom', 'current'].includes(mode) && !remove) throw new Error('認証方式が不正です');
+    const db = readDB();
+    db.system_settings = db.system_settings || [];
+    const profiles = readSmbServerProfiles(db);
+    const old = db.system_settings.find(s => s.id === secretId);
+    const existing = Object.prototype.hasOwnProperty.call(profiles, key) ? profiles[key] : null;
+    if (!remove && mode === 'custom' && (!String(username || '').trim() ||
+        ((!password || password === MASKED_SECRET_VALUE) && !old?.value))) {
+      throw new Error('ユーザー名とパスワードを入力してください');
+    }
+    if (remove) delete profiles[key];
+    else profiles[key] = { mode, username: mode === 'custom' ? String(username).trim() : '' };
+    const set = (id, value) => {
+      const record = db.system_settings.find(s => s.id === id);
+      if (record) record.value = value;
+      else db.system_settings.push({ id, value });
+    };
+    set('smb_server_profiles', JSON.stringify(profiles));
+    if (remove || mode === 'current') set(secretId, '');
+    else if (password && password !== MASKED_SECRET_VALUE) set(secretId, String(password));
+    appendAuditLog(db, 'SMB_PROFILE_CHANGE', { targetType: 'smb_server', targetId: key, actorType: 'local_ui',
+      details: { action: remove ? 'remove' : 'save', mode: remove ? '' : mode } });
+    if (!writeDB(db)) throw new Error('保存に失敗しました');
+    const restartRequired = smbSessionRegistry.servers().includes(key) &&
+      (remove || existing?.mode !== mode || existing?.username !== username || !!password);
+    if (!restartRequired) {
+      setupImportTrigger();
+      setupScheduleFeedTriggers();
+    }
+    return { success: true, restartRequired };
+  } catch (error) { return { success: false, message: error.message }; }
+}
+
 // スケジュールフィードが実際に使う認証情報を決める（inherit=共通設定を継承）。
 // パスワードはフィード行ではなくsystem_settingsのフィード専用IDに入っている。
 function readFeedSmbCredentials(db, feed) {
@@ -1795,14 +1888,16 @@ function readFeedSmbCredentials(db, feed) {
     smb_username: feed?.smb_username,
     smb_password: getSettingRecord(db, feedSmbPasswordSettingId(feed?.id))?.value || '',
   };
-  return resolveFeedSmbCredentials(feedWithPassword, readGlobalSmbCredentials(db));
+  return resolveSmbServerProfile(db, feed?.watch_dir,
+    resolveFeedSmbCredentials(feedWithPassword, readGlobalSmbCredentials(db)));
 }
 
 // SMBネットワーク共有フォルダの同期認証（Windows用）
 // credentials省略時は共通設定を使う（従来の呼び出し元はそのまま動く）。
 function authenticateSMBSync(watchPath, credentials = null) {
   if (!watchPath || !watchPath.startsWith('\\\\')) return { skipped: true };
-  const cred = credentials || readGlobalSmbCredentials(readDB());
+  const db = readDB();
+  const cred = resolveSmbServerProfile(db, watchPath, credentials || readGlobalSmbCredentials(db));
   if (cred.mode !== 'custom') return { skipped: true };
 
   const username = String(cred.username || '').trim();
@@ -2016,11 +2111,14 @@ function createTray() {
 }
 
 let currentIntervalTimer = null;
+let patientScheduleJob = null;
+let scheduleFeedJobs = [];
 
 // インポート実行のトリガー設定（監視・定期タイマー）
 function setupImportTrigger() {
   const db = readDB();
-  const schedule = getJsonSetting(db, 'import_schedule', { mode: 'realtime' });
+  const schedule = getJsonSetting(db, 'import_schedule', { mode: 'interval', intervalMin: 10 });
+  if (patientScheduleJob) { patientScheduleJob.stop(); patientScheduleJob = null; }
 
   // 既存の監視・タイマーをクリア
   if (currentWatcher) {
@@ -2044,8 +2142,19 @@ function setupImportTrigger() {
     return;
   }
 
+  const connectionType = getSettingRecord(db, 'import_connection_type')?.value || 'csv';
+  if (connectionType === 'none') return;
+  if (connectionType === 'odbc') {
+    try {
+      patientScheduleJob = createJobScheduler(schedule.mode === 'realtime' ? {mode:'interval',intervalMin:10} : schedule,
+        () => runOdbcSyncOnParent({ connectionString: getSettingRecord(readDB(), 'odbc_connection_string')?.value || '', sqlQuery: getSettingRecord(readDB(), 'odbc_sql_query')?.value || '' }));
+    } catch (error) { console.error('[Scheduler]', error.message); }
+    return;
+  }
   const watchPath = resolveWatchDir();
   currentWatchDir = watchPath;
+  try { patientScheduleJob = createJobScheduler(schedule, () => scanAndImportFolder(currentWatchDir)); }
+  catch (error) { console.error('[Scheduler]', error.message); return; }
 
   if (schedule.mode === 'realtime') {
     console.log(`[Watcher] リアルタイム監視を開始します: ${currentWatchDir}`);
@@ -2059,57 +2168,40 @@ function setupImportTrigger() {
       }
     });
 
-    currentWatcher.on('add', (filePath) => {
+    const onPatientFile = (filePath) => {
       if (path.extname(filePath).toLowerCase() === '.csv') {
         console.log(`[Watcher] CSV追加検知: ${filePath}`);
         importCSV(filePath).catch(err => console.error(`[Watcher] CSV取り込みエラー: ${filePath}`, err));
       }
-    });
+    };
+    currentWatcher.on('add', onPatientFile);
+    currentWatcher.on('change', onPatientFile);
     // chokidarはリスナー無しの'error'イベントで例外を投げ、Electronの
     // メインプロセスごとクラッシュさせる(EMFILE・共有フォルダの瞬断・
     // 権限変更等で発生しうる)。ログに残すだけに留め、プロセスは維持する。
     currentWatcher.on('error', (err) => {
       console.error(`[Watcher] フォルダ監視エラー: ${currentWatchDir}`, err);
     });
-  } else if (schedule.mode === 'interval') {
-    const mins = parseInt(schedule.intervalMin) || 10;
-    console.log(`[Scheduler] 定期インポート（${mins}分ごと）を開始します: ${currentWatchDir}`);
-    currentIntervalTimer = setInterval(() => {
-      scanAndImportFolder(currentWatchDir);
-    }, mins * 60 * 1000);
-  } else if (schedule.mode === 'time') {
-    const times = schedule.times || [];
-    console.log(`[Scheduler] 時刻指定インポート（${times.join(', ')}）を開始します: ${currentWatchDir}`);
-    let lastExecutedTimeStr = '';
-    currentIntervalTimer = setInterval(() => {
-      const d = new Date();
-      const timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
-      if (times.includes(timeStr) && lastExecutedTimeStr !== timeStr) {
-        lastExecutedTimeStr = timeStr;
-        console.log(`[Scheduler] 指定時刻になりました (${timeStr})。フォルダをスキャンします...`);
-        scanAndImportFolder(currentWatchDir);
-      }
-    }, 30000); // 30秒ごとに時刻チェック
   }
 }
 
 // フォルダ内にあるCSVをすべてスキャンしてインポート
-function scanAndImportFolder(watchPath) {
+async function scanAndImportFolder(watchPath) {
   if (!fs.existsSync(watchPath)) return;
-  fs.readdir(watchPath, (err, files) => {
-    if (err) return;
-    files.forEach(file => {
+  const files = await fs.promises.readdir(watchPath);
+  {
+    await Promise.all(files.map(file => {
       const filePath = path.join(watchPath, file);
       try {
         if (fs.statSync(filePath).isFile() && path.extname(file).toLowerCase() === '.csv') {
           console.log(`[Scheduler] CSVファイルスキャン検出: ${filePath}`);
-          importCSV(filePath).catch(err => console.error(`[Scheduler] CSV取り込みエラー: ${filePath}`, err));
+          return importCSV(filePath).catch(err => console.error(`[Scheduler] CSV取り込みエラー: ${filePath}`, err));
         }
       } catch (statErr) {
         console.warn(`[Scheduler] ファイル取得スキップ (削除済みの可能性): ${file}`);
       }
-    });
-  });
+    }));
+  }
 }
 
 // ============================================================
@@ -2132,6 +2224,8 @@ function setupScheduleFeedTriggers() {
     clearTimeout(scheduleFeedRetryTimer);
     scheduleFeedRetryTimer = null;
   }
+  scheduleFeedJobs.forEach(job => job.stop());
+  scheduleFeedJobs = [];
   // 既存の監視・タイマーをすべて停止
   scheduleFeedWatchers.forEach(w => { try { w.close(); } catch (e) {} });
   scheduleFeedWatchers = [];
@@ -2179,6 +2273,12 @@ function setupScheduleFeedTriggers() {
     }
 
     const schedule = feed.schedule || { mode: 'realtime' };
+    let scheduledJob;
+    try {
+      scheduledJob = createJobScheduler(schedule, () => scanAndImportScheduleFolder(watchDir, feed));
+      scheduleFeedJobs.push(scheduledJob);
+    } catch (error) { console.error('[ScheduleFeed]', error.message); return; }
+
 
     if (schedule.mode === 'realtime') {
       const watcher = chokidar.watch(watchDir, {
@@ -2187,7 +2287,7 @@ function setupScheduleFeedTriggers() {
         persistent: true,
         awaitWriteFinish: { stabilityThreshold: 1000, pollInterval: 100 }
       });
-      watcher.on('add', filePath => {
+      const onScheduleFile = filePath => {
         if (path.extname(filePath).toLowerCase() !== '.csv') return;
         // 同じ監視フォルダに複数のCSVが立て続けに現れた場合(アプリ起動時に既存の
         // 複数CSVをまとめて検出した場合、運用者が複数ファイルを同時に投入した場合等)、
@@ -2202,10 +2302,12 @@ function setupScheduleFeedTriggers() {
         if (existingTimer) clearTimeout(existingTimer);
         const debounceTimer = setTimeout(() => {
           scheduleFeedRealtimeDebounceTimers.delete(feed.id);
-          scanAndImportScheduleFolder(watchDir, feed).catch(err => console.error(`[ScheduleFeed] CSV取り込みエラー: ${watchDir}`, err));
+          scheduledJob.trigger();
         }, SCHEDULE_FEED_REALTIME_DEBOUNCE_MS);
         scheduleFeedRealtimeDebounceTimers.set(feed.id, debounceTimer);
-      });
+      };
+      watcher.on('add', onScheduleFile);
+      watcher.on('change', onScheduleFile);
       // chokidarはリスナー無しの'error'イベントで例外を投げ、Electronの
       // メインプロセスごとクラッシュさせる(共有フォルダの瞬断・権限変更等で
       // 発生しうる)。ログに残すだけに留め、他フィードの監視を巻き込まない。
@@ -2213,22 +2315,6 @@ function setupScheduleFeedTriggers() {
         console.error(`[ScheduleFeed] フォルダ監視エラー: ${watchDir}`, err);
       });
       scheduleFeedWatchers.push(watcher);
-    } else if (schedule.mode === 'interval') {
-      const mins = parseInt(schedule.intervalMin) || 10;
-      const timer = setInterval(() => scanAndImportScheduleFolder(watchDir, feed), mins * 60 * 1000);
-      scheduleFeedTimers.push(timer);
-    } else if (schedule.mode === 'time') {
-      const times = schedule.times || [];
-      let lastRun = '';
-      const timer = setInterval(() => {
-        const d = new Date();
-        const t = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-        if (times.includes(t) && lastRun !== t) {
-          lastRun = t;
-          scanAndImportScheduleFolder(watchDir, feed);
-        }
-      }, 30000);
-      scheduleFeedTimers.push(timer);
     }
   });
 
@@ -2534,98 +2620,74 @@ function registerImportJob(filePath) {
     }
   }
   const importId = `import-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
-  const timer = setTimeout(() => {
-    if (!pendingImportJobs.has(importId)) return;
-    pendingImportJobs.delete(importId);
-    console.warn(`[Watcher] インポート完了応答がないため原本を残します: ${filePath}`);
-  }, IMPORT_JOB_TIMEOUT_MS);
-  pendingImportJobs.set(importId, { filePath, timer, createdAt: Date.now() });
+  pendingImportJobs.set(importId, { filePath });
   return importId;
 }
 
-// renderer側のDB更新結果を受けてから、CSV原本をアーカイブ／削除する。
-handleTrusted('complete-data-import', (event, payload = {}) => {
-  const importId = typeof payload.importId === 'string' ? payload.importId.trim() : '';
-  const success = payload.success === true;
-  if (!importId || importId.length > 160) return { success: false, message: '不正なインポートIDです。' };
-  const job = pendingImportJobs.get(importId);
-  if (!job) return { success: false, message: 'インポートジョブが見つからないか、期限切れです。' };
-  clearTimeout(job.timer);
-  pendingImportJobs.delete(importId);
-  if (!success) {
-    console.warn(`[Watcher] DB更新失敗のため原本を残します: ${job.filePath}`);
-    return { success: true, archived: false };
-  }
-  archiveFile(job.filePath);
-  return { success: true, archived: true };
-});
+// CSV and ODBC share one parent-side commit queue. Rendering is notification only.
+let patientImportQueue = Promise.resolve();
+function commitPatientRows(rows, fileName = 'ODBC同期') {
+  const work = patientImportQueue.catch(() => {}).then(async () => {
+    try {
+      const db = readDB();
+      if (isClientTerminal(db)) throw Error('患者取込は親機でのみ実行できます');
+      const plan = planPatientImport(rows, db);
+      if (plan.updates.length) {
+        const saved = await processDbRequest('PATCH', 'tables/beds/bulk', JSON.stringify(plan.updates));
+        if (!saved?.success) throw Error(saved?.message || '患者情報を保存できませんでした');
+      }
+      const result = { success: true, count: plan.importedCount, clearCount: plan.clearCount,
+        skipCount: plan.skipCount, overwrittenActiveBeds: plan.overwrittenActiveBeds,
+        warning: plan.warning || '' };
+      // A log failure must not claim that the already committed patient update failed.
+      try {
+        const logResult = await processDbRequest('POST', 'tables/import_logs', JSON.stringify({
+          id: `log-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`, timestamp: Date.now(), fileName,
+          status: plan.skipCount || plan.warning ? 'warning' : 'success',
+          message: `${plan.importedCount}件更新、${plan.clearCount}件空床化、${plan.skipCount}件スキップ${plan.warning ? '。' + plan.warning : ''}`,
+        }));
+        if (logResult?.success === false) throw Error(logResult.message || '履歴の保存に失敗しました');
+      } catch (error) { result.warning = [result.warning, '取込履歴を保存できませんでした: ' + error.message].filter(Boolean).join(' '); }
+      return result;
+    } catch (error) { return { success: false, message: error.message }; }
+  });
+  patientImportQueue = work;
+  return work;
+}
 
-// CSVファイルをパースしてレンダラーへ送信
 async function importCSV(filePath) {
   const importId = registerImportJob(filePath);
-  if (!importId) return;
+  if (!importId) return { success: false, message: '同じCSVを処理中です' };
   try {
+    if (isClientTerminal(readDB())) throw Error('患者取込は親機でのみ実行できます');
     assertCsvFileSize(filePath);
     const buffer = await fs.promises.readFile(filePath);
-    
-    // 文字コードの自動判定（BOM判定 または UTF-8バイナリ判定）
-    let encoding = 'shift-jis'; // デフォルトは Shift-JIS
-    if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
-      encoding = 'utf-8';
-    } else if (isUtf8(buffer)) {
-      encoding = 'utf-8';
-    } else {
-      // マッピング設定に保存されている設定値があればフォールバック
-      const db = readDB();
-      const mapping = getJsonSetting(db, 'import_mapping', {});
-      if (mapping.encoding) {
-        encoding = mapping.encoding;
-      }
-    }
-    
-    const decoder = new TextDecoder(encoding);
-    const decodedText = decoder.decode(buffer);
-
-    const results = [];
-    const parser = csv();
-    parser.on('data', data => {
-      if (results.length >= MAX_CSV_ROWS) {
-        parser.destroy(new Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
-        return;
-      }
-      results.push(data);
+    const mapping = getJsonSetting(readDB(), 'import_mapping', {});
+    const encoding = isUtf8(buffer) ? 'utf-8' : (mapping.encoding || 'shift-jis');
+    const decodedText = new TextDecoder(encoding).decode(buffer);
+    const rows = await new Promise((resolve, reject) => {
+      const results = [], parser = csv();
+      parser.on('data', row => {
+        if (results.length >= MAX_CSV_ROWS) parser.destroy(Error(`CSVの行数が上限${MAX_CSV_ROWS}件を超えています`));
+        else results.push(row);
+      });
+      parser.on('end', () => resolve(results));
+      parser.on('error', reject);
+      Readable.from([decodedText]).pipe(parser);
     });
-    Readable.from([decodedText])
-      .pipe(parser)
-      .on('end', () => {
-        console.log(`[Watcher] パース完了 (${encoding}): ${results.length} 件`);
-        if (mainWindow) {
-          mainWindow.webContents.send('data-imported', {
-            importId,
-            fileName: path.basename(filePath),
-            rows: results
-          });
-        }
-      })
-      .on('error', (err) => {
-        console.error('[Watcher] パースエラー:', err);
-        if (mainWindow) {
-          mainWindow.webContents.send('data-import-failed', {
-            importId,
-            fileName: path.basename(filePath),
-            error: err.message
-          });
-        }
-      });
-  } catch (err) {
-    console.error('[Watcher] ファイル読み込みまたはデコードエラー:', err);
-    if (mainWindow) {
-      mainWindow.webContents.send('data-import-failed', {
-        importId,
-        fileName: path.basename(filePath),
-        error: err.message
-      });
-    }
+    const result = await commitPatientRows(rows, path.basename(filePath));
+    if (!result.success) throw Error(result.message);
+    // Only a successful DB commit permits original-file cleanup.
+    const policy = getJsonSetting(readDB(), 'import_retention_policy', { action: 'archive' });
+    const archived = archiveScheduleFeedFile(filePath, { name: '患者取込' }, policy);
+    if (!archived.success) result.warning = [result.warning, archived.message].filter(Boolean).join(' ');
+    mainWindow?.webContents.send('data-imported', { committed: true, fileName: path.basename(filePath), ...result });
+    return result;
+  } catch (error) {
+    mainWindow?.webContents.send('data-import-failed', { fileName: path.basename(filePath), error: error.message });
+    return { success: false, message: error.message };
+  } finally {
+    pendingImportJobs.delete(importId);
   }
 }
 
@@ -2661,109 +2723,6 @@ function cleanOldArchives() {
       });
     });
   });
-}
-
-// ファイルをアーカイブ移動または削除
-function archiveFile(filePath) {
-  const db = readDB();
-  const policy = getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' });
-
-  if (policy.action === 'skip') {
-    console.log(`[Watcher] ポリシー: そのまま残す (スキップ): ${filePath}`);
-    return;
-  }
-
-  if (policy.action === 'delete') {
-    // 即時物理削除
-    setTimeout(() => {
-      fs.unlink(filePath, (err) => {
-        if (err) {
-          console.error('[Watcher] ファイル即時削除失敗 (リトライします):', err);
-          setTimeout(() => {
-            fs.unlink(filePath, (err2) => {
-              if (err2) console.error('[Watcher] ファイル即時削除リトライ失敗:', err2);
-              else console.log(`[Watcher] ファイル即時削除完了 (リトライ成功): ${filePath}`);
-            });
-          }, 1000);
-        } else {
-          console.log(`[Watcher] ファイル即時削除完了: ${filePath}`);
-        }
-      });
-    }, 200);
-    return;
-  }
-
-  const baseDir = path.dirname(filePath);
-  const archiveDir = path.join(baseDir, 'archive');
-  if (!fs.existsSync(archiveDir)) {
-    try {
-      fs.mkdirSync(archiveDir, { recursive: true });
-    } catch (mkdirErr) {
-      const msg = `archiveフォルダの作成に失敗しました。権限を確認してください。\nフォルダ: ${archiveDir}\n理由: ${mkdirErr.message}`;
-      console.error('[Watcher]', msg, mkdirErr);
-      if (mainWindow) {
-        mainWindow.webContents.send('archive-error', {
-          fileName: path.basename(filePath),
-          archiveDir,
-          error: msg,
-          code: mkdirErr.code
-        });
-      }
-      return;
-    }
-  }
-  const baseName = path.basename(filePath);
-  const ext = path.extname(baseName);
-  const stem = path.basename(baseName, ext);
-  let destPath = path.join(archiveDir, baseName);
-  if (fs.existsSync(destPath)) {
-    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    destPath = path.join(archiveDir, `${stem}_${ts}${ext}`);
-  }
-
-  function sendArchiveError(err) {
-    let hint = '';
-    if (err.code === 'EPERM' || err.code === 'EACCES') {
-      hint = ' (アクセス権限がありません。設定でポリシーを「そのまま残す」に変更することで回避できます)';
-    } else if (err.code === 'EBUSY') {
-      hint = ' (ファイルが他のプロセスに使用中です)';
-    } else if (err.code === 'EXDEV') {
-      hint = ' (異なるドライブ間の移動はできません)';
-    }
-    const msg = `archiveフォルダへの移動に失敗しました${hint}\nファイル: ${path.basename(filePath)}\n理由: ${err.message}`;
-    console.error('[Watcher]', msg);
-    if (mainWindow) {
-      mainWindow.webContents.send('archive-error', {
-        fileName: path.basename(filePath),
-        archiveDir,
-        error: msg,
-        code: err.code
-      });
-    }
-  }
-
-  // Windowsのファイル排他ロック問題を回避するため、少し待ってから移動する
-  setTimeout(() => {
-    fs.rename(filePath, destPath, (err) => {
-      if (err) {
-        console.error('[Watcher] アーカイブ移動失敗 (リトライします):', err);
-        setTimeout(() => {
-          fs.rename(filePath, destPath, (err2) => {
-            if (err2) {
-              console.error('[Watcher] アーカイブ移動リトライ失敗:', err2);
-              sendArchiveError(err2);
-            } else {
-              console.log(`[Watcher] アーカイブ移動完了 (リトライ成功): ${destPath}`);
-              cleanOldArchives();
-            }
-          });
-        }, 1000);
-      } else {
-        console.log(`[Watcher] アーカイブ移動完了: ${destPath}`);
-        cleanOldArchives();
-      }
-    });
-  }, 200);
 }
 
 // IPC通信で監視対象フォルダパスをフロントに返す
@@ -2867,11 +2826,11 @@ async function triggerManualImportOnParent() {
     if (csvFiles.length === 0) {
       return { success: true, count: 0, message: '監視フォルダに未処理のCSVファイルはありません。' };
     }
-    await Promise.all(csvFiles.map(file => {
-      const filePath = path.join(watchPath, file);
-      return importCSV(filePath).catch(err => console.error(`[Manual Import] CSV取り込みエラー: ${filePath}`, err));
-    }));
-    return { success: true, count: csvFiles.length, message: `${csvFiles.length}件のCSVファイルを取り込み開始しました。` };
+    const results = await Promise.all(csvFiles.map(file => importCSV(path.join(watchPath, file))));
+    const failed = results.filter(result => !result?.success);
+    return { success: failed.length === 0, count: results.filter(result => result?.success).length,
+      message: failed.length ? `${failed.length}件の取込が失敗しました: ${failed[0]?.message || ''}` : `${csvFiles.length}件のCSV保存が完了しました。` };
+
   } catch (err) {
     console.error('[Manual Import] エラー:', err);
     return { success: false, message: err.message };
@@ -3012,12 +2971,13 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
   if (!bulkTables.has(table)) {
     return { success: false, message: 'このテーブルの一括マスター更新は許可されていません。' };
   }
-  if (!Array.isArray(records) || records.length === 0 || records.length > 1000) {
+  if (!Array.isArray(records) || records.length === 0 || records.length > (isExternal ? 1000 : 100000)) {
     return { success: false, message: '一括マスター更新の件数が不正です。' };
   }
 
   const list = db[table] || [];
   const workingList = list.map(item => ({ ...item }));
+  const indexById = new Map(workingList.map((item, index) => [String(item.id), index]));
   const seenIds = new Set();
   const operations = [];
   for (const raw of records) {
@@ -3031,7 +2991,7 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
       return { success: false, conflict: true, message: '同じIDのマスターが複数含まれています。' };
     }
     seenIds.add(key);
-    const index = workingList.findIndex(item => String(item.id) === key);
+    const index = indexById.has(key) ? indexById.get(key) : -1;
     const before = index === -1 ? null : workingList[index];
     const revisionError = applyMasterRevision(table, before, data);
     if (revisionError) return revisionError;
@@ -3045,7 +3005,10 @@ function processMasterBulkUpsert(table, records, db, isExternal, requestMeta = {
       );
       if (duplicate) return { success: false, conflict: true, message: `病床番号が重複しています: ${data.bed_number}` };
     }
-    if (index === -1) workingList.push(after);
+    if (index === -1) {
+      indexById.set(key, workingList.length);
+      workingList.push(after);
+    }
     else workingList[index] = after;
     operations.push({ before: before ? JSON.parse(JSON.stringify(before)) : null, after });
   }
@@ -3157,7 +3120,7 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
     // 完全一致の配列ではなく述語で判定する
     const isBlockedSecret = (settingId) =>
       ['odbc_connection_string', 'smb_password', 'admin_passcode', 'api_token'].includes(settingId)
-      || isFeedSmbPasswordSettingId(settingId);
+      || isFeedSmbPasswordSettingId(settingId) || isServerSmbPasswordSettingId(settingId);
     // 稼働モード・親機IPは各端末ローカルの設定。外部（子機）からの書き換えを許すと
     // 親機のDBの share_mode が'client'に上書きされ、再起動後に共有サーバーが
     // 起動しなくなるため、書き込みのみ遮断する（読み取りは従来どおり許可）
@@ -3899,12 +3862,15 @@ handleTrusted('verify-admin-passcode', (event, passcode) => (
 handleTrusted('set-admin-passcode', (event, passcode) => setAdminPasscode(passcode));
 handleTrusted('get-terminal-api-token', () => getTerminalApiToken());
 handleTrusted('set-terminal-api-token', (event, token) => setTerminalApiToken(token));
+handleTrusted('save-terminal-connection', (event, value) => saveTerminalConnection(value));
 handleTrusted('get-terminal-role', () => {
   const role = readTerminalRole() || {};
   return {
     success: true,
     shareMode: role.shareMode || null,
     parentIp: String(role.parentIp || ''),
+    authoritative: !!role.shareMode,
+    managed: isManagedDeployment(),
     provisioningApplied: provisioningResult?.success === true,
     terminalRole: normalizeTerminalRole(role.terminalRole),
     setupCompleted: role.setupCompleted ?? null,
@@ -3917,6 +3883,7 @@ handleTrusted('get-terminal-role', () => {
     alwaysOnTop: typeof role.alwaysOnTop === 'boolean' ? role.alwaysOnTop : null,
   };
 });
+handleTrusted('save-smb-server-profile', (event, profile) => saveSmbServerProfile(profile));
 handleTrusted('set-terminal-role', (event, value) => {
   const current = readTerminalRole() || {};
   const db = readDB();
@@ -4205,7 +4172,7 @@ function redactPatientData(dbObj) {
 
 const EXPORT_REDACTED_SETTING_IDS = [...SENSITIVE_SETTING_IDS, 'admin_passcode'];
 function isExportRedactedSettingId(id) {
-  return EXPORT_REDACTED_SETTING_IDS.includes(id) || isFeedSmbPasswordSettingId(id);
+  return EXPORT_REDACTED_SETTING_IDS.includes(id) || isFeedSmbPasswordSettingId(id) || isServerSmbPasswordSettingId(id);
 }
 function redactCredentials(dbObj) {
   if (Array.isArray(dbObj.system_settings)) {
@@ -4413,11 +4380,31 @@ handleTrusted('get-db-info', () => {
   const db = readDB();
   let fileSizeBytes = 0;
   try { fileSizeBytes = fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0; } catch {}
+  let auditFileSizeBytes = 0;
+  try { auditFileSizeBytes = fs.existsSync(AUDIT_LOG_FILE) ? fs.statSync(AUDIT_LOG_FILE).size : 0; } catch {}
+  let retainedBackupBytes = 0;
+  let retainedBackupCount = 0;
+  try {
+    const candidates = [DB_FILE + '.bak', DB_FILE + '.before_restore', AUDIT_LOG_FILE + '.before_restore'];
+    const auditName = path.basename(AUDIT_LOG_FILE);
+    for (const name of fs.readdirSync(path.dirname(AUDIT_LOG_FILE))) {
+      if (name.startsWith(auditName + '.oversized-')) candidates.push(path.join(path.dirname(AUDIT_LOG_FILE), name));
+    }
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      retainedBackupBytes += fs.statSync(candidate).size;
+      retainedBackupCount++;
+    }
+  } catch (error) { console.warn('[DB] バックアップ容量の取得に失敗:', error); }
   const lastBackupSetting = db.system_settings?.find(s => s.id === 'last_backup_at');
   return {
     appVersion: app.getVersion(),
     dbPath: DB_FILE,
     fileSizeBytes,
+    auditFileSizeBytes,
+    auditMaxFileBytes: AUDIT_LOG_MAX_FILE_BYTES,
+    retainedBackupBytes,
+    retainedBackupCount,
     counts: {
       transfer_events: (db.transfer_events || []).length,
       transfer_status_logs: (db.transfer_status_logs || []).length,
@@ -4508,65 +4495,18 @@ handleTrusted('export-diagnostics-bundle', async () => {
   });
 
 // IPC通信でデータベースの保存先設定を変更する
-handleTrusted('change-database-storage-mode', async (event, mode) => {
-  if (mode === 'common') {
-    // 書き込み権限チェック
-    try {
-      if (!fs.existsSync(COMMON_DATA_DIR)) {
-        fs.mkdirSync(COMMON_DATA_DIR, { recursive: true });
-      }
-      safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'common' }, null, 2));
-    } catch (err) {
-      console.error('[DB] Storage mode change to common failed:', err);
-      return { 
-        success: false, 
-        message: '共有フォルダ（ProgramData）への書き込み権限がありません。管理者として実行するか、フォルダのアクセス権限を確認してください。',
-        error: err.message 
-      };
-    }
-
-    // db.jsonが存在しない場合のみコピー
-    const sourceDb = path.join(USER_DATA_DIR, 'db.json');
-    const destDb = path.join(COMMON_DATA_DIR, 'db.json');
-    try {
-      if (fs.existsSync(sourceDb) && !fs.existsSync(destDb)) {
-        fs.copyFileSync(sourceDb, destDb);
-        console.log(`[DB] データベースファイルをコピーしました: ${sourceDb} -> ${destDb}`);
-      }
-    } catch (copyErr) {
-      console.warn('[DB] データベースファイルのコピー失敗 (新規作成されます):', copyErr.message);
-    }
-
-    return { success: true, message: '保存先を「全ユーザー共有フォルダ」に変更しました。アプリを再起動します。' };
-  } else {
-    // ユーザー個別モードへ変更
-    try {
-      if (!fs.existsSync(COMMON_DATA_DIR)) {
-        fs.mkdirSync(COMMON_DATA_DIR, { recursive: true });
-      }
-      safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode: 'user' }, null, 2));
-    } catch (err) {
-      console.error('[DB] Storage mode change to user failed:', err);
-      return { 
-        success: false, 
-        message: '共有フォルダ（ProgramData）の設定変更権限がありません。',
-        error: err.message 
-      };
-    }
-
-    // db.jsonが存在しない場合のみコピー
-    const sourceDb = path.join(COMMON_DATA_DIR, 'db.json');
-    const destDb = path.join(USER_DATA_DIR, 'db.json');
-    try {
-      if (fs.existsSync(sourceDb) && !fs.existsSync(destDb)) {
-        fs.copyFileSync(sourceDb, destDb);
-        console.log(`[DB] データベースファイルをコピーしました: ${sourceDb} -> ${destDb}`);
-      }
-    } catch (copyErr) {
-      console.warn('[DB] データベースファイルのコピー失敗:', copyErr.message);
-    }
-
-    return { success: true, message: '保存先を「ユーザー専用フォルダ」に変更しました。アプリを再起動します。' };
+handleTrusted('change-database-storage-mode', (event, mode) => {
+  if (!['user', 'common'].includes(mode)) return { success: false, message: '保存先が不正です' };
+  const targetDir = mode === 'common' ? COMMON_DATA_DIR : USER_DATA_DIR;
+  try {
+    migrateStorage({
+      sourceDir: path.dirname(DB_FILE), targetDir,
+      validateDb: raw => { const db = JSON.parse(decryptDbFileContent(raw)); if (!Array.isArray(db.system_settings)) throw Error('DB形式を確認できません'); },
+      commitMode: () => safeWriteFile(GLOBAL_CONFIG_FILE, JSON.stringify({ mode }, null, 2)),
+    });
+    return { success: true, message: 'DBと監査ログの移行を検証しました。再起動して反映します。復旧用の古いファイルは移行元フォルダに保管されます: ' + path.dirname(DB_FILE) };
+  } catch (error) {
+    return { success: false, message: '保存先を変更しませんでした: ' + error.message };
   }
 });
 
@@ -4897,6 +4837,8 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
   }
 
   switch (action) {
+    case 'save-smb-server-profile':
+      return saveSmbServerProfile(payload);
     case 'save-import-settings':
       return saveImportSettingsOnParent(payload.settings || {}, requestMeta);
     case 'manual-import':

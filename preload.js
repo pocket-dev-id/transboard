@@ -11,7 +11,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 解除関数を返す。removeAllListeners だと後から付けた購読まで消える。
   onDataImported: (callback) => subscribe('data-imported', callback),
   onDataImportFailed: (callback) => subscribe('data-import-failed', callback),
-  completeDataImport: (payload) => ipcRenderer.invoke('complete-data-import', payload),
   onArchiveError: (callback) => subscribe('archive-error', callback),
   
   // 監視フォルダパスの取得
@@ -91,6 +90,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setTerminalApiToken: (token) => ipcRenderer.invoke('set-terminal-api-token', token),
   getTerminalRole: () => ipcRenderer.invoke('get-terminal-role'),
   setTerminalRole: (role) => ipcRenderer.invoke('set-terminal-role', role),
+  saveTerminalConnection: (value) => ipcRenderer.invoke('save-terminal-connection', value),
+  saveSmbServerProfile: (value) => ipcRenderer.invoke('save-smb-server-profile', value),
   cleanupEventRetention: () => ipcRenderer.invoke('cleanup-event-retention'),
 
   // アプリ更新（自前アップデータ）

@@ -165,6 +165,11 @@ async function testParentConnection(parentIp, token, logPrefix) {
 // 使う共通処理。呼び出し元の既存のエラー処理方針(投げるか警告に留めるか)は
 // そのまま呼び出し元に委ねる。
 async function saveLocalShareModeSettings(mode, parentIp) {
+  if (window.electronAPI?.saveTerminalConnection) {
+    const result = await window.electronAPI.saveTerminalConnection({ mode, parentIp });
+    if (!result?.success) throw Error(result?.message || '端末設定を保存できません');
+    return result;
+  }
   if (!window.electronAPI?.dbRequest) throw new Error('ローカル設定の保存機能を利用できません');
   // Resolve IPC responses as well as rejected promises: disk errors use success:false.
   for (const [id, value] of [['share_mode', mode], ['parent_ip', parentIp]]) {
@@ -179,6 +184,12 @@ async function saveLocalShareModeSettings(mode, parentIp) {
 // Persist the connection before changing renderer routing. Restore partial writes
 // so a failed settings save continues to use the previous endpoint and token.
 async function saveTerminalConnectionSettings(mode, parentIp, token = null) {
+  if (window.electronAPI?.saveTerminalConnection) {
+    const result = await window.electronAPI.saveTerminalConnection({ mode, parentIp, token });
+    if (!result?.success) throw Error(result?.message || '接続設定を保存できません');
+    terminalApiTokenCache = null;
+    return result;
+  }
   if (!window.electronAPI?.dbRequest) throw new Error('ローカル設定の保存機能を利用できません');
   const [oldMode, oldIp] = await Promise.all(['share_mode', 'parent_ip'].map(async id => {
     const record = await window.electronAPI.dbRequest({ url: `tables/system_settings/${id}`, options: { method: 'GET' } });

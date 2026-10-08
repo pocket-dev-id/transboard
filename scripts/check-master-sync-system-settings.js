@@ -128,6 +128,19 @@ async function main() {
     assert.strictEqual(await harness.loadMasters({ silent: true, requireComplete: true }), false, 'Initial sync must require every master table');
     assert.strictEqual(state.AppState.wards[0], 'stale-ward', 'Incomplete initial sync must not publish a mixed snapshot');
   }
+  {
+    let finishWards;
+    const state = { AppState: makeAppState(), checkParentIdentityCalls: [], API: makeApi({
+      getWards: () => new Promise(resolve => { finishWards = resolve; }),
+    }) };
+    const harness = buildHarness(state);
+    harness._connectionGeneration = 0;
+    const pending = harness.loadMasters({ silent: true });
+    harness._connectionGeneration += 1;
+    finishWards([{ id: 'other-parent', name: 'Other' }]);
+    assert.strictEqual(await pending, false, 'A response from the previous parent must be discarded');
+    assert.strictEqual(state.AppState.wards[0], 'stale-ward');
+  }
   const saved = new Map([['current_ward_id', 'w2']]);
   const appState = { wards: [], currentWardId: null };
   const select = { value: '', closest() { return null; }, replaceChildren() {} };

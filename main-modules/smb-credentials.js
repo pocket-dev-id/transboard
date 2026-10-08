@@ -13,6 +13,17 @@ const MASKED_SECRET_VALUE = '********';
 // 置くと、暗号化・子機マスク・監査マスク・エクスポート除外の4機構
 // (いずれもsystem_settings限定)がまったく効かないため。
 const SMB_FEED_PASSWORD_PREFIX = 'smb_password__';
+const SMB_SERVER_PASSWORD_PREFIX = 'smb_server_password__';
+
+function serverSmbPasswordSettingId(server) {
+  const key = String(server || '').toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{0,252}$/.test(key)) throw new Error('SMBサーバー名が不正です');
+  return SMB_SERVER_PASSWORD_PREFIX + Buffer.from(key, 'utf8').toString('hex');
+}
+
+function isServerSmbPasswordSettingId(id) {
+  return String(id || '').startsWith(SMB_SERVER_PASSWORD_PREFIX);
+}
 
 function isFeedSmbPasswordSettingId(id) {
   return String(id || '').startsWith(SMB_FEED_PASSWORD_PREFIX);
@@ -145,6 +156,9 @@ function createSmbSessionRegistry() {
 module.exports = {
   MASKED_SECRET_VALUE,
   SMB_FEED_PASSWORD_PREFIX,
+  SMB_SERVER_PASSWORD_PREFIX,
+  serverSmbPasswordSettingId,
+  isServerSmbPasswordSettingId,
   isFeedSmbPasswordSettingId,
   feedSmbPasswordSettingId,
   normalizeGlobalSmbMode,

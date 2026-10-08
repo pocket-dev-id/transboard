@@ -72,7 +72,7 @@ assert(definedIconClasses.size > 50, 'css/local-icons.cssからfaクラスを抽
     },
   };
   vm.createContext(sandbox);
-  vm.runInContext(`${configSource}\nthis.CONFIG = CONFIG;`, sandbox);
+  vm.runInContext(`${require('fs').readFileSync(require('path').join(__dirname, '../js/transfer-workflow.js'), 'utf8')}\n${configSource}\nthis.CONFIG = CONFIG;`, sandbox);
   vm.runInContext(`${uiSource}\nthis.UI = UI;`, sandbox);
   vm.runInContext(`${prioritySource}\nthis.Priority = Priority;`, sandbox);
   const { UI, Priority } = sandbox;

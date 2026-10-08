@@ -20,11 +20,11 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
 
-const startMarker = "watcher.on('add', filePath => {";
+const startMarker = "const onScheduleFile = filePath => {";
 const startIdx = source.indexOf(startMarker);
 assert(startIdx >= 0, "watcher.on('add', filePath => { が見つかりません(main.jsの構造が変わった可能性があります)");
 const bodyStart = startIdx + startMarker.length;
-const endIdx = source.indexOf('\n      });', bodyStart);
+const endIdx = source.indexOf('\n      };', bodyStart);
 assert(endIdx > bodyStart, "'add'ハンドラの終端(\\n      }); )が見つかりません");
 const handlerBody = source.slice(bodyStart, endIdx);
 
@@ -37,11 +37,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function makeAddHandler(watchDir, feed, debounceTimers, scanStub) {
   const factory = new Function(
-    'path', 'scheduleFeedRealtimeDebounceTimers', 'feed', 'scanAndImportScheduleFolder',
+    'path', 'scheduleFeedRealtimeDebounceTimers', 'feed', 'scheduledJob',
     'watchDir', 'console', 'SCHEDULE_FEED_REALTIME_DEBOUNCE_MS', 'setTimeout', 'clearTimeout',
     `return function(filePath) {\n${handlerBody}\n};`
   );
-  return factory(path, debounceTimers, feed, scanStub, watchDir, console, DEBOUNCE_MS, setTimeout, clearTimeout);
+  return factory(path, debounceTimers, feed, { trigger: () => scanStub(watchDir, feed) }, watchDir, console, DEBOUNCE_MS, setTimeout, clearTimeout);
 }
 
 async function main() {

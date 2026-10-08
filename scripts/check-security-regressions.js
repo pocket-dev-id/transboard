@@ -241,11 +241,12 @@ assert(
   'Parent availability checks must authenticate after the API is locked down'
 );
 assert(
-  mainSources.includes("handleTrusted('complete-data-import'") &&
-  preload.includes('completeDataImport') &&
-  app.includes('completeDataImport({ importId, success: true })') &&
-  !mainSources.slice(mainSources.indexOf('async function importCSV'), mainSources.indexOf('function cleanOldArchives')).includes('archiveFile(filePath)'),
-  'CSV originals must be archived only after renderer DB update acknowledgement'
+  (() => {
+    const body = main.slice(main.indexOf('async function importCSV'), main.indexOf('function cleanOldArchives'));
+    return body.indexOf('await commitPatientRows(') < body.indexOf('archiveScheduleFeedFile(filePath') &&
+      body.includes('if (!result.success) throw Error(result.message)') && !app.includes("API.bulkPatch('beds', bulkUpdates)");
+  })(),
+  'CSV originals must be archived only after parent DB commit succeeds'
 );
 assert(
   (() => {
@@ -397,8 +398,9 @@ assert(
     const end = config.indexOf('\n  },', idx);
     if (idx < 0 || end < idx) return false;
     const body = config.slice(idx, end);
-    return body.includes('for (const hiddenStatus of this.HIDEABLE_STATUSES)') &&
-      body.includes("source[hiddenStatus] || []");
+    return body.includes('TransferWorkflow.allowedActions(') &&
+      require('fs').readFileSync(require('path').join(__dirname, '../js/transfer-workflow.js'), 'utf8')
+        .includes('for (const hiddenStatus of hideableStatuses)');
   })(),
   'Renderer action availability must expand hidden-status actions (ARRIVED and NEARLY_DONE) generically via HIDEABLE_STATUSES, not just ARRIVED, or hiding "あと10分" leaves its button visible'
 );
@@ -430,7 +432,7 @@ assert(
   'Schedule feed import must validate parsed rows before deleting existing items'
 );
 assert(
-  app.includes('overwrittenActiveBeds') && app.includes('isSameOccupant'),
+  app.includes('overwrittenActiveBeds') && read('main-modules/patient-import.js').includes('isSameOccupant'),
   'CSV import must warn when it overwrites a bed that has an in-flight transfer'
 );
 
@@ -649,7 +651,7 @@ assert(
     const body = mainSources.slice(idx, end);
     return body.includes("searchParams.get('active_only') === 'true'") &&
       body.includes('!activeOnly || ACTIVE_TRANSFER_STATUSES.has(event.current_status)') &&
-      app.includes("API.getAll('transfer_events', { active_only: 'true' })");
+      read('main-modules/patient-import.js').includes('activeBedIds') && !app.includes("API.getAll('transfer_events', { active_only: 'true' })");
   })(),
   'processDbRequest must support transfer_events?active_only=true and the CSV-import active-bed check must use it, or the parent response can exceed MAX_PARENT_RESPONSE_BYTES once transfer_events grows unbounded'
 );
@@ -1254,26 +1256,13 @@ assert(
   'Exam room action buttons must disable the whole card while a status update is in flight to prevent double-submit'
 );
 
-// js/config.jsのACTION_BUTTONS/EXAM_ROOM_ACTIONSとmain.jsの
-// WARD_STATUS_ACTIONS/EXAM_STATUS_ACTIONSは独立した手書きの複製であり、
-// 共通の情報源が無い。片方だけ変更されてずれるとクライアントが提示する
-// ボタンとサーバーが許可する遷移が食い違いかねないため、from→toの
-// 集合が完全に一致することを保証する
+// 画面とサーバーが同じ搬送状態定義を参照する。
 assert(
-  (() => {
-    const wardActions = extractObjectLiteral(transferStatus, 'const WARD_STATUS_ACTIONS = {');
-    const examActions = extractObjectLiteral(transferStatus, 'const EXAM_STATUS_ACTIONS = {');
-    const actionButtons = extractObjectLiteral(config, 'ACTION_BUTTONS: {');
-    const examRoomActions = extractObjectLiteral(config, 'EXAM_ROOM_ACTIONS: {');
-    const toSets = obj => Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [k, (v || []).map(a => a.toStatus).sort()])
-    );
-    const sortedWard = Object.fromEntries(Object.entries(wardActions).map(([k, v]) => [k, [...v].sort()]));
-    const sortedExam = Object.fromEntries(Object.entries(examActions).map(([k, v]) => [k, [...v].sort()]));
-    return JSON.stringify(sortedWard) === JSON.stringify(toSets(actionButtons)) &&
-      JSON.stringify(sortedExam) === JSON.stringify(toSets(examRoomActions));
-  })(),
-  'js/config.js ACTION_BUTTONS/EXAM_ROOM_ACTIONS must have the exact same from->to status sets as main.js WARD_STATUS_ACTIONS/EXAM_STATUS_ACTIONS'
+  config.includes("TransferWorkflow.cloneActions('ward')") &&
+  config.includes("TransferWorkflow.cloneActions('exam')") &&
+  transferStatus.includes("require('../js/transfer-workflow')") &&
+  transferStatus.includes('TransferWorkflow.allowedActions('),
+  'Both sides must use the common transfer workflow'
 );
 
 // 未使用かつ実態(サーバーの状態機械にIN_BEDは存在しない)と矛盾する
@@ -1953,13 +1942,13 @@ assert(
 );
 assert(
   (() => {
-    const idx = mainSources.indexOf("watcher.on('add', filePath => {");
-    const end = mainSources.indexOf('\n      });', idx);
+    const idx = mainSources.indexOf("const onScheduleFile = filePath => {");
+    const end = mainSources.indexOf('\n      };', idx);
     if (idx < 0 || end < idx) return false;
     const body = mainSources.slice(idx, end);
     return body.includes('scheduleFeedRealtimeDebounceTimers') &&
       body.includes('setTimeout(') &&
-      body.includes('scanAndImportScheduleFolder(watchDir, feed)');
+      body.includes('scheduledJob.trigger()');
   })(),
   "the realtime watcher's 'add' handler must debounce per feed (via scheduleFeedRealtimeDebounceTimers) and call scanAndImportScheduleFolder once quiet, or CSVs added close together (startup with multiple existing files, or two files dropped at once) overwrite each other's imported items"
 );

@@ -500,7 +500,12 @@ Object.assign(Settings, {
           }
         }
         const savedIp = isClientSave ? parentIp : '';
-        await saveTerminalConnectionSettings(mode, savedIp, isClientSave ? apiToken : null);
+        const savedConnection = await saveTerminalConnectionSettings(mode, savedIp, isClientSave ? apiToken : null);
+        if (savedConnection?.changed) {
+          App.stopDataMonitors();
+          localStorage.removeItem('cfg_wizard_completed');
+          App._terminalSetupPending = true;
+        }
         localStorage.setItem('cfg_share_mode', mode);
         localStorage.setItem('cfg_parent_ip', savedIp);
 
