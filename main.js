@@ -1,5 +1,6 @@
-const { fingerprint, hasReceipt, recordReceipt, readScheduleManifest, recordScheduleManifest } = require('./main-modules/import-receipts');
-const { cleanArchive } = require('./main-modules/archive-retention');
+const { fingerprint, hasReceipt, recordReceipt, readPatientManifest, applyPatientImportReceipt, readScheduleManifest, recordScheduleManifest } = require('./main-modules/import-receipts');
+const { cleanArchive, getArchiveDirectory, countArchiveFiles } = require('./main-modules/archive-retention');
+const { prepareImportSettings, applyImportSettings } = require('./main-modules/import-settings');
 const { createJobScheduler } = require('./main-modules/job-scheduler');
 const { planPatientImport } = require('./main-modules/patient-import');
 const { migrateStorage } = require('./main-modules/storage-migration');
@@ -2647,7 +2648,7 @@ function archiveScheduleFeedFile(filePath, feed, policy, expectedHash = null) {
     }
   }
   // archive
-  const archiveDir = path.join(path.dirname(filePath), 'archive');
+  const archiveDir = getArchiveDirectory(path.dirname(filePath), feed);
   try {
     fs.mkdirSync(archiveDir, { recursive: true });
   } catch (e) {
@@ -2715,15 +2716,16 @@ function registerImportJob(filePath) {
 
 // CSV and ODBC share one parent-side commit queue. Rendering is notification only.
 let patientImportQueue = Promise.resolve();
-function commitPatientRows(rows, fileName = 'ODBC同期', { expectedSignature = getPatientImportSignature(readDB()) } = {}) {
+function commitPatientRows(rows, fileName = 'ODBC同期', { expectedSignature = getPatientImportSignature(readDB()), patientImportReceipt } = {}) {
   const work = patientImportQueue.catch(() => {}).then(async () => {
     try {
       const db = readDB();
       if (isClientTerminal(db)) throw Error('患者取込は親機でのみ実行できます');
       if (expectedSignature !== getPatientImportSignature(db)) throw Error('取り込み設定が変更されたため中止しました。原本を残します');
       const plan = planPatientImport(rows, db);
-      if (plan.updates.length) {
-        const saved = await processDbRequest('PATCH', 'tables/beds/bulk', JSON.stringify(plan.updates));
+      if (plan.updates.length || patientImportReceipt) {
+        const saved = await processDbRequest('PATCH', 'tables/beds/bulk', JSON.stringify(plan.updates), false, null,
+          patientImportReceipt ? { patientImportReceipt } : {});
         if (!saved?.success) throw Error(saved?.message || '患者情報を保存できませんでした');
       }
       const result = { success: true, count: plan.importedCount, clearCount: plan.clearCount,
@@ -2771,8 +2773,13 @@ async function importCSV(filePath, { force = false } = {}) {
     }
     const digest = fingerprint(buffer, getPatientImportSignature(dbAtStart));
     const receiptKey = fingerprint(path.resolve(filePath).toLowerCase(), 'patient');
-    if (!force && hasReceipt(dbAtStart, receiptKey, digest)) {
-      const policy = getJsonSetting(dbAtStart, 'import_retention_policy', { action: 'archive' });
+    const policy = getJsonSetting(dbAtStart, 'import_retention_policy', { action: 'archive' });
+    const importSignature = getPatientImportSignature(dbAtStart);
+    const folderKey = fingerprint(path.resolve(path.dirname(filePath)).toLowerCase(), 'patient-folder');
+    const durableReceipt = readPatientManifest(dbAtStart, folderKey, importSignature)
+      .some(item => item.key === receiptKey && item.digest === digest);
+    if (!force && (hasReceipt(dbAtStart, receiptKey, digest) || (policy.action === 'skip' && durableReceipt))) {
+      if (policy.action === 'skip') return { success: true, count: 0, skipped: true };
       const cleanup = archiveScheduleFeedFile(filePath, { name: '患者取込' }, policy,
         crypto.createHash('sha256').update(buffer).digest('hex'));
       return { success: true, count: 0, skipped: true, warning: cleanup.success ? '' : cleanup.message };
@@ -2790,17 +2797,17 @@ async function importCSV(filePath, { force = false } = {}) {
       parser.on('error', reject);
       Readable.from([decodedText]).pipe(parser);
     });
-    const result = await commitPatientRows(rows, path.basename(filePath), { expectedSignature: getPatientImportSignature(dbAtStart) });
+    const result = await commitPatientRows(rows, path.basename(filePath), {
+      expectedSignature: importSignature,
+      patientImportReceipt: { key: receiptKey, digest, folderKey, signature: importSignature, skip: policy.action === 'skip' },
+    });
     if (!result.success) throw Error(result.message);
     const dbAfterCommit = readDB();
-    if (isClientTerminal(dbAfterCommit) || getPatientImportSignature(dbAfterCommit) !== getPatientImportSignature(dbAtStart)) {
+    if (isClientTerminal(dbAfterCommit) || getPatientImportSignature(dbAfterCommit) !== importSignature) {
       result.warning = [result.warning, '保存後に設定が変更されたため、原本を残しました'].filter(Boolean).join(' ');
       return result;
     }
-    recordReceipt(dbAfterCommit, receiptKey, digest);
-    if (!writeDB(dbAfterCommit)) result.warning = [result.warning, '再処理防止の記録を保存できませんでした'].filter(Boolean).join(' ');
     // Only a successful DB commit permits original-file cleanup.
-    const policy = getJsonSetting(readDB(), 'import_retention_policy', { action: 'archive' });
     const archived = archiveScheduleFeedFile(filePath, { name: '患者取込' }, policy, crypto.createHash('sha256').update(buffer).digest('hex'));
     if (!archived.success) result.warning = [result.warning, archived.message].filter(Boolean).join(' ');
     mainWindow?.webContents.send('data-imported', { committed: true, fileName: path.basename(filePath), ...result });
@@ -2816,22 +2823,31 @@ async function importCSV(filePath, { force = false } = {}) {
 // 古いアーカイブファイルを整理
 function getArchiveCleanupPolicies(db) {
   const policies = new Map();
-  const add = (watchDir, policy, fallbackDays) => {
+  const legacyPolicies = new Map();
+  const add = (watchDir, source, policy, fallbackDays) => {
     if (!watchDir || policy.action !== 'archive') return;
-    const directory = path.resolve(watchDir, 'archive');
+    const directory = getArchiveDirectory(watchDir, source);
     const rawDays = Number(policy.retentionDays ?? fallbackDays);
     const days = Number.isInteger(rawDays) && rawDays >= 0 ? rawDays : 0;
     const key = process.platform === 'win32' ? directory.toLowerCase() : directory;
-    const previous = policies.get(key);
-    // Shared folders use the longest retention; unlimited takes precedence.
-    policies.set(key, { directory, days: previous ? (!previous.days || !days ? 0 : Math.max(previous.days, days)) : days });
+    policies.set(key, { directory, days });
+    // Older releases stored all sources directly under archive/. Their owner is
+    // unknowable, so retain the former conservative longest-retention rule there.
+    const legacyDirectory = path.resolve(watchDir, 'archive');
+    const legacyKey = process.platform === 'win32' ? legacyDirectory.toLowerCase() : legacyDirectory;
+    const previous = legacyPolicies.get(legacyKey);
+    legacyPolicies.set(legacyKey, {
+      directory: legacyDirectory,
+      days: previous ? (!previous.days || !days ? 0 : Math.max(previous.days, days)) : days,
+    });
   };
   const patientDirectory = String(getSettingRecord(db, 'import_directory')?.value || '').trim() || path.join(app.getPath('userData'), 'import_folder');
-  add(patientDirectory, getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' }), 30);
+  add(patientDirectory, { name: '患者取込' }, getJsonSetting(db, 'import_retention_policy', { action: 'archive', retentionDays: '30' }), 30);
   for (const feed of db.schedule_feeds || []) {
     // Legacy schedule archives had no expiry. Preserve that until configured.
-    add(feed.watch_dir, feed.retention_policy || { action: 'archive' }, 0);
+    add(feed.watch_dir, feed, feed.retention_policy || { action: 'archive' }, 0);
   }
+  for (const [key, policy] of legacyPolicies) policies.set(key, policy);
   return policies;
 }
 
@@ -3760,6 +3776,15 @@ async function processDbRequest(method, url, bodyStr, isExternal = false, apiTok
       if (table === 'beds') {
         WRITE_HOOKS.beds.finalize(db, bulkOccupancyNow);
       }
+      if (requestMeta.patientImportReceipt) {
+        const receipt = requestMeta.patientImportReceipt;
+        if (isExternal || table !== 'beds' || !receipt.key || !receipt.digest || !receipt.folderKey ||
+            receipt.signature !== getPatientImportSignature(db)) {
+          return { success: false, message: '患者CSVの再処理防止記録を検証できませんでした。原本を保持します' };
+        }
+        const receiptResult = applyPatientImportReceipt(db, receipt);
+        if (!receiptResult.success) return receiptResult;
+      }
       appendAuditLog(db, 'DB_BULK_UPDATE', {
         targetType: table,
         targetId: 'bulk',
@@ -3940,6 +3965,14 @@ handleTrusted('db-request', async (event, { url, options }) => {
     }
     if (url === 'transfer/start') {
       return processTransferStartRequest(method, options.body || '', false, null, { terminalRole });
+    }
+    if (url === 'actions/save-import-settings') {
+      if (method !== 'POST') return { success: false, message: 'Method Not Allowed' };
+      let payload;
+      try { payload = JSON.parse(options.body || '{}'); } catch { return { success: false, message: '連携設定のJSONが不正です' }; }
+      return saveImportSettingsOnParent(payload.settings || payload, {}, {
+        actorType: 'local_ui', isExternal: false, reloadWatchers: false,
+      });
     }
     const result = await processDbRequest(method, url, options.body || '', false);
     if (result?.success !== false) syncTerminalRoleFromLocalDbRequest(url, method, options.body || '');
@@ -4496,10 +4529,7 @@ handleTrusted('get-archive-info', () => {
     if (!watchDir) return { exists: false, count: 0 };
     const archiveDir = path.join(watchDir, 'archive');
     if (!fs.existsSync(archiveDir)) return { exists: false, count: 0 };
-    const files = fs.readdirSync(archiveDir).filter(f => {
-      try { return fs.statSync(path.join(archiveDir, f)).isFile(); } catch { return false; }
-    });
-    return { exists: true, count: files.length, path: archiveDir };
+    return { exists: true, count: countArchiveFiles(archiveDir), path: archiveDir };
   } catch (err) {
     return { exists: false, count: 0, error: err.message };
   }
@@ -5040,46 +5070,26 @@ async function processParentActionRequest(method, action, bodyStr, apiToken, req
 // ではなく、保存内容(settingIds)を含む詳細な監査ログを自前で残すため、独立した
 // 関数として切り出す(processParentActionRequestのswitch内は他caseと同様の
 // 一行デリゲートに揃える)。
-function saveImportSettingsOnParent(settings, requestMeta = {}) {
-  const allowed = new Set([
-    'import_directory',
-    'import_mapping',
-    'import_schedule',
-    'import_retention_policy',
-    'import_connection_type',
-    'odbc_connection_string',
-    'odbc_sql_query',
-    'smb_auth_mode',
-    'smb_username',
-    'smb_password',
-    'show_sync_time',
-    'show_import_time',
-  ]);
+function saveImportSettingsOnParent(settings, requestMeta = {}, { actorType = 'child_api', isExternal = true, reloadWatchers = true } = {}) {
+  let entries;
+  try { entries = prepareImportSettings(settings, MASKED_SECRET_VALUE); }
+  catch (error) { return { success: false, message: error.message }; }
+  const next = readDB();
+  if (isClientTerminal(next)) return { success: false, message: '連携設定は親機でのみ保存できます' };
   const hasImportDirectory = Object.prototype.hasOwnProperty.call(settings, 'import_directory');
   // DBへ書き込む前に監視先を検証し、設定だけ保存されて監視が壊れる状態を防ぐ。
   let watchValidation = null;
   if (hasImportDirectory) {
-    watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''), { isExternal: true });
+    watchValidation = validateWatchDirectoryOnParent(String(settings.import_directory || ''), { isExternal });
     if (!watchValidation.success) return watchValidation;
   }
-  const db = readDB();
-  db.system_settings = db.system_settings || [];
-  for (const [id, value] of Object.entries(settings)) {
-    if (!allowed.has(id)) continue;
-    // 子機は機密設定をマスク値で受け取る(GETのisBlockedSecret参照)。設定画面を
-    // 開いて保存しただけでそのマスク値が送り返され、実際のパスワードを文字列
-    // '********' で上書きしてしまうため、マスク値は「変更なし」として無視する。
-    if (String(value ?? '') === MASKED_SECRET_VALUE) continue;
-    const rec = db.system_settings.find(s => s.id === id);
-    if (rec) rec.value = String(value ?? '');
-    else db.system_settings.push({ id, value: String(value ?? '') });
-  }
+  const db = applyImportSettings(next, entries);
   appendAuditLog(db, 'PARENT_ACTION', {
     targetType: 'parent-actions',
     targetId: 'save-import-settings',
-    actorType: 'child_api',
+    actorType,
     remoteIp: requestMeta.remoteIp || '',
-    after: { settingIds: Object.keys(settings).filter(id => allowed.has(id)) },
+    after: { settingIds: entries.map(([id]) => id) },
     details: { action: 'save-import-settings' },
   });
   if (!writeDB(db)) {
@@ -5090,8 +5100,10 @@ function saveImportSettingsOnParent(settings, requestMeta = {}) {
   // 監視が古いままにならないよう、書き込み成功後は無条件で再読み込みする。
   // setupImportTrigger/setupScheduleFeedTriggersは冒頭で既存の監視を必ず
   // 停止してから張り直すため、変更が無かった場合でも安全な冪等操作である。
-  setupImportTrigger();
-  setupScheduleFeedTriggers();
+  if (reloadWatchers) {
+    setupImportTrigger();
+    setupScheduleFeedTriggers();
+  }
   return { success: true };
 }
 

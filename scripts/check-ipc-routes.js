@@ -31,6 +31,7 @@ const allowedUrls = [
   'status/note',
   'status/ack',
   'transfer/start',
+  'actions/save-import-settings',
 ];
 for (const url of allowedUrls) {
   assert.strictEqual(

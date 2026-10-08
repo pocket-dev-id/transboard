@@ -5,10 +5,25 @@ const os = require('os');
 const path = require('path');
 const modulePath = path.join(__dirname, '../main-modules/archive-retention.js');
 assert(fs.existsSync(modulePath), 'Shared archive retention must be implemented');
-const { cleanArchive } = require(modulePath);
+const { cleanArchive, getArchiveDirectory, countArchiveFiles } = require(modulePath);
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-retention-'));
   try {
+    const patientArchive = getArchiveDirectory(dir, { name: '患者取込' });
+    const feedArchive = getArchiveDirectory(dir, { id: 'feed-a', name: '予定取込' });
+    const otherFeedArchive = getArchiveDirectory(dir, { id: 'feed-b', name: '別予定取込' });
+    assert.notStrictEqual(patientArchive, feedArchive, 'Patient and schedule archives must be isolated');
+    assert.notStrictEqual(feedArchive, otherFeedArchive, 'Each schedule feed must have its own archive');
+    fs.mkdirSync(patientArchive, { recursive: true }); fs.mkdirSync(feedArchive, { recursive: true });
+    const oldPatient = path.join(patientArchive, 'patient.csv'), oldFeed = path.join(feedArchive, 'feed.csv');
+    fs.writeFileSync(oldPatient, 'patient'); fs.writeFileSync(oldFeed, 'schedule');
+    fs.writeFileSync(path.join(dir, 'archive', 'legacy.csv'), 'legacy');
+    assert.strictEqual(countArchiveFiles(path.join(dir, 'archive')), 3, 'Archive status must include nested source directories and legacy files');
+    const staleArchive = new Date(Date.now() - 40 * 86400000);
+    fs.utimesSync(oldPatient, staleArchive, staleArchive); fs.utimesSync(oldFeed, staleArchive, staleArchive);
+    await cleanArchive(patientArchive, 30); await cleanArchive(feedArchive, 0);
+    assert(!fs.existsSync(oldPatient), 'Patient retention must apply independently');
+    assert(fs.existsSync(oldFeed), 'Unlimited schedule retention must not be shortened by patient policy');
     const old = path.join(dir, 'old.csv'), recent = path.join(dir, 'recent.csv'), other = path.join(dir, 'keep.json');
     for (const file of [old, recent, other]) fs.writeFileSync(file, 'original');
     const stale = new Date(Date.now() - 40 * 86400000);

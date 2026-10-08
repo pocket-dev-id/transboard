@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readRoot, extractByBraceEnd } = require('./lib/extract-source');
+const { getArchiveDirectory } = require('../main-modules/archive-retention');
 
 const source = readRoot('main.js');
 
@@ -30,8 +31,8 @@ const archiveSrc = extractFunction('function archiveScheduleFeedFile(filePath, f
 const commitSrc = extractFunction('function commitScheduleFeedImport(feed, parsedFiles) {');
 
 function makeArchiveScheduleFeedFile() {
-  const factory = new Function('fs', 'path', 'console', `${archiveSrc}\nreturn archiveScheduleFeedFile;`);
-  return factory(fs, path, console);
+  const factory = new Function('fs', 'path', 'console', 'getArchiveDirectory', `${archiveSrc}\nreturn archiveScheduleFeedFile;`);
+  return factory(fs, path, console, getArchiveDirectory);
 }
 
 function makeCommitScheduleFeedImport(deps) {
@@ -90,9 +91,10 @@ function main() {
     fs.utimesSync(filePath, oldTime, oldTime);
     const result = archiveScheduleFeedFile(filePath, feed, { action: 'archive' });
     assert.strictEqual(result.success, true, 'アーカイブ成功時はsuccess:trueを返すこと');
-    assert.ok(fs.existsSync(path.join(dir, 'archive', 'a.csv')), 'archive/配下へ実際に移動されること');
+    const archivedPath = path.join(getArchiveDirectory(dir, feed), 'a.csv');
+    assert.ok(fs.existsSync(archivedPath), '取込元別のarchive配下へ実際に移動されること');
     assert.ok(!fs.existsSync(filePath), '元の場所からは無くなっていること');
-    assert.ok(fs.statSync(path.join(dir, 'archive', 'a.csv')).mtimeMs > Date.now() - 10000,
+    assert.ok(fs.statSync(archivedPath).mtimeMs > Date.now() - 10000,
       'Retention starts at archive time, not the age of the incoming CSV');
   }
 

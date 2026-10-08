@@ -492,6 +492,14 @@ const API = {
     }));
   },
 
+  async saveImportSettings(settings) {
+    return ensureMutationSuccess(await this._fetch('actions/save-import-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    }));
+  },
+
   async bulkPatch(table, data, { skipRevisionCheck = false } = {}) {
     const payload = Array.isArray(data)
       ? (skipRevisionCheck ? data : data.map(item => addExpectedMasterRevision(table, item?.id, item)))

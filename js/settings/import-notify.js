@@ -1476,10 +1476,7 @@ Object.assign(Settings, {
           const result = await this._parentAction('save-import-settings', { settings: settingsPayload });
           if (result?.success === false) throw new Error(result.message || '親機へ連携設定を保存できませんでした');
         } else {
-          const promises = Object.entries(settingsPayload).map(([id, value]) =>
-            API.patch('system_settings', id, { value })
-          );
-          await Promise.all(promises);
+          await API.saveImportSettings(settingsPayload);
         }
 
         // AppStateのキャッシュも更新
