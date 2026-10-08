@@ -7,6 +7,8 @@ const {
   SMB_FEED_PASSWORD_PREFIX,
   isFeedSmbPasswordSettingId,
   feedSmbPasswordSettingId,
+  serverSmbPasswordSettingId,
+  isServerSmbPasswordSettingId,
   normalizeGlobalSmbMode,
   normalizeFeedSmbMode,
   parseUncTarget,
@@ -22,6 +24,9 @@ assert.ok(!isFeedSmbPasswordSettingId('smb_password'), 'global smb_password must
 assert.ok(!isFeedSmbPasswordSettingId('import_directory'));
 assert.ok(!isFeedSmbPasswordSettingId(''));
 assert.ok(SMB_FEED_PASSWORD_PREFIX.length > 0);
+assert.strictEqual(serverSmbPasswordSettingId('SRV01'), serverSmbPasswordSettingId('srv01'));
+assert(isServerSmbPasswordSettingId(serverSmbPasswordSettingId('srv01')));
+assert.throws(() => serverSmbPasswordSettingId('../invalid'));
 
 // ── モード正規化（ウィザードの'credential'互換を含む） ──────────
 assert.strictEqual(normalizeGlobalSmbMode('custom'), 'custom');

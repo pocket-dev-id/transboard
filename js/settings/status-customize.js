@@ -57,13 +57,13 @@ Object.assign(Settings, {
       { key: 'EXAM:IN_EXAM:PICKUP_REQUIRED',      label: '終了（迎え要）',  scope: '検査室側' },
       { key: 'EXAM:NEARLY_DONE:PICKUP_REQUIRED',  label: '終了（迎え要）',  scope: '検査室側' },
     ];
-    const HIDEABLE_STATUSES = ['ARRIVED','NEARLY_DONE'];
 
     const stMin          = AppState.getSettingInt('soon_threshold_min', 15);
     const statusColors   = AppState.getSettingJSON('status_colors', {});
     const actionLabels   = AppState.getSettingJSON('action_button_labels', {});
     const hiddenStatuses = AppState.getSettingJSON('hidden_statuses', []);
-    const skipArrivedStep = hiddenStatuses.includes('ARRIVED');
+    const selectedPreset = Object.entries(TransferWorkflow.presets).find(([, statuses]) =>
+      statuses.length === hiddenStatuses.length && statuses.every(status => hiddenStatuses.includes(status)))?.[0] || 'standard';
     const safeHex = (value, fallback) => (
       /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value) : fallback
     );
@@ -137,12 +137,6 @@ Object.assign(Settings, {
         </tr>`;
     }).join('');
 
-    const hiddenCheckboxes = HIDEABLE_STATUSES.map(sid => `
-      <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:14px;">
-        <input type="checkbox" class="hidden-status-chk" data-status="${sid}"
-          ${hiddenStatuses.includes(sid) ? 'checked' : ''}>
-        <span><strong>${DEFAULT_LABELS[sid]}</strong>（${sid}）を使用しない中間ステータスとして扱う</span>
-      </label>`).join('');
 
     body.innerHTML = `
       <div class="settings-panel">
@@ -242,23 +236,17 @@ Object.assign(Settings, {
           </div>
         </div>
 
-        <div class="settings-section" style="margin-bottom:24px;">
-          <h4 class="settings-section-title"><i class="fas fa-toggle-on"></i> 検査室到着ステップ</h4>
-          <label style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid #cbd5e0; border-radius:6px; background:#f8fafc; max-width:720px;">
-            <input type="checkbox" id="chk-skip-arrived-step" ${skipArrivedStep ? 'checked' : ''} style="margin-top:3px;">
-            <span>
-              <strong>「検査室到着」と「検査開始」を統合する</strong><br>
-              <span style="font-size:12px; color:#64748b;">ONにすると検査室側の到着操作で直接「検査中」へ進み、到着時刻と検査開始時刻を同時に記録します。OFFでは従来どおり「検査室到着」後に「検査開始」を押します。</span>
-            </span>
-          </label>
-        </div>
-
         <div class="settings-section">
-          <h4 class="settings-section-title"><i class="fas fa-eye-slash"></i> 使用しない中間ステータス</h4>
-          <p style="font-size:12px; color:#64748b; margin-bottom:8px;">選択した中間ステータスは運用フローから除外されます。病棟・検査室・ICスキャン・子機からの更新にも反映され、可能な場合は次の有効なステータスへ直接進めます。<br>例: 検査室到着（ARRIVED）を使わず移動中から直接検査中に遷移する運用フロー。</p>
-          ${hiddenCheckboxes}
+          <h4 class="settings-section-title"><i class="fas fa-route"></i> 搬送フロー</h4>
+          <p style="font-size:12px; color:#64748b; margin-bottom:8px;">施設で省略する中間状態を選択します。既存の設定も読み込まれます。</p>
+          <select id="transfer-flow-preset" class="settings-input-text" style="max-width:360px;">
+            <option value="standard" ${selectedPreset === 'standard' ? 'selected' : ''}>標準（到着・あと10分を使用）</option>
+            <option value="skipArrival" ${selectedPreset === 'skipArrival' ? 'selected' : ''}>到着を省略</option>
+            <option value="skipNearlyDone" ${selectedPreset === 'skipNearlyDone' ? 'selected' : ''}>あと10分を省略</option>
+            <option value="direct" ${selectedPreset === 'direct' ? 'selected' : ''}>両方を省略</option>
+          </select>
           <div style="margin-top:12px;">
-            <button class="btn btn-primary btn-sm" id="btn-save-hidden-statuses"><i class="fas fa-save"></i> 非表示設定を保存</button>
+            <button class="btn btn-primary btn-sm" id="btn-save-hidden-statuses"><i class="fas fa-save"></i> 搬送フローを保存</button>
           </div>
         </div>
       </div>
@@ -404,22 +392,10 @@ Object.assign(Settings, {
     };
 
     // #5 非表示ステータスの保存
-    const skipArrivedChk = document.getElementById('chk-skip-arrived-step');
-    const arrivedHiddenChk = body.querySelector('.hidden-status-chk[data-status="ARRIVED"]');
-    if (skipArrivedChk && arrivedHiddenChk) {
-      skipArrivedChk.addEventListener('change', () => {
-        arrivedHiddenChk.checked = skipArrivedChk.checked;
-      });
-      arrivedHiddenChk.addEventListener('change', () => {
-        skipArrivedChk.checked = arrivedHiddenChk.checked;
-      });
-    }
-
     document.getElementById('btn-save-hidden-statuses').onclick = async (evt) => {
       const btn = evt.currentTarget;
       btn.disabled = true;
-      const hidden = [];
-      body.querySelectorAll('.hidden-status-chk:checked').forEach(chk => hidden.push(chk.dataset.status));
+      const hidden = TransferWorkflow.presets[body.querySelector('#transfer-flow-preset').value];
       try {
         await saveSetting('hidden_statuses', hidden);
         if (typeof WardDashboard !== 'undefined') WardDashboard.render();

@@ -14,9 +14,11 @@ function pathJoin(...parts) {
 }
 
 let getMainWindow = () => null;
+let commitPatientRows = async () => ({ success: false, message: '患者保存処理を利用できません' });
 
 function configureOdbc(deps) {
   getMainWindow = deps.getMainWindow;
+  commitPatientRows = deps.commitPatientRows;
 }
 
 // ODBC読み取り専用安全対策: SQLクエリバリデーション
@@ -325,15 +327,10 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
   }
 
-  const win = getMainWindow();
-  if (win) {
-    win.webContents.send('data-imported', {
-      fileName: `ODBC同期 (${new Date().toLocaleString('ja-JP')})`,
-      rows
-    });
-  }
-  
-  return { success: true, count: rows.length };
+  const resultSaved = await commitPatientRows(rows, 'ODBC同期');
+  if (!resultSaved?.success) return resultSaved || { success: false, message: '患者情報を保存できませんでした' };
+  getMainWindow()?.webContents.send('data-imported', { committed: true, fileName: 'ODBC同期', ...resultSaved });
+  return resultSaved;
 }
 
 // IPC通信でODBC直接同期を実行する

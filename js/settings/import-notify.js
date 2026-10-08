@@ -179,6 +179,46 @@ Object.assign(Settings, {
     this._bindAdmissionModeCards(body);
     this._bindAdmissionModeSaveButton(body);
     this._saveImportSettings(body);
+    this._bindSmbServerProfile(body);
+  },
+
+  _bindSmbServerProfile(body) {
+    const host = body.querySelector('#smb-profile-server');
+    const mode = body.querySelector('#smb-profile-mode');
+    const username = body.querySelector('#smb-profile-username');
+    const password = body.querySelector('#smb-profile-password');
+    if (!host) return;
+    let profiles = {};
+    try { profiles = JSON.parse(AppState.systemSettings?.find(s => s.id === 'smb_server_profiles')?.value || '{}'); } catch {}
+    if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) profiles = {};
+    host.addEventListener('change', () => {
+      const profile = profiles[host.value.trim().toLowerCase()];
+      mode.value = profile?.mode === 'custom' ? 'custom' : 'current';
+      username.value = profile?.username || '';
+      password.value = '';
+    });
+    const run = async (remove, button) => {
+      const server = host.value.trim();
+      if (!server) { UI.toast('サーバー名を入力してください', 'warning'); return; }
+      button.disabled = true;
+      try {
+        const payload = { server, mode: mode.value, username: username.value.trim(), password: password.value, remove };
+        const result = this._isChildTerminal()
+          ? await this._parentAction('save-smb-server-profile', payload)
+          : await window.electronAPI.saveSmbServerProfile(payload);
+        if (!result?.success) throw new Error(result?.message || '保存に失敗しました');
+        password.value = '';
+        await App.loadMasters({ silent: true });
+        await this._renderImportSettings(body);
+        UI.toast(result.restartRequired
+          ? 'サーバー認証を保存しました。既存のSMB接続を切り替えるためアプリを再起動してください'
+          : (remove ? 'サーバー認証を解除しました' : 'サーバー認証を保存しました'), 'success', 8000);
+      } catch (error) {
+        UI.toast(error.message, 'danger');
+      } finally { button.disabled = false; }
+    };
+    body.querySelector('#btn-save-smb-profile').onclick = event => run(false, event.currentTarget);
+    body.querySelector('#btn-remove-smb-profile').onclick = event => run(true, event.currentTarget);
   },
 
   async _gatherImportSettingsData() {
@@ -232,7 +272,7 @@ Object.assign(Settings, {
 
     return {
       dirSetting, currentPath, archiveInfo,
-      smbAuthSetting, smbUsernameSetting, smbPasswordSetting,
+      smbAuthSetting, smbUsernameSetting,
       mapping, schedule, policy,
       connTypeSetting, odbcConnSetting, odbcQuerySetting,
       showSyncTime, showImportTime, admissionModeSetting,
@@ -243,12 +283,16 @@ Object.assign(Settings, {
   _buildImportSettingsHtml(data) {
     const {
       dirSetting, currentPath, archiveInfo,
-      smbAuthSetting, smbUsernameSetting, smbPasswordSetting,
+      smbAuthSetting, smbUsernameSetting,
       mapping, schedule, policy,
       connTypeSetting, odbcConnSetting, odbcQuerySetting,
       showSyncTime, showImportTime, admissionModeSetting,
       logs,
     } = data;
+    let smbServerProfiles = {};
+    try { smbServerProfiles = JSON.parse(AppState.systemSettings?.find(s => s.id === 'smb_server_profiles')?.value || '{}'); } catch {}
+    if (!smbServerProfiles || typeof smbServerProfiles !== 'object' || Array.isArray(smbServerProfiles)) smbServerProfiles = {};
+    const profileHosts = Object.keys(smbServerProfiles);
 
     const logRowsHtml = logs.length === 0
       ? '<tr><td colspan="5" class="text-center text-muted" style="padding:15px;">インポート履歴データがありません</td></tr>'
@@ -334,6 +378,17 @@ Object.assign(Settings, {
           </div>
         </div>
         
+        <details class="settings-section" style="margin-bottom:12px;">
+          <summary style="cursor:pointer; font-weight:600;">SMB サーバーごとの認証（共有フォルダ利用時）</summary>
+          <p class="settings-hint">同じサーバー上の患者 CSV と予定フィードに同じ認証を適用します。未登録のサーバーは従来の設定を引き続き使用します。</p>
+          <datalist id="smb-profile-hosts">${profileHosts.map(host => `<option value="${UI.escapeHTML(host)}">`).join('')}</datalist>
+          <div class="form-row"><label>サーバー名（ホスト名または IP）</label><input id="smb-profile-server" list="smb-profile-hosts" class="settings-input-text" placeholder="例: FILESERVER01"></div>
+          <div class="form-row"><label>認証</label><select id="smb-profile-mode"><option value="current">現在の Windows ユーザー</option><option value="custom">指定したユーザー</option></select></div>
+          <div class="form-row"><label>ユーザー名</label><input id="smb-profile-username" class="settings-input-text" autocomplete="off"></div>
+          <div class="form-row"><label>パスワード（変更時のみ入力）</label><input id="smb-profile-password" type="password" class="settings-input-text" autocomplete="new-password"></div>
+          <div style="display:flex; gap:8px;"><button class="btn btn-primary btn-sm" id="btn-save-smb-profile">サーバー認証を保存</button><button class="btn btn-outline btn-sm" id="btn-remove-smb-profile">設定を解除</button></div>
+          <p class="settings-hint">登録済み: ${profileHosts.length ? profileHosts.map(host => UI.escapeHTML(host)).join('、') : 'なし'}</p>
+        </details>
         <div class="settings-form-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
           
           <!-- 左カラム：パス・マッピング・スケジュール -->
@@ -351,7 +406,8 @@ Object.assign(Settings, {
               </div>
               
               <!-- SMBネットワーク共有認証 -->
-              <div style="border-top:1px dashed #cbd5e0; margin-top:12px; margin-bottom:12px; padding-top:12px;">
+              <details style="border-top:1px dashed #cbd5e0; margin-top:12px; margin-bottom:12px; padding-top:12px;" ${smbAuthSetting.value === 'custom' ? 'open' : ''}>
+                <summary style="cursor:pointer;font-size:12px;">旧形式の共通SMB認証（サーバー設定がない場合に使用）</summary>
                 <label style="font-size:12px; font-weight:700; color:#4a5568;"><i class="fas fa-network-wired"></i> SMB共有アクセス権限（ネットワークパス用）</label>
                 <select id="cfg-smb-auth-mode" style="width:100%; padding:6px; margin-top:4px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
                   <option value="current" ${smbAuthSetting.value === 'current' ? 'selected' : ''}>現在のサインインユーザー権限を使用 (標準)</option>
@@ -365,10 +421,10 @@ Object.assign(Settings, {
                   </div>
                   <div class="form-row">
                     <label style="font-size:11px; margin-bottom:2px;">パスワード</label>
-                    <input type="password" id="cfg-smb-password" placeholder="パスワードを入力" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;" value="${UI.escapeHTML(smbPasswordSetting.value)}">
+                    <input type="password" id="cfg-smb-password" placeholder="変更する場合のみ入力" style="width:100%; padding:6px; border:1px solid #cbd5e0; border-radius:4px; font-size:12px;">
                   </div>
                 </div>
-              </div>
+              </details>
 
               <div style="display:flex; gap:8px;">
                 <button class="btn btn-outline btn-sm" id="btn-manual-import" style="flex:1;">
@@ -439,6 +495,8 @@ Object.assign(Settings, {
                   </div>
                 </div>
 
+                <details class="odbc-section" ${odbcConnSetting.value && !/^DSN=[^;]+;(?:UID=[^;]*;PWD=[^;]*;|Trusted_Connection=Yes;)ReadOnly=1;?$/i.test(odbcConnSetting.value) ? 'open' : ''}>
+                  <summary style="cursor:pointer; font-weight:600;">詳細設定（接続文字列・SQL・テーブル参照）</summary>
                 <!-- ③ 接続文字列プレビュー -->
                 <div class="odbc-section">
                   <div class="odbc-section-title"><i class="fas fa-code"></i> 接続文字列 <span class="odbc-hint-inline">— 上の設定から自動生成。直接編集も可</span></div>
@@ -473,6 +531,7 @@ Object.assign(Settings, {
                     必須カラム: <code>BED_NO</code>, <code>PATIENT_ID</code>, <code>PATIENT_NAME</code>, <code>IS_PRESENT</code>（在床=1）
                   </div>
                 </div>
+                </details>
 
                 <!-- ⑤ テスト・同期 -->
                 <div class="odbc-section" style="border:none; padding-bottom:0;">
@@ -665,11 +724,19 @@ Object.assign(Settings, {
               <div class="form-row" style="margin-bottom:0;">
                 <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:normal;">
                   <input type="checkbox" id="cfg-policy-clear-unlisted" ${policy.clearUnlisted?'checked':''} style="width:16px; height:16px; cursor:pointer;">
-                  CSVに載っていない病床の患者情報を空床にする
+                  全件出力として取り込む（未掲載病床を空床にする）
                 </label>
-                <p style="margin:4px 0 0 24px; font-size:12px; color:#718096;">在室患者のみ出力するEMRを使用している場合はONにしてください。CSVに行が存在しない病床を退院済みとみなして自動的にクリアします。</p>
+                <p style="margin:4px 0 0 24px; font-size:12px; color:#718096;">通常は差分更新です。全件出力の場合だけONにし、対象病棟を選択してください。</p>
+                <label>全件出力の対象病棟（複数選択可）</label>
+                <select id="cfg-import-scope" multiple class="form-control">
+                  ${(AppState.wards || []).map(w => `<option value="${UI.escapeHTML(w.id)}" ${(policy.scopeWardIds || []).includes(String(w.id)) ? 'selected' : ''}>${UI.escapeHTML(w.name)}</option>`).join('')}
+                </select>
+                <label>空床化の上限（在室患者数に対する割合 %）</label>
+                <input id="cfg-import-max-clear" type="number" min="0" max="100" value="${Number.isFinite(Number(policy.maxClearPercent)) ? Math.max(0, Math.min(100, Number(policy.maxClearPercent))) : 25}" class="form-control">
+                <p>病床の一致率が95%未満、または空床化が上限を超える場合は保存しません。</p>
                 <p id="cfg-clear-unlisted-warn" style="margin:6px 0 0 24px; font-size:12px; color:#c53030; background:#fff5f5; border:1px solid #feb2b2; border-radius:4px; padding:6px 8px; display:${policy.clearUnlisted?'block':'none'};">
-                  ⚠️ 注意: CSVが空だった場合や全行がスキップされた場合でも、掲載されていない病床の患者情報がクリアされます（空CSV時は自動でスキップします）。移送進行中の患者は保護されます。
+                  ⚠️ 対象病棟と空床化の上限を確認してください。病床が1件も一致しない場合は取込を中止し、原本を残します。移送進行中の患者は空床化から保護されます。
+                  ${policy.clearUnlisted && !(policy.scopeWardIds || []).length ? '<br>旧設定の病棟範囲が未指定のため、現在は差分更新のみ実行します。対象病棟を選んで保存してください。' : ''}
                 </p>
               </div>
             </div>
@@ -799,7 +866,11 @@ Object.assign(Settings, {
           const found = [...sel.options].find(o => o.value === currentDsn);
           if (found) sel.value = currentDsn;
         }
-        _onDsnChange();
+        // 既存の接続文字列にはパスワードや独自の属性が含まれる場合がある。
+        // DSN一覧を読み込むだけでは再生成しない。
+        const selected = sel.options[sel.selectedIndex];
+        const info = document.getElementById('odbc-dsn-driver-info');
+        if (info) info.textContent = selected?.dataset?.driver ? `ドライバ: ${selected.dataset.driver}` : '';
       } catch (e) {
         sel.innerHTML = '<option value="">取得失敗 — 手動入力を使用してください</option>';
       }
@@ -1374,9 +1445,17 @@ Object.assign(Settings, {
       const policyData = {
         action: policyAction,
         retentionDays: retentionDays,
-        clearUnlisted: clearUnlisted
+        clearUnlisted: clearUnlisted,
+        mode: clearUnlisted ? 'snapshot' : 'delta',
+        scopeWardIds: [...(document.getElementById('cfg-import-scope')?.selectedOptions || [])].map(o => o.value),
+        maxClearPercent: Number(document.getElementById('cfg-import-max-clear')?.value || 25),
       };
 
+      if (clearUnlisted && !policyData.scopeWardIds.length) {
+        UI.toast('全件出力の対象病棟を選択してください', 'warning');
+        saveBtn.disabled = false; saveBtn.innerHTML = '<i class="fas fa-save"></i> 連携設定を保存';
+        return;
+      }
       try {
         const settingsPayload = {
           import_directory: newPath,
@@ -1388,10 +1467,10 @@ Object.assign(Settings, {
           odbc_sql_query: odbcQueryVal,
           smb_auth_mode: smbAuthMode,
           smb_username: smbUsername,
-          smb_password: smbPassword,
           show_sync_time: showSyncTimeVal,
           show_import_time: showImportTimeVal,
         };
+        if (smbPassword) settingsPayload.smb_password = smbPassword;
 
         if (this._isChildTerminal()) {
           const result = await this._parentAction('save-import-settings', { settings: settingsPayload });
@@ -1406,7 +1485,7 @@ Object.assign(Settings, {
         // AppStateのキャッシュも更新
         this._writeLocalSetting('smb_auth_mode', smbAuthMode);
         this._writeLocalSetting('smb_username', smbUsername);
-        this._writeLocalSetting('smb_password', smbPassword);
+        if (smbPassword) this._writeLocalSetting('smb_password', smbPassword);
         this._writeLocalSetting('show_sync_time', showSyncTimeVal);
         this._writeLocalSetting('show_import_time', showImportTimeVal);
 
@@ -2043,7 +2122,8 @@ Object.assign(Settings, {
               <p style="font-size:11px;color:#718096;margin:4px 0 0;">CSVが配置されるフォルダのパスを指定します（UNCパス可）。</p>
 
               <!-- SMBネットワーク共有認証（フィード個別） -->
-              <div style="border-top:1px dashed #cbd5e0; margin-top:12px; padding-top:12px;">
+              <details id="sched-form-legacy-smb" style="border-top:1px dashed #cbd5e0; margin-top:12px; padding-top:12px;">
+                <summary style="font-size:12px;cursor:pointer;">旧形式のフィード個別SMB認証（サーバー設定がない場合に使用）</summary>
                 <label style="font-size:12px; font-weight:700; color:#4a5568;"><i class="fas fa-network-wired"></i> SMB共有アクセス権限（ネットワークパス用）</label>
                 <select id="sched-form-smb-auth-mode" style="width:100%; padding:6px; margin-top:4px; border:1px solid #cbd5e0; border-radius:6px; font-size:12px; cursor:pointer;">
                   <option value="inherit">共通設定を使う（既定）</option>
@@ -2062,7 +2142,7 @@ Object.assign(Settings, {
                     <p style="font-size:11px;color:#718096;margin:4px 0 0;">空欄のまま保存すると現在のパスワードを維持します。</p>
                   </div>
                 </div>
-              </div>
+              </details>
             </div>
 
             <!-- ③ 取り込みスケジュール -->
@@ -2484,6 +2564,7 @@ Object.assign(Settings, {
     refs.smbModeInput.value = ['current', 'custom'].includes(feed?.smb_auth_mode)
       ? feed.smb_auth_mode
       : 'inherit';
+    refs.smbModeInput.closest('details').open = refs.smbModeInput.value !== 'inherit';
     refs.smbUsernameInput.value = feed?.smb_username || '';
     refs.smbPasswordInput.value = '';
     refs.smbModeInput.dispatchEvent(new Event('change'));

@@ -1,4 +1,5 @@
 'use strict';
+const TransferWorkflow = require('../js/transfer-workflow');
 
 // 搬送ステータスと病床稼働。processDbRequest のテーブル振り分けは main.js に残す。
 
@@ -36,39 +37,16 @@ function configureTransferStatus(deps) {
   TRANSFER_EVENTS_MAX_ENTRIES = deps.TRANSFER_EVENTS_MAX_ENTRIES;
 }
 
-const ACTIVE_TRANSFER_STATUSES = new Set([
-  'DEPART_REGISTERED',
-  'MOVING',
-  'ARRIVED',
-  'IN_EXAM',
-  'NEARLY_DONE',
-  'PICKUP_REQUIRED',
-]);
+const ACTIVE_TRANSFER_STATUSES = new Set(TransferWorkflow.activeStatuses);
 // 新規transfer_events作成時のcurrent_status検証用。ACTIVE_TRANSFER_STATUSES
 // (進行中の状態)に終端状態(RETURNED/CANCELLED)を加えた全既知状態の集合。
 // デモデータ投入(js/demo.js)は意図的に様々な終端状態でイベントを作成するため
 // 特定の初期値には絞らず、既知の状態値かどうかだけを検証する
 const KNOWN_TRANSFER_STATUSES = new Set([...ACTIVE_TRANSFER_STATUSES, 'RETURNED', 'CANCELLED']);
-const HIDEABLE_TRANSFER_STATUSES = new Set(['ARRIVED', 'NEARLY_DONE']);
+const HIDEABLE_TRANSFER_STATUSES = new Set(TransferWorkflow.hideableStatuses);
 const WARD_ACKNOWLEDGEMENT_STATUSES = new Set(['ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED']);
-const WARD_STATUS_ACTIONS = {
-  DEPART_REGISTERED: ['MOVING', 'IN_EXAM', 'CANCELLED'],
-  MOVING: ['ARRIVED', 'IN_EXAM', 'CANCELLED'],
-  ARRIVED: ['IN_EXAM', 'CANCELLED'],
-  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED', 'RETURNED', 'CANCELLED'],
-  NEARLY_DONE: ['PICKUP_REQUIRED', 'CANCELLED'],
-  PICKUP_REQUIRED: ['RETURNED', 'CANCELLED'],
-  RETURNED: [],
-  CANCELLED: [],
-};
-const EXAM_STATUS_ACTIONS = {
-  DEPART_REGISTERED: ['ARRIVED'],
-  MOVING: ['ARRIVED'],
-  ARRIVED: ['IN_EXAM'],
-  IN_EXAM: ['NEARLY_DONE', 'PICKUP_REQUIRED'],
-  NEARLY_DONE: ['PICKUP_REQUIRED'],
-  PICKUP_REQUIRED: [],
-};
+const WARD_STATUS_ACTIONS = TransferWorkflow.cloneActions('ward');
+const EXAM_STATUS_ACTIONS = TransferWorkflow.cloneActions('exam');
 
 function getHiddenTransferStatuses(db) {
   const parsed = getJsonSetting(db, 'hidden_statuses', []);
@@ -78,16 +56,8 @@ function getHiddenTransferStatuses(db) {
 
 function getAllowedTransferTargets(fromStatus, db, actionMap = WARD_STATUS_ACTIONS) {
   const hidden = getHiddenTransferStatuses(db);
-  const targets = [...(actionMap[fromStatus] || [])];
-  if (hidden.has('ARRIVED')) {
-    const expanded = [];
-    for (const target of targets) {
-      if (target === 'ARRIVED') expanded.push(...(actionMap.ARRIVED || []));
-      else expanded.push(target);
-    }
-    return [...new Set(expanded)];
-  }
-  return targets;
+  return TransferWorkflow.allowedActions(fromStatus, actionMap === EXAM_STATUS_ACTIONS ? 'exam' : 'ward',
+    [...hidden], actionMap).map(action => action.toStatus);
 }
 
 function isScopedTransferStatusTransitionAllowed(fromStatus, toStatus, db, scope = 'ward') {

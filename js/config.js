@@ -59,10 +59,10 @@ const CONFIG = {
   },
 
   // 「出棟中」扱いの状態
-  DEPART_STATUSES: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
+  DEPART_STATUSES: [...TransferWorkflow.activeStatuses],
 
   // 「進行中」表示対象
-  ACTIVE_STATUSES: ['DEPART_REGISTERED', 'MOVING', 'ARRIVED', 'IN_EXAM', 'NEARLY_DONE', 'PICKUP_REQUIRED'],
+  ACTIVE_STATUSES: [...TransferWorkflow.activeStatuses],
 
   // 付き添いスタッフが実際に患者と一緒に病棟を離れて移動している状態（それ以外はDEPART_STATUSESでも
   // 検査中等で病棟へ戻り手離れしている「待機」扱い）
@@ -74,63 +74,11 @@ const CONFIG = {
   // 迎え要件のしきい値 (分)
   SOON_THRESHOLD_MIN: 15,
 
-  // アクションボタン設定
-  ACTION_BUTTONS: {
-    DEPART_REGISTERED: [
-      { label: '移動中へ', toStatus: 'MOVING', cls: 'btn-primary' },
-      { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
-    MOVING: [
-      { label: '検査室到着', toStatus: 'ARRIVED', cls: 'btn-info' },
-      { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
-    ARRIVED: [
-      { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
-    IN_EXAM: [
-      { label: 'あと10分', toStatus: 'NEARLY_DONE', cls: 'btn-orange' },
-      { label: '迎え要', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
-      { label: '帰棟完了', toStatus: 'RETURNED', cls: 'btn-success' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
-    NEARLY_DONE: [
-      { label: '迎え要', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
-    PICKUP_REQUIRED: [
-      { label: '帰棟完了', toStatus: 'RETURNED', cls: 'btn-success' },
-      { label: 'キャンセル', toStatus: 'CANCELLED', cls: 'btn-secondary' },
-    ],
-    RETURNED: [],
-    CANCELLED: [],
-  },
-
-  // 検査室側アクション
-  EXAM_ROOM_ACTIONS: {
-    DEPART_REGISTERED: [
-      { label: '到着', toStatus: 'ARRIVED', cls: 'btn-info' },
-    ],
-    MOVING: [
-      { label: '到着', toStatus: 'ARRIVED', cls: 'btn-info' },
-    ],
-    ARRIVED: [
-      { label: '検査開始', toStatus: 'IN_EXAM', cls: 'btn-warning' },
-    ],
-    IN_EXAM: [
-      { label: 'あと10分', toStatus: 'NEARLY_DONE', cls: 'btn-orange' },
-      { label: '終了（迎え要）', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
-    ],
-    NEARLY_DONE: [
-      { label: '終了（迎え要）', toStatus: 'PICKUP_REQUIRED', cls: 'btn-danger' },
-    ],
-    PICKUP_REQUIRED: [],
-  },
+  ACTION_BUTTONS: TransferWorkflow.cloneActions('ward'),
+  EXAM_ROOM_ACTIONS: TransferWorkflow.cloneActions('exam'),
 
   // ロール定義 (セキュリティ #5: RBAC基盤)
-  HIDEABLE_STATUSES: ['ARRIVED', 'NEARLY_DONE'],
+  HIDEABLE_STATUSES: [...TransferWorkflow.hideableStatuses],
 
   STATUS_SCOPE: {
     WARD: 'ward',
@@ -153,19 +101,6 @@ const CONFIG = {
 
   getAllowedActions(status, scope = 'ward') {
     const source = scope === this.STATUS_SCOPE.EXAM ? this.EXAM_ROOM_ACTIONS : this.ACTION_BUTTONS;
-    // 非表示にした中間ステータス(ARRIVED/NEARLY_DONE)への遷移ボタンは、
-    // そのステータスからさらに先へ進むための操作に置き換える。ARRIVEDだけを
-    // 特別扱いしていると、NEARLY_DONEを非表示にしても「あと10分」ボタンが
-    // 消えないままになる。既に他のボタンで到達可能な遷移先は追加しない
-    // （残りのボタンの並び順を保つため、置き換え先を末尾に足すだけに留める）
-    let actions = [...(source[status] || [])];
-    for (const hiddenStatus of this.HIDEABLE_STATUSES) {
-      if (!this.isStatusHidden(hiddenStatus)) continue;
-      if (!actions.some(action => action.toStatus === hiddenStatus)) continue;
-      const existingTargets = new Set(actions.map(action => action.toStatus));
-      const successorActions = (source[hiddenStatus] || []).filter(action => !existingTargets.has(action.toStatus));
-      actions = actions.filter(action => action.toStatus !== hiddenStatus).concat(successorActions);
-    }
-    return actions;
+    return TransferWorkflow.allowedActions(status, scope, this.getHiddenStatuses(), source);
   },
 };

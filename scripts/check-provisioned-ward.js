@@ -182,12 +182,12 @@ async function main() {
   {
     const mainSource=readRoot('main.js');
     const start=mainSource.indexOf("handleTrusted('get-terminal-role', () => {");
-    const end=mainSource.indexOf("handleTrusted('set-terminal-role'",start);
+    const end=mainSource.indexOf("handleTrusted('save-smb-server-profile'",start);
     let ipcRole;
     vm.runInNewContext(mainSource.slice(start,end),{
       handleTrusted: (_name,handler) => {ipcRole=handler();},
       readTerminalRole: () => ({shareMode:'client',parentIp:'PARENT-PC',terminalRole:'ward'}),
-      normalizeTerminalRole: r=>r, provisioningResult:null,
+      normalizeTerminalRole: r=>r, provisioningResult:null, isManagedDeployment: () => false,
     });
     const {obj,state} = buildHarness({roleResult:ipcRole});
     await obj._loadTerminalRole();

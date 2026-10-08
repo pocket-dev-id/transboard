@@ -89,6 +89,9 @@ Start-Process -FilePath $installerPath -ArgumentList '/S' -WindowStyle Hidden
 function registerUpdaterIpc(handleTrusted) {
   handleTrusted('check-for-update', async (event, { parentIp } = {}) => {
     try {
+      if (isManagedDeployment()) {
+        return { success: true, managed: true, updateAvailable: false, currentVersion: app.getVersion() };
+      }
       const ymlText = await httpGetText(`${buildUpdateFeedBase(parentIp)}/latest.yml`, {
         headers: getUpdateRequestHeaders(),
       });
@@ -111,6 +114,9 @@ function registerUpdaterIpc(handleTrusted) {
 
   handleTrusted('download-and-install-update', async (event, { parentIp } = {}) => {
     try {
+      if (isManagedDeployment()) {
+        return { success: false, managed: true, message: 'この端末は管理配布されています。更新は配布管理ツールから実施してください。' };
+      }
       if (isPerMachineInstall()) {
         // 同じ「Program Files配下で自己更新できない」状態でも、原因と取るべき行動は
         // 正反対になる。管理配布された端末で「アンインストールして入れ直せ」と案内すると
@@ -211,6 +217,9 @@ function registerUpdaterIpc(handleTrusted) {
 
   handleTrusted('import-update-files', async () => {
     try {
+      if (isManagedDeployment()) {
+        return { success: false, managed: true, message: '管理配布端末では更新ファイルの取込は行えません。' };
+      }
       const { canceled, filePaths } = await dialog.showOpenDialog(getMainWindow(), {
         title: '更新ファイルを選択（latest.yml とインストーラ .exe の両方）',
         properties: ['openFile', 'multiSelections'],
@@ -293,6 +302,9 @@ function registerUpdaterIpc(handleTrusted) {
 
   handleTrusted('rollback-update-dist', () => {
     try {
+      if (isManagedDeployment()) {
+        return { success: false, managed: true, message: '管理配布端末では配信の変更は行えません。' };
+      }
       const updatesDir = getUpdatesDir();
       const archiveDir = path.join(updatesDir, 'archive');
       if (!fs.existsSync(path.join(archiveDir, 'latest.yml'))) {

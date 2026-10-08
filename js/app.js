@@ -338,25 +338,27 @@ const AppEnv = {
 // 親機サーバー可用性チェック (インフラ #3: 高可用性／縮退モード)
 const ParentServerMonitor = {
   _interval: null,
+  _generation: 0,
   _failures: 0,
   _wasUnavailable: false,
 
   init() {
     if (!isClientMode()) return;
-    if (this._interval) clearTimeout(this._interval);
+    this.destroy();
     this._failures = 0;
     this._wasUnavailable = false;
     this._schedule(1000 + Math.floor(Math.random() * 3000));
   },
 
   _delay(baseMs, ratio = 0.2) {
-    const jitter = baseMs * ratio;
-    return Math.max(1000, Math.round(baseMs + ((Math.random() * 2 - 1) * jitter)));
+    return SyncPolicy.jitter(baseMs, ratio, 1000);
   },
 
   _schedule(delayMs) {
+    const generation = this._generation;
     this._interval = setTimeout(async () => {
       const ok = await this._check();
+      if (generation !== this._generation) return;
       this._failures = ok ? 0 : Math.min(this._failures + 1, 5);
       const baseDelay = this._failures ? Math.min(120000, 30000 * Math.pow(2, this._failures - 1)) : 30000;
       this._schedule(this._delay(baseDelay));
@@ -364,6 +366,7 @@ const ParentServerMonitor = {
   },
 
   async _check() {
+    const generation = this._generation;
     const parentIp = localStorage.getItem('cfg_parent_ip');
     if (!parentIp) return true;
     try {
@@ -371,10 +374,12 @@ const ParentServerMonitor = {
       const res = await parentFetch(`http://${parentIp}:3005/api/tables/wards`, {
         headers: apiToken ? { 'X-API-Token': apiToken } : {},
       }, 5000);
+      if (generation !== this._generation) return false;
       if (res.ok) {
         const recovered = this._wasUnavailable;
         if (recovered) {
           const mastersRefreshed = await App.loadMasters({ silent: true });
+          if (generation !== this._generation) return false;
           if (!mastersRefreshed) {
             this._wasUnavailable = true;
             App._setConnectionStatus(false, 'network');
@@ -382,6 +387,7 @@ const ParentServerMonitor = {
           }
           App.syncWardSelect();
           const refreshed = await App.refreshData({ force: true });
+          if (generation !== this._generation) return false;
           if (!refreshed) {
             this._wasUnavailable = true;
             App._setConnectionStatus(false, 'network');
@@ -401,6 +407,7 @@ const ParentServerMonitor = {
         return false;
       }
     } catch (error) {
+      if (generation !== this._generation) return false;
       this._wasUnavailable = true;
       App._setConnectionStatus(false, error?.unauthorized ? 'unauthorized' : 'network');
       return false;
@@ -408,7 +415,9 @@ const ParentServerMonitor = {
   },
 
   destroy() {
+    this._generation += 1;
     if (this._interval) clearTimeout(this._interval);
+    this._interval = null;
   },
 };
 
@@ -463,11 +472,13 @@ const App = {
       // Restore first-start connection values before any master request. Explicit
       // provisioning is authoritative; ordinary upgrades preserve browser choices.
       const applied = result?.provisioningApplied === true;
-      if ((applied || !localStorage.getItem('cfg_share_mode')) && ['parent', 'client', 'child'].includes(result?.shareMode)) {
+      const authoritative = result?.authoritative === true;
+      this._managedDeployment = result?.managed === true;
+      if ((authoritative || applied || !localStorage.getItem('cfg_share_mode')) && ['parent', 'client', 'child'].includes(result?.shareMode)) {
         localStorage.setItem('cfg_share_mode', result.shareMode === 'child' ? 'client' : result.shareMode);
       }
-      if ((applied || !localStorage.getItem('cfg_parent_ip')) && typeof result?.parentIp === 'string' &&
-          (result.parentIp || applied)) {
+      if ((authoritative || applied || !localStorage.getItem('cfg_parent_ip')) && typeof result?.parentIp === 'string' &&
+          (result.parentIp || applied || authoritative)) {
         localStorage.setItem('cfg_parent_ip', result.parentIp);
       }
       this._terminalSetupPending = result?.setupCompleted === false || !!result?.provisioningError;
@@ -984,334 +995,27 @@ const App = {
         this._dataImportPromise = this._dataImportPromise
           .catch(error => console.error('[Import] 前の取り込み処理が失敗しました:', error))
           .then(async () => {
-        const { importId, fileName, rows = [] } = payload;
-        console.log(`[Electron] インポートデータを受信 (${fileName}): ${rows.length}件`);
-
-        // 子機から親機の連携設定を変更した直後でも、親機rendererの古いキャッシュを
-        // 使わないよう、取り込み開始時に設定・病床マスターを必ず読み直す。
-        const mastersLoaded = await App.loadMasters({ silent: true });
-        if (!mastersLoaded) {
-          if (importId && window.electronAPI.completeDataImport) {
-            await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
+        if (payload.committed === true) {
+          await App.loadMasters({ silent: true });
+          await App.refreshData({ force: true });
+          if (payload.warning) UI.toast(payload.warning, 'warning', 10000);
+          if (payload.overwrittenActiveBeds?.length) UI.toast('移送中の病床で患者情報が変更されました。移送情報を確認してください', 'warning', 12000);
+          if (AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false') {
+            UI.toast(`${payload.fileName}: ${payload.count}件更新、${payload.clearCount || 0}件空床化`, payload.skipCount ? 'warning' : 'success');
           }
-          UI.toast('CSV取り込み前の最新設定を取得できませんでした。原本は監視フォルダに残しています。', 'danger', 8000);
           return;
         }
-
-        let activeBedIds;
-        try {
-          const eventResult = await API.getAll('transfer_events', { active_only: 'true' });
-          activeBedIds = new Set(
-            (eventResult?.data || [])
-              .filter(event => CONFIG.ACTIVE_STATUSES.includes(event.current_status))
-              .map(event => event.bed_id)
-          );
-        } catch (error) {
-          console.error('[Import] 進行中移送の取得に失敗しました:', error);
-          if (importId && window.electronAPI.completeDataImport) {
-            await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
-          }
-          UI.toast('進行中の移送情報を確認できないため、CSV取り込みを中止しました。原本は残しています。', 'danger', 8000);
-          return;
-        }
-
-        const admMode = AppState.systemSettings?.find(s => s.id === 'admission_mode')?.value || 'csv';
-
-        let importedCount = 0;
-        let skipCount = 0;
-        // 進行中の移送がある病床で患者が入れ替わった件数（取り込み後にまとめて警告する）
-        const overwrittenActiveBeds = [];
-
-        // 病床の在室者が同一人物かの判定。サーバ側 isSameBedOccupant と優先順を揃える
-        // （両者にpatient_idがあればそれで比較し、無ければ氏名で比較する）
-        const hasOccupant = (rec) => Boolean(rec && (rec.patient_id || rec.patient_name));
-        const isSameOccupant = (before, after) => {
-          if (!hasOccupant(before) || !hasOccupant(after)) return false;
-          if (before.patient_id && after.patient_id) {
-            return String(before.patient_id) === String(after.patient_id);
-          }
-          return String(before.patient_name || '') === String(after.patient_name || '');
-        };
-
-        // ポリシー設定のロード
-        let policy = { action: 'archive', retentionDays: '30', clearUnlisted: false };
-        const policySetting2 = AppState.systemSettings?.find(s => s.id === 'import_retention_policy');
-        if (policySetting2?.value) {
-          try { policy = JSON.parse(policySetting2.value); } catch(e) {}
-        }
-
-        // カラムマッピングのロード
-        let mapping = { bed_number: '', patient_id: '', patient_name: '', is_present: '' };
-        const mappingSetting = AppState.systemSettings?.find(s => s.id === 'import_mapping');
-        if (mappingSetting && mappingSetting.value) {
-          try {
-            mapping = JSON.parse(mappingSetting.value);
-          } catch (e) {
-            console.error('[Import] マッピング設定のパース失敗:', e);
-          }
-        }
-
-        // Default import mapping. Also auto-detect common Japanese EMR CSV headers.
-        const sampleRow = rows.find(row => row && Object.keys(row).length > 0) || {};
-        const pickColumn = (...names) => names.find(name => Object.prototype.hasOwnProperty.call(sampleRow, name)) || '';
-        const mapBed = mapping.bed_number || pickColumn('bed_number', '\u75c5\u5e8a\u756a\u53f7') || 'bed_number';
-        const mapRoomCode = mapping.room_code || pickColumn('room_code', '\u75c5\u5ba4\u30b3\u30fc\u30c9');
-        const mapBedCode = mapping.bed_code || pickColumn('bed_code', '\u75c5\u5e8a\u30b3\u30fc\u30c9');
-        const joinChar = mapping.join_char !== undefined ? mapping.join_char : '-';
-
-        const mapPatId = mapping.patient_id || pickColumn('patient_id', '\u60a3\u8005ID') || 'patient_id';
-        const mapPatName = mapping.patient_name || pickColumn('patient_name', '\u6f22\u5b57\u6c0f\u540d', '\u60a3\u8005\u6c0f\u540d', '\u6c0f\u540d') || 'patient_name';
-        const mapPresent = mapping.is_present || pickColumn('is_present');
-
-        const bulkUpdates = [];
-        const listedBedIds = new Set();
-        const seenImportedBedIds = new Set();
-        for (const row of rows) {
-          try {
-            // 1. Resolve the target bed from either a combined bed number or room/bed codes.
-            let bedNoVal = '';
-            let bedCandidates = [];
-            let roomVal = '';
-            let bedVal = '';
-            
-            const isCombined = Boolean(mapping.room_code && mapping.bed_code);
-            if (isCombined) {
-              roomVal = (row[mapRoomCode] || '').trim();
-              bedVal = (row[mapBedCode] || '').trim();
-              if (roomVal && bedVal) {
-                bedNoVal = `${roomVal}${joinChar}${bedVal}`;
-                bedCandidates = [
-                  `${roomVal}${joinChar}${bedVal}`,
-                  `${roomVal}${bedVal}`,
-                  `${roomVal}_${bedVal}`,
-                  `${roomVal}/${bedVal}`,
-                  `${roomVal} ${bedVal}`
-                ];
-              } else {
-                bedNoVal = roomVal || bedVal;
-                bedCandidates = [bedNoVal];
-              }
-            } else {
-              bedNoVal = (row[mapBed] || '').trim();
-              bedCandidates = [bedNoVal];
-            }
-
-            if (!bedNoVal) {
-              skipCount++;
-              continue;
-            }
-
-            const normalizedCandidates = new Set(bedCandidates.filter(Boolean).map(v => String(v).trim()));
-            const bed = AppState.beds.find(b => {
-              const bedNumber = String(b.bed_number || '').trim();
-              if (normalizedCandidates.has(bedNumber)) return true;
-
-              if (roomVal && bedVal) {
-                const masterRoom = String(b.room_code || b.room_number || '').trim();
-                const masterBedCode = String(b.bed_code || '').trim();
-                if (masterRoom === roomVal && masterBedCode === bedVal) return true;
-                if (masterRoom === roomVal && bedNumber === bedVal) return true;
-              }
-
-              return false;
-            });
-            if (!bed) {
-              console.warn(`[Import] 該当する病床が見つかりません: ${bedNoVal}`);
-              skipCount++;
-              continue;
-            }
-
-            // 同じ病床がCSVに複数行ある場合は、最後の行だけを暗黙に採用せず安全側に倒す。
-            if (seenImportedBedIds.has(bed.id)) {
-              console.warn(`[Import] 同一病床の重複行をスキップしました: ${bedNoVal}`);
-              skipCount++;
-              continue;
-            }
-
-            // ハイブリッド運用では、手動登録した病床の患者情報をCSVで上書きしない。
-            // 未掲載病床のクリア対象からも除外するため listed に記録する。
-            if (admMode === 'hybrid' && bed.manually_registered) {
-              listedBedIds.add(bed.id);
-              console.warn(`[Import] 手動登録病床をCSV更新から保護しました: ${bedNoVal}`);
-              skipCount++;
-              continue;
-            }
-
-            // 2. Update patient information.
-            const patientName = (row[mapPatName] || '').trim();
-            const patientId = (row[mapPatId] || '').trim();
-            const isPresentValue = mapPresent ? (row[mapPresent] || '').trim() : '';
-            const hasPatient = Boolean(patientName || patientId);
-            const emptyBedLabel = '\u7a7a\u5e8a';
-            
-            const isPresent = mapPresent
-              ? ['\u3044\u308b', '\u5728\u5e8a', '1', 'true', 'yes', 'y'].includes(isPresentValue.toLowerCase())
-              : hasPatient;
-
-            const patch = {
-              id: bed.id,
-              patient_name: hasPatient && patientName !== emptyBedLabel ? patientName : null,
-              patient_id: hasPatient && patientName !== emptyBedLabel ? patientId : null,
-              is_present: hasPatient && patientName !== emptyBedLabel ? isPresent : false,
-              _occupancySource: 'csv_import'
-            };
-
-            // 進行中の移送がある病床の患者が入れ替わる場合、移送イベント側は登録時の
-            // 患者名スナップショットを持ち続けるため、帰棟までダッシュボードと移送情報で
-            // 別々の患者が表示される。電子カルテを正として上書き自体は続けるが、
-            // 気づかないまま進まないよう取り込み後に警告する。
-            if (activeBedIds.has(bed.id) && !isSameOccupant(bed, patch)) {
-              overwrittenActiveBeds.push(bed.bed_number || bed.id);
-            }
-
-            seenImportedBedIds.add(bed.id);
-            listedBedIds.add(bed.id);
-            bulkUpdates.push(patch);
-            importedCount++;
-          } catch (err) {
-            console.error('[Import] エラー発生:', err);
-            skipCount++;
-          }
-        }
-
-        // CSVに載っていない病床を空床にする（在室患者のみ出力EMR向け）
-        let clearCount = 0;
-        if (policy.clearUnlisted) {
-          if (rows.length === 0) {
-            console.warn('[Import] clearUnlisted: CSVが0件のため空床化をスキップしました');
-            UI.toast('CSVが空だったため、未掲載病床の空床化はスキップしました。', 'warning', 6000);
-          } else if (listedBedIds.size === 0) {
-            // マッピング誤りや別形式のCSVで全病床を消さないため、有効な病床を
-            // 1件も確認できない場合だけ空床化を止める。一部の不明行は妨げない。
-            console.warn('[Import] 有効な病床行を確認できないため、未掲載病床の空床化をスキップしました');
-            UI.toast('CSVから有効な病床を1件も確認できないため、未掲載病床の空床化をスキップしました。', 'warning', 6000);
-          } else {
-            for (const bed of AppState.beds) {
-              if (!listedBedIds.has(bed.id) && (bed.patient_name || bed.patient_id) && !activeBedIds.has(bed.id)) {
-                // ハイブリッドモードでは手動登録済み病床をCSVクリアから保護
-                if (admMode === 'hybrid' && bed.manually_registered) continue;
-                bulkUpdates.push({ id: bed.id, patient_name: null, patient_id: null, is_present: false, _occupancySource: 'csv_clear' });
-                clearCount++;
-              }
-            }
-          }
-        }
-
-        let writeError = null;
-        if (bulkUpdates.length > 0) {
-          try {
-            const result = await API.bulkPatch('beds', bulkUpdates);
-            if (result?.success === false) {
-              throw new Error(result.message || '病床情報の更新に失敗しました');
-            }
-          } catch (err) {
-            console.error('[Import] バルクアップデートエラー:', err);
-            writeError = err;
-          }
-        }
-
-        if (writeError) {
-          if (importId && window.electronAPI.completeDataImport) {
-            await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
-          }
-          try {
-            await API.create('import_logs', {
-              id: `log-${Date.now()}`,
-              timestamp: Date.now(),
-              fileName,
-              status: 'failed',
-              message: '病床情報の更新に失敗しました。原本は監視フォルダに残しています。',
-              details: writeError.message
-            });
-          } catch (e) {
-            console.error('[Import] 失敗ログの書き込み失敗:', e);
-          }
-          UI.toast('CSVは読み込みましたが、病床情報の保存に失敗しました。原本を確認してください。', 'danger', 8000);
-          return;
-        }
-
-        // DB更新が成功した後だけ、mainへ原本の整理を依頼する。
-        if (importId && window.electronAPI.completeDataImport) {
-          const archiveResult = await window.electronAPI.completeDataImport({ importId, success: true }).catch(() => null);
-          if (archiveResult && archiveResult.success === false) {
-            console.warn('[Import] 原本の整理依頼に失敗しました:', archiveResult.message);
-            UI.toast('病床情報は保存されましたが、CSV原本を整理できませんでした。監視フォルダを確認してください。', 'warning', 8000);
-          }
-        }
-
-        const hasWarning = skipCount > 0;
-        const changedCount = importedCount + clearCount;
-        const status = (changedCount === 0 && rows.length > 0) ? 'warning' : (hasWarning ? 'warning' : 'success');
-        const clearPart = clearCount > 0 ? `, 退院クリア: ${clearCount}件` : '';
-        const detailMsg = `インポート成功: ${importedCount}件, スキップ: ${skipCount}件${clearPart}`;
-        const logMsg = changedCount > 0
-          ? `${importedCount}件の患者情報を更新しました。${clearCount > 0 ? `（${clearCount}件を退院済みとしてクリア）` : ''}`
-          : '更新対象の有効な病床データがありませんでした。';
-
-        // ログ書き込み
-        try {
-          await API.create('import_logs', {
-            id: `log-${Date.now()}`,
-            timestamp: Date.now(),
-            fileName: fileName,
-            status: status,
-            message: logMsg,
-            details: detailMsg
-          });
-        } catch (e) {
-          console.error('[Import] ログの書き込み失敗:', e);
-        }
-
-        // マスタデータ（beds）を再読み込みし、画面を再描画する
-        await App.loadMasters();
-        await App.refreshData({ force: true });
-        
-        const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
-        if (currentPage === 'ward-dashboard') {
-          WardDashboard.render();
-        } else if (currentPage === 'settings') {
-          // 設定画面を開いている場合は、ログテーブル等を更新するために再描画
-          Settings.render();
-        }
-        
-        const importToastEnabled = AppState.systemSettings?.find(s => s.id === 'notification_import_toast')?.value !== 'false';
-        if (importToastEnabled) {
-          if (changedCount > 0) {
-            const clearNote = clearCount > 0 ? ` / 退院クリア: ${clearCount}件` : '';
-            UI.toast(`📂 ${importedCount} 件の患者・在床情報を更新しました (スキップ: ${skipCount}件${clearNote})`, 'success');
-          } else {
-            UI.toast(`📂 CSVインポート完了: 更新なし (スキップ: ${skipCount}件)`, 'warning');
-          }
-        }
-
-        // 移送中の病床で患者が入れ替わった場合の警告。取り込み通知のON/OFF設定に
-        // かかわらず出す（空床化スキップの警告と同じ扱い）
-        if (overwrittenActiveBeds.length > 0) {
-          const shown = overwrittenActiveBeds.slice(0, 5).join('、');
-          const more = overwrittenActiveBeds.length > 5 ? ` ほか${overwrittenActiveBeds.length - 5}件` : '';
-          UI.toast(
-            `⚠️ 移送中の${overwrittenActiveBeds.length}床でCSVにより患者情報が変わりました（${shown}${more}）。帰棟までダッシュボードと移送情報の患者名が食い違います。`,
-            'warning',
-            12000
-          );
-        }
+        UI.toast('取込結果を確認できませんでした。アプリを再起動してください', 'danger');
           })
           .catch(async error => {
             console.error(`[Import] CSV取り込み処理に失敗しました (${payload.fileName || 'ファイル名不明'}):`, error);
-            if (payload.importId && window.electronAPI.completeDataImport) {
-              await window.electronAPI.completeDataImport({ importId: payload.importId, success: false }).catch(() => {});
-            }
             UI.toast('CSV取り込み処理に失敗しました。原本は監視フォルダに残しています。', 'danger', 8000);
           });
       }));
 
       // 失敗時
-      this._rememberImportIpcUnsubscriber(window.electronAPI.onDataImportFailed(async ({ importId, fileName, error }) => {
+      this._rememberImportIpcUnsubscriber(window.electronAPI.onDataImportFailed(async ({ fileName, error }) => {
         console.error(`[Electron] インポート失敗 (${fileName}):`, error);
-        if (importId && window.electronAPI.completeDataImport) {
-          await window.electronAPI.completeDataImport({ importId, success: false }).catch(() => {});
-        }
-        
         // 失敗ログ書き込み
         try {
           await API.create('import_logs', {
@@ -1401,6 +1105,14 @@ const App = {
   // サーバー起動を判定するため、localStorage（この端末の真の役割）とローカルDBが
   // 食い違っていたらローカルDB側を修復する。
   async _repairLocalShareMode() {
+    if (window.electronAPI?.getTerminalRole) {
+      const role = await window.electronAPI.getTerminalRole();
+      if (role?.authoritative) {
+        localStorage.setItem('cfg_share_mode', role.shareMode);
+        localStorage.setItem('cfg_parent_ip', role.parentIp || '');
+        return;
+      }
+    }
     if (!window.electronAPI?.dbRequest) return;
     try {
       const storedMode = localStorage.getItem('cfg_share_mode');
@@ -1510,15 +1222,29 @@ const App = {
   _connectedDevicesSnapshot: [],
   _refreshPromise: null,
   _refreshKey: null,
+  _connectionGeneration: 0,
 
   _jitterDelay(baseMs, ratio = 0.15) {
-    const jitter = baseMs * ratio;
-    return Math.max(250, Math.round(baseMs + ((Math.random() * 2 - 1) * jitter)));
+    return SyncPolicy.jitter(baseMs, ratio);
   },
 
   _backoffDelay(baseMs, failures, maxMs) {
-    const capped = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, failures - 1)));
-    return this._jitterDelay(capped, 0.25);
+    return SyncPolicy.retry(baseMs, failures, maxMs);
+  },
+
+  stopDataMonitors() {
+    this._connectionGeneration += 1;
+    ParentServerMonitor.destroy();
+    if (AppState.pollTimer) clearTimeout(AppState.pollTimer);
+    if (this._heartbeatTimer) clearTimeout(this._heartbeatTimer);
+    if (this._masterSyncTimer) clearInterval(this._masterSyncTimer);
+    if (this._devicePresenceTimer) clearInterval(this._devicePresenceTimer);
+    if (this._devicePresenceStartupTimer) clearTimeout(this._devicePresenceStartupTimer);
+    AppState.pollTimer = this._heartbeatTimer = this._masterSyncTimer = null;
+    this._devicePresenceTimer = this._devicePresenceStartupTimer = null;
+    this._mastersFullySynced = false;
+    this._refreshKey = null;
+    this._disconnectSignalCount = 0;
   },
 
   _renderAppVersion() {
@@ -1544,6 +1270,7 @@ const App = {
   },
 
   _startUpdateCheck() {
+    if (this._managedDeployment) return;
     if (!window.electronAPI?.checkForUpdate) return;
 
     const check = async () => {
@@ -1579,6 +1306,7 @@ const App = {
   },
 
   async _promptInstallUpdate(info) {
+    if (this._managedDeployment) return;
     // 子機が親機から取得する更新は、親機側で取込時に管理者が署名なし確認を
     // 既に一度通過しているため、子機ごとのWindows確認ダイアログは表示されない
     // (main.jsのconfirmUnsignedUpdate参照)。親機自身の更新のみ、この後に
@@ -1661,6 +1389,7 @@ const App = {
   },
 
   _startHeartbeat() {
+    const generation = this._connectionGeneration;
     const deviceId = (() => {
       let id = localStorage.getItem('_device_id');
       if (!id) { id = `dev-${Date.now()}-${Math.random().toString(36).slice(2,8)}`; localStorage.setItem('_device_id', id); }
@@ -1680,6 +1409,7 @@ const App = {
     }
 
     const sendHeartbeat = async () => {
+      if (generation !== this._connectionGeneration) return;
       if (this._heartbeatInFlight) return;
       this._heartbeatInFlight = true;
       const wardId = this.isExamTerminal()
@@ -1696,10 +1426,12 @@ const App = {
           page: document.querySelector('.tab-btn.active')?.dataset.page || '',
           isElevated: _cachedIsElevated === null ? undefined : String(_cachedIsElevated)
         });
+        if (generation !== this._connectionGeneration) return;
         const ok = res !== null && res?.unauthorized !== true && res?.success !== false;
         this._setConnectionStatus(ok, res?.unauthorized ? 'unauthorized' : undefined);
         return ok;
       } catch (e) {
+        if (generation !== this._connectionGeneration) return;
         console.warn('[Heartbeat] failed:', e);
         this._setConnectionStatus(false);
         return false;
@@ -1713,6 +1445,7 @@ const App = {
     const scheduleHeartbeat = (delayMs) => {
       this._heartbeatTimer = setTimeout(async () => {
         const ok = await sendHeartbeat();
+        if (generation !== this._connectionGeneration) return;
         if (ok === false) {
           this._heartbeatFailures = Math.min(this._heartbeatFailures + 1, 6);
         } else if (ok === true) {
@@ -1934,6 +1667,7 @@ const App = {
   },
 
   async loadMasters({ silent = false, requireComplete = false } = {}) {
+    const generation = this._connectionGeneration;
     try {
       const [wards, beds, examRooms, examTypes, pickupAssistanceTypes, allStaffs, systemSettings] = await Promise.all([
         API.getWards(),
@@ -1949,6 +1683,7 @@ const App = {
         API.getAllStaffs().catch(() => null),
         API.getAll('system_settings').then(res => Array.isArray(res?.data) ? res.data : null).catch(() => null)
       ]);
+      if (generation !== this._connectionGeneration) return false;
       const initialClientSync = typeof isClientMode === 'function' && isClientMode() && !this._mastersFullySynced;
       if ((requireComplete || initialClientSync) && (!Array.isArray(allStaffs) || !Array.isArray(systemSettings))) {
         throw new Error('初回同期が未完了です。職員・共有設定を親機から取得できませんでした');
@@ -1983,6 +1718,7 @@ const App = {
       return true;
 
     } catch (e) {
+      if (generation !== this._connectionGeneration) return false;
       this._masterLoadFailed = true;
       console.error('[App] マスタ読み込み失敗:', e);
       if (!silent && e?.unauthorized) {
@@ -1998,11 +1734,14 @@ const App = {
     if (this._masterSyncTimer) clearInterval(this._masterSyncTimer);
     this._masterSyncTimer = null;
     if (!isClientMode()) return;
+    const generation = this._connectionGeneration;
     this._masterSyncTimer = setInterval(async () => {
+      if (generation !== this._connectionGeneration) return;
       if (this._masterSyncInFlight || this._refreshPromise) return;
       this._masterSyncInFlight = true;
       try {
         const refreshed = await this.loadMasters({ silent: true });
+        if (generation !== this._connectionGeneration) return;
         if (refreshed) {
           this.syncWardSelect();
           if (typeof CallPanel !== 'undefined' && CallPanel._renderCallPanel) {
@@ -2054,6 +1793,7 @@ const App = {
   },
 
   async _refreshDataOnce(wardId, todayMs) {
+    const generation = this._connectionGeneration;
     try {
       const dayEndMs = todayMs + 24 * 60 * 60 * 1000;
       const isExamTerminal = this.isExamTerminal();
@@ -2065,6 +1805,7 @@ const App = {
         API.getScheduleFeeds(),
         API.getScheduleItemsForRange(todayMs, dayEndMs)
       ]);
+      if (generation !== this._connectionGeneration) return false;
       if (eventResult.status === 'rejected') throw eventResult.reason;
       const eventStatus = eventResult.value;
       const auxResults = [settingsResult, feedsResult, itemsResult];
@@ -2125,6 +1866,7 @@ const App = {
       }
       return true;
     } catch (e) {
+      if (generation !== this._connectionGeneration) return false;
       console.error('[App] データ更新失敗:', e);
       if (isClientMode()) {
         this._setConnectionStatus(false, e?.unauthorized ? 'unauthorized' : 'network');
@@ -2135,8 +1877,10 @@ const App = {
 
   startPolling() {
     if (AppState.pollTimer) clearTimeout(AppState.pollTimer);
+    const generation = this._connectionGeneration;
     this._pollFailures = 0;
     const tick = async () => {
+      if (generation !== this._connectionGeneration) return;
       let ok = true;
       if (this._pollInFlight) {
         AppState.pollTimer = setTimeout(tick, this._jitterDelay(CONFIG.POLL_INTERVAL));
@@ -2146,6 +1890,7 @@ const App = {
       try {
         const currentPage = document.querySelector('.tab-btn.active')?.dataset.page;
         ok = await this.refreshData();
+        if (generation !== this._connectionGeneration) return;
 
         if (ok) {
           const localDateValue = TimelineDate.format();
@@ -2174,6 +1919,7 @@ const App = {
         console.error('[App] ポーリング処理に失敗:', e);
       } finally {
         this._pollInFlight = false;
+        if (generation !== this._connectionGeneration) return;
         this._pollFailures = ok ? 0 : Math.min(this._pollFailures + 1, 6);
         const nextDelay = this._pollFailures
           ? this._backoffDelay(CONFIG.POLL_INTERVAL, this._pollFailures, 60000)

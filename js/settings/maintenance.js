@@ -45,6 +45,8 @@ Object.assign(Settings, {
           <div class="maint-info-item"><span class="maint-info-label">稼働モード</span><span class="maint-info-value">${modeLabel}</span></div>
           ${dbInfo ? `
           <div class="maint-info-item"><span class="maint-info-label">DBファイルサイズ</span><span class="maint-info-value">${this._formatBytes(dbInfo.fileSizeBytes)}</span></div>
+          <div class="maint-info-item"><span class="maint-info-label">監査ログ</span><span class="maint-info-value">${this._formatBytes(dbInfo.auditFileSizeBytes)} / ${this._formatBytes(dbInfo.auditMaxFileBytes)} 上限</span></div>
+          <div class="maint-info-item"><span class="maint-info-label">保全した旧ファイル</span><span class="maint-info-value">${dbInfo.retainedBackupCount || 0}件・${this._formatBytes(dbInfo.retainedBackupBytes)}</span></div>
           <div class="maint-info-item"><span class="maint-info-label">移送履歴件数</span><span class="maint-info-value">${dbInfo.counts.transfer_events}件</span></div>
           <div class="maint-info-item maint-info-item--wide"><span class="maint-info-label">DBファイルの場所</span><span class="maint-info-value maint-info-value--mono">${UI.escapeHTML(dbInfo.dbPath)}</span></div>
           ` : ''}
@@ -62,6 +64,7 @@ Object.assign(Settings, {
       </div>
 
       <!-- アプリの更新 -->
+      ${App._managedDeployment ? '<div class="settings-panel" style="margin-bottom:16px;"><div class="settings-panel-header"><h3>アプリの更新</h3></div><p class="settings-note">この端末の更新は配布管理ツールから実施します。</p></div>' : `
       <div class="settings-panel" style="margin-bottom:16px;">
         <div class="settings-panel-header">
           <h3><i class="fas fa-arrow-circle-up"></i> アプリの更新</h3>
@@ -95,6 +98,7 @@ Object.assign(Settings, {
           </div>
         </div>
       </div>
+      `}
 
       <!-- 履歴データの保持期間設定 -->
       <div class="settings-panel" style="margin-bottom:16px;">
@@ -168,7 +172,7 @@ Object.assign(Settings, {
         </div>
         <p style="font-size:11px; color:var(--clr-text-muted); margin:0 0 10px 0;">
           データベースファイル（db.json）の保存先を選択します。<br>
-          同一PC内の他のWindowsログインユーザーと設定や履歴を共有したい場合は「全ユーザー共有」を選択してください。
+          ProgramDataに保存してもデータベースの暗号鍵は現在のWindowsユーザーに紐付きます。異なるWindowsアカウントでの共用には対応していません。
         </p>
         <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:12px; background:var(--clr-bg); padding:12px; border-radius:6px; border:1px solid var(--clr-border);">
           <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
@@ -182,8 +186,8 @@ Object.assign(Settings, {
           <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px; margin-top:8px;">
             <input type="radio" name="db-storage-mode" value="common" ${storageInfo.currentMode === 'common' ? 'checked' : ''} style="margin-top:3px;">
             <div>
-              <strong>全ユーザー共有フォルダ（ProgramData）</strong>
-              <div style="font-size:11px; color:var(--clr-text-muted); margin-top:2px;">このPCを使用するすべてのWindowsログインユーザーで設定・データを共有します。</div>
+              <strong>ProgramDataフォルダ（同じWindowsユーザーで利用）</strong>
+              <div style="font-size:11px; color:var(--clr-text-muted); margin-top:2px;">保存場所を変更します。別のWindowsアカウントからは復号できません。</div>
               <div style="font-size:10px; color:#a0aec0; font-family:monospace; margin-top:2px; word-break:break-all;">パス: ${storageInfo.commonPath}</div>
             </div>
           </label>
@@ -194,7 +198,7 @@ Object.assign(Settings, {
           </button>
         </div>
         <div id="db-storage-permission-warning" style="font-size:11px; color:#c53030; font-weight:700; margin-top:6px; display:${!storageInfo.hasCommonWritePermission && storageInfo.currentMode === 'user' ? 'block' : 'none'};">
-          ※警告: 全ユーザー共有フォルダへの書き込み権限がありません。変更するには管理者権限（管理者として実行）が必要です。
+          ※警告: ProgramDataフォルダへの書き込み権限がありません。変更にはフォルダのアクセス権が必要です。
         </div>
       </div>
       ` : ''}
@@ -461,8 +465,8 @@ Object.assign(Settings, {
           return;
         }
         const confirmMsg = selectedMode === 'common'
-          ? 'データベースの保存先を「全ユーザー共有フォルダ（ProgramData）」に変更します。\nよろしいですか？\n※既存のデータは共有フォルダへ自動的にコピーされます。'
-          : 'データベースの保存先を「ユーザー専用フォルダ」に変更します。\nよろしいですか？\n※既存のデータはユーザーフォルダへ自動的にコピーされます。';
+          ? 'データベースの保存先を「ProgramData」に変更します。\n別のWindowsアカウントからは復号できません。\n※DB・監査ログをコピーして検証します。移行先に異なるデータがある場合は変更しません。'
+          : 'データベースの保存先を「ユーザー専用フォルダ」に変更します。\nよろしいですか？\n※DB・監査ログをコピーして検証します。移行先に異なるデータがある場合は変更しません。';
         if (!await UI.confirmModal(confirmMsg, { title: 'データベース保存先の変更', type: 'warning', confirmLabel: '変更する' })) return;
 
         changeDbStorageBtn.disabled = true;
