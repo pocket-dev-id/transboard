@@ -2,6 +2,12 @@
 
 const { execFile, execFileSync } = require('child_process');
 
+// Fixed limits shared by manual and scheduled syncs. Never save partial results.
+const MAX_ODBC_SYNC_ROWS = 5000;
+const MAX_ODBC_COLUMNS = 128;
+const MAX_ODBC_CELL_CHARS = 4096;
+const MAX_ODBC_TOTAL_CHARS = 1000000;
+
 const POWERSHELL_EXE = process.env.SystemRoot
   ? pathJoin(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : 'powershell.exe';
@@ -262,28 +268,36 @@ async function testOdbcConnectionOnParent({ connectionString, sqlQuery }) {
 
 // IPC通信でODBCデータベース接続テストを行う
 
-function buildOdbcRowFetchScript(sqlQuery, maxRows = null) {
+function buildOdbcRowFetchScript(sqlQuery, maxRows = MAX_ODBC_SYNC_ROWS) {
   const safeQuery = String(sqlQuery).replace(/'/g, "''");
-  const breakCheck = maxRows ? `if ($rows.Count -ge ${maxRows}) { $hasMore = $true; break }` : '';
+  const rowLimit = Number.isInteger(maxRows) && maxRows > 0
+    ? Math.min(maxRows, MAX_ODBC_SYNC_ROWS) : MAX_ODBC_SYNC_ROWS;
+  const breakCheck = `if ($rows.Count -ge ${rowLimit}) { $hasMore = $true; break }`;
   return `
   $cmd = $conn.CreateCommand()
   $cmd.CommandText = '${safeQuery}'
   $cmd.CommandTimeout = 25
   $reader = $cmd.ExecuteReader()
+  try {
+  if ($reader.FieldCount -gt ${MAX_ODBC_COLUMNS}) { throw '取得列数が上限（128列）を超えました。SQLで必要な列に絞ってください。' }
   $cols = @()
   for ($i = 0; $i -lt $reader.FieldCount; $i++) { $cols += $reader.GetName($i) }
   $rows = New-Object System.Collections.ArrayList
   $hasMore = $false
+  $totalChars = 0
   while ($reader.Read()) {
     ${breakCheck}
     $obj = [ordered]@{}
     foreach ($c in $cols) {
       $v = $reader[$c]
       if ($v -is [DBNull]) { $obj[$c] = '' } else { $obj[$c] = "$v" }
+      if ($obj[$c].Length -gt ${MAX_ODBC_CELL_CHARS}) { throw 'セルの文字数が上限（4,096文字）を超えました。SQLで取得内容を絞ってください。' }
+      $totalChars += $obj[$c].Length + $c.Length
+      if ($totalChars -gt ${MAX_ODBC_TOTAL_CHARS}) { throw '取得データの文字数が上限（1,000,000文字）を超えました。SQLで取得内容を絞ってください。' }
     }
     [void]$rows.Add((New-Object PSObject -Property $obj))
   }
-  $reader.Close()
+  } finally { $reader.Close() }
   $result = [ordered]@{ columns = @($cols); rows = @($rows); truncated = $hasMore }
   $result | ConvertTo-Json -Compress -Depth 6`;
 }
@@ -318,14 +332,18 @@ async function runOdbcSyncOnParent({ connectionString, sqlQuery }) {
     return { success: false, message: '接続文字列にDSN指定が見つかりません。' };
   }
 
-  const result = await execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, null), 30000);
+  const result = await execOdbcPowerShell(finalConnStr, buildOdbcRowFetchScript(sqlQuery, MAX_ODBC_SYNC_ROWS), 30000);
   if (!result.success) {
     return { success: false, message: 'ODBC同期に失敗しました: ' + result.error };
   }
 
   let rows;
   try {
-    rows = parseOdbcRows(result.output).rows;
+    const parsed = parseOdbcRows(result.output);
+    if (parsed.truncated || parsed.rows.length > MAX_ODBC_SYNC_ROWS) {
+      return { success: false, message: 'ODBC取得件数が上限（5,000件）を超えたため同期を中止しました。SQLのWHERE条件などで対象を絞ってください。患者情報は保存されていません。' };
+    }
+    rows = parsed.rows;
   } catch (e) {
     return { success: false, message: '取得結果の解析に失敗しました: ' + e.message };
   }
